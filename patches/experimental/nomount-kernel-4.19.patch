@@ -1,8 +1,8 @@
 diff --git a/fs/Kconfig b/fs/Kconfig
-index 1c3298e49..fb2c72b8c 100644
+index b8d003f02..3ff60947e 100644
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
-@@ -323,4 +323,11 @@ source "fs/nls/Kconfig"
+@@ -319,4 +319,11 @@ source "fs/nls/Kconfig"
  source "fs/dlm/Kconfig"
  source "fs/unicode/Kconfig"
  
@@ -15,16 +15,16 @@ index 1c3298e49..fb2c72b8c 100644
 +
  endmenu
 diff --git a/fs/Makefile b/fs/Makefile
-index 3d717a67d..cfaa27faa 100644
+index 5030ac905..26ea8ac69 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
-@@ -133,3 +133,4 @@ obj-$(CONFIG_CEPH_FS)		+= ceph/
+@@ -132,3 +132,4 @@ obj-y				+= exofs/ # Multiple modules
+ obj-$(CONFIG_CEPH_FS)		+= ceph/
  obj-$(CONFIG_PSTORE)		+= pstore/
  obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
- obj-$(CONFIG_EROFS_FS)		+= erofs/
 +obj-$(CONFIG_NOMOUNT) += nomount.o
 diff --git a/fs/d_path.c b/fs/d_path.c
-index a69e2cd36..8d52e7b00 100644
+index e8fce6b11..84729624d 100644
 --- a/fs/d_path.c
 +++ b/fs/d_path.c
 @@ -8,6 +8,10 @@
@@ -38,7 +38,7 @@ index a69e2cd36..8d52e7b00 100644
  static int prepend(char **buffer, int *buflen, const char *str, int namelen)
  {
  	*buflen -= namelen;
-@@ -265,6 +269,26 @@ char *d_path(const struct path *path, char *buf, int buflen)
+@@ -259,6 +263,26 @@ char *d_path(const struct path *path, char *buf, int buflen)
  	struct path root;
  	int error;
  
@@ -66,10 +66,10 @@ index a69e2cd36..8d52e7b00 100644
  	 * We have various synthetic filesystems that never get mounted.  On
  	 * these filesystems dentries are never used for lookup purposes, and
 diff --git a/fs/namei.c b/fs/namei.c
-index 0aaf40471..f9e70610a 100644
+index 6e83cd855..80b73d93a 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -43,6 +43,10 @@
+@@ -44,6 +44,10 @@
  #include "internal.h"
  #include "mount.h"
  
@@ -77,10 +77,10 @@ index 0aaf40471..f9e70610a 100644
 +#include <linux/nomount.h>
 +#endif
 +
- #ifdef CONFIG_SELINUX_AVC_BACKTRACE
- #include <linux/avc_backtrace.h>
- #endif
-@@ -207,6 +211,13 @@ getname_flags(const char __user *filename, int flags, int *empty)
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/namei.h>
+ 
+@@ -205,6 +209,13 @@ getname_flags(const char __user *filename, int flags, int *empty)
  	result->uptr = filename;
  	result->aname = NULL;
  	audit_getname(result);
@@ -94,7 +94,7 @@ index 0aaf40471..f9e70610a 100644
  	return result;
  }
  
-@@ -340,6 +351,16 @@ int generic_permission(struct inode *inode, int mask)
+@@ -338,6 +349,16 @@ int generic_permission(struct inode *inode, int mask)
  {
  	int ret;
  
@@ -111,7 +111,7 @@ index 0aaf40471..f9e70610a 100644
  	/*
  	 * Do the basic permission checks.
  	 */
-@@ -440,6 +461,16 @@ int inode_permission(struct inode *inode, int mask)
+@@ -434,6 +455,16 @@ int inode_permission2(struct vfsmount *mnt, struct inode *inode, int mask)
  {
  	int retval;
  
@@ -779,20 +779,20 @@ index 000000000..43ca3f0fa
 +fs_initcall(nomount_init);
 \ No newline at end of file
 diff --git a/fs/readdir.c b/fs/readdir.c
-index 07a3b5baa..67f8034bb 100644
+index 443270f63..c6762cf47 100644
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
-@@ -21,6 +21,9 @@
- #include <linux/unistd.h>
+@@ -22,6 +22,9 @@
  #include <linux/compat.h>
+ 
  #include <linux/uaccess.h>
 +#ifdef CONFIG_NOMOUNT
 +#include <linux/nomount.h>
 +#endif
  
- #include <asm/unaligned.h>
- 
-@@ -277,6 +280,9 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
+ int iterate_dir(struct file *file, struct dir_context *ctx)
+ {
+@@ -257,6 +260,9 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
  		.current_dir = dirent
  	};
  	int error;
@@ -800,9 +800,9 @@ index 07a3b5baa..67f8034bb 100644
 +	int initial_count = count;
 +#endif
  
- 	if (!access_ok(dirent, count))
+ 	if (!access_ok(VERIFY_WRITE, dirent, count))
  		return -EFAULT;
-@@ -285,9 +291,25 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -265,9 +271,25 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
  	if (!f.file)
  		return -EBADF;
  
@@ -825,10 +825,10 @@ index 07a3b5baa..67f8034bb 100644
 +	}
 +#endif
 +
- 	if (buf.prev_reclen) {
- 		struct linux_dirent __user * lastdirent;
- 		lastdirent = (void __user *)buf.current_dir - buf.prev_reclen;
-@@ -363,6 +385,9 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
+ 	lastdirent = buf.previous;
+ 	if (lastdirent) {
+ 		if (put_user(buf.ctx.pos, &lastdirent->d_off))
+@@ -343,6 +365,9 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
  		.current_dir = dirent
  	};
  	int error;
@@ -836,35 +836,9 @@ index 07a3b5baa..67f8034bb 100644
 +	int initial_count = count;
 +#endif
  
- 	if (!access_ok(dirent, count))
+ 	if (!access_ok(VERIFY_WRITE, dirent, count))
  		return -EFAULT;
-@@ -371,9 +396,25 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
- 	if (!f.file)
- 		return -EBADF;
- 
-+#ifdef CONFIG_NOMOUNT
-+	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
-+		error = 0;
-+		goto skip_real_iterate;
-+	}
-+#endif
-+
- 	error = iterate_dir(f.file, &buf.ctx);
- 	if (error >= 0)
- 		error = buf.error;
-+
-+#ifdef CONFIG_NOMOUNT
-+skip_real_iterate:
-+	if (error >= 0 && !signal_pending(current)) {
-+		nomount_inject_dents64(f.file, (void __user **)&dirent, &count, &f.file->f_pos);
-+		error = initial_count - count;
-+	}
-+#endif
-+
- 	if (buf.prev_reclen) {
- 		struct linux_dirent64 __user * lastdirent;
- 		typeof(lastdirent->d_off) d_off = buf.ctx.pos;
-@@ -539,6 +580,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -514,6 +539,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
  		.count = count
  	};
  	int error;
@@ -872,9 +846,9 @@ index 07a3b5baa..67f8034bb 100644
 +	int initial_count = count;
 +#endif
  
- 	if (!access_ok(dirent, count))
+ 	if (!access_ok(VERIFY_WRITE, dirent, count))
  		return -EFAULT;
-@@ -547,9 +591,25 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -522,9 +550,25 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
  	if (!f.file)
  		return -EBADF;
  
