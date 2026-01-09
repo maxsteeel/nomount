@@ -20,7 +20,6 @@
         unsigned int _pad;
     };
 
-    /* Syscall with 1 argument (EXIT) - Saves cleaning x1, x2, x3 */
     __attribute__((always_inline))
     static inline long sys1(long n, long a) {
         register long x8 asm("x8") = n;
@@ -28,8 +27,6 @@
         __asm__ __volatile__("svc 0" : "+r"(x0) : "r"(x8) : "memory", "cc");
         return x0;
     }
-
-    /* Syscall with 2 arguments (GETCWD) - Saves cleaning x2, x3 */
     __attribute__((always_inline))
     static inline long sys2(long n, long a, long b) {
         register long x8 asm("x8") = n;
@@ -38,8 +35,6 @@
         __asm__ __volatile__("svc 0" : "+r"(x0) : "r"(x8), "r"(x1) : "memory", "cc");
         return x0;
     }
-
-    /* Syscall with 3 arguments (WRITE, IOCTL) - Saves cleaning x3 */
     __attribute__((always_inline))
     static inline long sys3(long n, long a, long b, long c) {
         register long x8 asm("x8") = n;
@@ -49,8 +44,6 @@
         __asm__ __volatile__("svc 0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : "memory", "cc");
         return x0;
     }
-
-    /* Syscall with 4 arguments (OPENAT, FSTATAT) - Uses all */
     __attribute__((always_inline))
     static inline long sys4(long n, long a, long b, long c, long d) {
         register long x8 asm("x8") = n;
@@ -61,7 +54,6 @@
         __asm__ __volatile__("svc 0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3) : "memory", "cc");
         return x0;
     }
-
     __attribute__((naked)) void _start(void) { __asm__ volatile("mov x0, sp\n bl c_main\n"); }
 
 #elif defined(__arm__)
@@ -83,7 +75,6 @@
         unsigned int _pad;
     };
 
-    /* ARM 32-bit versions */
     __attribute__((always_inline))
     static inline long sys1(long n, long a) {
         register long r7 asm("r7") = n;
@@ -118,9 +109,7 @@
         __asm__ __volatile__("svc 0" : "+r"(r0) : "r"(r7), "r"(r1), "r"(r2), "r"(r3) : "memory", "cc");
         return r0;
     }
-
     __attribute__((naked)) void _start(void) { __asm__ volatile("mov r0, sp\n bl c_main\n"); }
-
 #else
     #error "Arch not supported"
 #endif
@@ -136,13 +125,13 @@ typedef unsigned long size_t;
 #define IOCTL_VER     0x80044E04
 #define IOCTL_ADD_UID 0x40044E05
 #define IOCTL_DEL_UID 0x40044E06
+#define IOCTL_LIST    0x80044E07
 
 #define NM_ACTIVE 1
 #define NM_DIR    128
 #define PATH_MAX  4096
 
 /* --- MAIN --- */
-
 __attribute__((noreturn, used))
 void c_main(long *sp) {
     long argc = *sp;
@@ -150,7 +139,7 @@ void c_main(long *sp) {
     long exit_code = 1; 
     
     if (argc < 2) {
-        sys3(SYS_WRITE, 1, (long)"nm <add|del|clear|ver|blk|unb>\n", 31);
+        sys3(SYS_WRITE, 1, (long)"nm add|del|clear|blk|unb|list\n", 30);
         goto do_exit;
     }
 
@@ -165,10 +154,9 @@ void c_main(long *sp) {
     void *ioctl_arg = 0;
     unsigned int uid = 0;
     long ioctl_code = 0;
-
     int needed = 2;
     if (cmd == 'a') needed = 4;
-    else if (cmd != 'c' && cmd != 'v') needed = 3; 
+    else if (cmd != 'c' && cmd != 'v' && cmd != 'l') needed = 3; 
     
     if (argc < needed) goto do_exit;
 
@@ -233,13 +221,20 @@ void c_main(long *sp) {
     else if (cmd == 'v') {
         ioctl_code = IOCTL_VER;
     }
+    else if (cmd == 'l') {
+        ioctl_code = IOCTL_LIST;
+        ioctl_arg = (void *)((char *)sp - 65536); 
+    }
 
     if (ioctl_code) {
         long res = sys3(SYS_IOCTL, fd, ioctl_code, (long)ioctl_arg);
         
         if (cmd == 'v' && res > 0) {
-            char v_buf[3] = {'v', res + '0', '\n'};
-            sys3(SYS_WRITE, 1, (long)v_buf, 3);
+            char v_buf[2] = {res + '0', '\n'};
+            sys3(SYS_WRITE, 1, (long)v_buf, 2);
+        }
+        else if (cmd == 'l' && res > 0) {
+            sys3(SYS_WRITE, 1, (long)ioctl_arg, res);
         }
     }
 
