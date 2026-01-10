@@ -802,7 +802,7 @@ index 09e8ed7d4..dd3c6869c 100644
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	struct inode *inode;
  #endif
-@@ -399,10 +405,25 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -399,10 +405,27 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
  	buf.is_base_dentry_android_data_root_dir = false;
  	buf.is_base_dentry_sdcard_root_dir = false;
  orig_flow:
@@ -820,6 +820,8 @@ index 09e8ed7d4..dd3c6869c 100644
 +#ifdef CONFIG_NOMOUNT
 +skip_real_iterate:
 +	if (error >= 0 && !signal_pending(current)) {
++		dirent = buf.current_dir;
++		count = buf.count;
 +		nomount_inject_dents64(f.file, (void __user **)&dirent, &count, &f.file->f_pos);
 +		error = initial_count - count;
 +	}
@@ -838,7 +840,7 @@ index 09e8ed7d4..dd3c6869c 100644
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	struct inode *inode;
  #endif
-@@ -536,10 +560,25 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
+@@ -536,10 +560,27 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
  	buf.is_base_dentry_android_data_root_dir = false;
  	buf.is_base_dentry_sdcard_root_dir = false;
  orig_flow:
@@ -856,6 +858,8 @@ index 09e8ed7d4..dd3c6869c 100644
 +#ifdef CONFIG_NOMOUNT
 +skip_real_iterate:
 +	if (error >= 0 && !signal_pending(current)) {
++		dirent = buf.current_dir;
++		count = buf.count;
 +		nomount_inject_dents64(f.file, (void __user **)&dirent, &count, &f.file->f_pos);
 +		error = initial_count - count;
 +	}
@@ -874,7 +878,7 @@ index 09e8ed7d4..dd3c6869c 100644
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	struct inode *inode;
  #endif
-@@ -812,10 +854,25 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -812,10 +854,27 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
  	buf.is_base_dentry_android_data_root_dir = false;
  	buf.is_base_dentry_sdcard_root_dir = false;
  orig_flow:
@@ -892,6 +896,8 @@ index 09e8ed7d4..dd3c6869c 100644
 +#ifdef CONFIG_NOMOUNT
 +skip_real_iterate:
 +	if (error >= 0 && !signal_pending(current)) {
++		dirent = buf.current_dir;
++		count = buf.count;
 +		nomount_inject_dents(f.file, (void __user **)&dirent, &count, &f.file->f_pos);
 +		error = initial_count - buf.count;
 +	}
