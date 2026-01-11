@@ -323,6 +323,7 @@ index 000000000..43ca3f0fa
 +        new_name = getname_kernel(target_path); 
 +        kfree(target_path);
 +        if (!IS_ERR(new_name)) {
++			 new_name->uptr = name->uptr;
 +            putname(name);
 +            return new_name;
 +        }
