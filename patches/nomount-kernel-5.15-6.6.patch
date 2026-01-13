@@ -61,7 +61,7 @@ index cd60c7535..e3c97cb80 100644
  	 * We have various synthetic filesystems that never get mounted.  On
  	 * these filesystems dentries are never used for lookup purposes, and
 diff --git a/fs/namei.c b/fs/namei.c
-index f376c938f..d187b3241 100644
+index f376c938f..be9961043 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -39,6 +39,9 @@
@@ -74,10 +74,10 @@ index f376c938f..d187b3241 100644
  
  #include "internal.h"
  #include "mount.h"
-@@ -200,6 +203,13 @@ getname_flags(const char __user *filename, int flags, int *empty)
+@@ -199,7 +202,15 @@ getname_flags(const char __user *filename, int flags, int *empty)
+ 
  	result->uptr = filename;
  	result->aname = NULL;
- 	audit_getname(result);
 +
 +#ifdef CONFIG_NOMOUNT
 +	if (!IS_ERR(result)) {
@@ -85,10 +85,12 @@ index f376c938f..d187b3241 100644
 +	}
 +#endif
 +
+ 	audit_getname(result);
++
  	return result;
  }
  
-@@ -399,6 +409,16 @@ int generic_permission(struct user_namespace *mnt_userns, struct inode *inode,
+@@ -399,6 +410,16 @@ int generic_permission(struct user_namespace *mnt_userns, struct inode *inode,
  {
  	int ret;
  
@@ -105,7 +107,7 @@ index f376c938f..d187b3241 100644
  	/*
  	 * Do the basic permission checks.
  	 */
-@@ -503,6 +523,16 @@ int inode_permission(struct user_namespace *mnt_userns,
+@@ -503,6 +524,16 @@ int inode_permission(struct user_namespace *mnt_userns,
  {
  	int retval;
  
@@ -124,10 +126,10 @@ index f376c938f..d187b3241 100644
  		return retval;
 diff --git a/fs/nomount.c b/fs/nomount.c
 new file mode 100644
-index 000000000..43ca3f0fa
+index 000000000..db9c9c327
 --- /dev/null
 +++ b/fs/nomount.c
-@@ -0,0 +1,643 @@
+@@ -0,0 +1,651 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -155,6 +157,13 @@ index 000000000..43ca3f0fa
 +    unsigned short  d_reclen;
 +    char        d_name[];
 +};
++
++static DEFINE_HASHTABLE(nomount_rules_ht, NOMOUNT_HASH_BITS);
++static DEFINE_HASHTABLE(nomount_dirs_ht, NOMOUNT_HASH_BITS);
++static DEFINE_HASHTABLE(nomount_uid_ht, NOMOUNT_HASH_BITS);
++
++static LIST_HEAD(nomount_rules_list);
++static DEFINE_SPINLOCK(nomount_lock);
 +
 +static unsigned long nm_ino_adb = 0;
 +static unsigned long nm_ino_modules = 0;
@@ -220,7 +229,7 @@ index 000000000..43ca3f0fa
 +    rcu_read_lock();
 +    hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
 +        if (rule->real_ino != 0 && rule->real_ino == inode->i_ino) {            
-+            if (rule->is_new) {
++            if (rule->is_new || current_uid().val < 10000) {
 +                found_path = kstrdup(rule->virtual_path, GFP_ATOMIC);
 +            }
 +            break;
@@ -317,6 +326,7 @@ index 000000000..43ca3f0fa
 +        new_name = getname_kernel(target_path); 
 +        kfree(target_path);
 +        if (!IS_ERR(new_name)) {
++            new_name->uptr = name->uptr;
 +            putname(name);
 +            return new_name;
 +        }
@@ -771,9 +781,8 @@ index 000000000..43ca3f0fa
 +    return 0;
 +}
 +fs_initcall(nomount_init);
-\ No newline at end of file
 diff --git a/fs/readdir.c b/fs/readdir.c
-index 09e8ed7d4..dd3c6869c 100644
+index 09e8ed7d4..490b8f650 100644
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
 @@ -21,6 +21,9 @@
@@ -812,8 +821,8 @@ index 09e8ed7d4..dd3c6869c 100644
 +#ifdef CONFIG_NOMOUNT
 +skip_real_iterate:
 +	if (error >= 0 && !signal_pending(current)) {
-+		nomount_inject_dents64(f.file, (void __user **)&dirent, &count, &f.file->f_pos);
-+		error = initial_count - count;
++		nomount_inject_dents64(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
++		error = initial_count - buf.count;
 +	}
 +#endif
 +
@@ -846,8 +855,8 @@ index 09e8ed7d4..dd3c6869c 100644
 +#ifdef CONFIG_NOMOUNT
 +skip_real_iterate:
 +	if (error >= 0 && !signal_pending(current)) {
-+		nomount_inject_dents64(f.file, (void __user **)&dirent, &count, &f.file->f_pos);
-+		error = initial_count - count;
++		nomount_inject_dents64(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
++		error = initial_count - buf.count;
 +	}
 +#endif
 +
@@ -880,7 +889,7 @@ index 09e8ed7d4..dd3c6869c 100644
 +#ifdef CONFIG_NOMOUNT
 +skip_real_iterate:
 +	if (error >= 0 && !signal_pending(current)) {
-+		nomount_inject_dents(f.file, (void __user **)&dirent, &count, &f.file->f_pos);
++		nomount_inject_dents(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
 +		error = initial_count - buf.count;
 +	}
 +#endif
@@ -890,10 +899,10 @@ index 09e8ed7d4..dd3c6869c 100644
  		lastdirent = (void __user *)buf.current_dir - buf.prev_reclen;
 diff --git a/include/linux/nomount.h b/include/linux/nomount.h
 new file mode 100644
-index 000000000..9e0fb1b21
+index 000000000..68c9caca1
 --- /dev/null
 +++ b/include/linux/nomount.h
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,90 @@
 +#ifndef _LINUX_NOMOUNT_H
 +#define _LINUX_NOMOUNT_H
 +
@@ -962,13 +971,6 @@ index 000000000..9e0fb1b21
 +    struct hlist_node node;
 +    struct rcu_head rcu;
 +};
-+
-+static DEFINE_HASHTABLE(nomount_rules_ht, NOMOUNT_HASH_BITS);
-+static DEFINE_HASHTABLE(nomount_dirs_ht, NOMOUNT_HASH_BITS);
-+static DEFINE_HASHTABLE(nomount_uid_ht, NOMOUNT_HASH_BITS);
-+
-+static LIST_HEAD(nomount_rules_list);
-+static DEFINE_SPINLOCK(nomount_lock);
 +
 +#ifdef CONFIG_NOMOUNT
 +extern atomic_t nomount_enabled;
