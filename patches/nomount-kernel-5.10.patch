@@ -1,5 +1,5 @@
 diff --git a/fs/Kconfig b/fs/Kconfig
-index c34b9d4e0..8ec1f2b07 100644
+index c34b9d4e04d9..8ec1f2b071d9 100644
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
 @@ -351,4 +351,11 @@ source "fs/unicode/Kconfig"
@@ -15,7 +15,7 @@ index c34b9d4e0..8ec1f2b07 100644
 +
  endmenu
 diff --git a/fs/Makefile b/fs/Makefile
-index c7851875b..0376a2a25 100644
+index c7851875b668..0376a2a258d1 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
 @@ -137,3 +137,4 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
@@ -24,7 +24,7 @@ index c7851875b..0376a2a25 100644
  obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
 +obj-$(CONFIG_NOMOUNT) += nomount.o
 diff --git a/fs/d_path.c b/fs/d_path.c
-index a69e2cd36..8d52e7b00 100644
+index a69e2cd36e6e..c0c878db5a35 100644
 --- a/fs/d_path.c
 +++ b/fs/d_path.c
 @@ -8,6 +8,10 @@
@@ -50,14 +50,14 @@ index a69e2cd36..8d52e7b00 100644
 +            int len = strlen(v_path);
 +            if (buflen < len + 1) {
 +                kfree(v_path);
-+                return ERR_PTR(-ENAMETOOLONG);
-+            }
-+            *--res = '\0';
-+            res -= len;
-+            memcpy(res, v_path, len);
-+            
-+            kfree(v_path);
-+            return res;
++            } else {
++				*--res = '\0';
++				res -= len;
++				memcpy(res, v_path, len);
++				
++				kfree(v_path);
++				return res;
++			}
 +        }
 +    }
 +#endif
@@ -66,7 +66,7 @@ index a69e2cd36..8d52e7b00 100644
  	 * We have various synthetic filesystems that never get mounted.  On
  	 * these filesystems dentries are never used for lookup purposes, and
 diff --git a/fs/namei.c b/fs/namei.c
-index 40e10b159..7d5c5cc04 100644
+index 40e10b159b7e..7d5c5cc04c22 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -43,6 +43,10 @@
@@ -132,10 +132,10 @@ index 40e10b159..7d5c5cc04 100644
  		return retval;
 diff --git a/fs/nomount.c b/fs/nomount.c
 new file mode 100644
-index 000000000..db9c9c327
+index 000000000000..0a203428327e
 --- /dev/null
 +++ b/fs/nomount.c
-@@ -0,0 +1,651 @@
+@@ -0,0 +1,664 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -151,9 +151,10 @@ index 000000000..db9c9c327
 +#include <linux/miscdevice.h>
 +#include <linux/cred.h>
 +#include <linux/vmalloc.h>
++#include <linux/sched/mm.h>
 +#include <linux/nomount.h> 
 +
-+atomic_t nomount_enabled = ATOMIC_INIT(1);
++atomic_t nomount_enabled = ATOMIC_INIT(0);
 +EXPORT_SYMBOL(nomount_enabled);
 +#define NOMOUNT_DISABLED() (atomic_read(&nomount_enabled) == 0)
 +
@@ -230,6 +231,7 @@ index 000000000..db9c9c327
 +    char *found_path = NULL;
 +
 +    if (!inode || NOMOUNT_DISABLED()) return NULL;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return NULL;
 +    if (nomount_is_uid_blocked(current_uid().val)) return NULL;
 +
 +    rcu_read_lock();
@@ -268,6 +270,7 @@ index 000000000..db9c9c327
 +
 +bool nomount_is_traversal_allowed(struct inode *inode, int mask) {
 +    if (!inode || NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return false;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return false;
 +    if (!(mask & MAY_EXEC)) return false;
 +
 +    if ((nm_ino_adb != 0 && inode->i_ino == nm_ino_adb) || 
@@ -283,6 +286,7 @@ index 000000000..db9c9c327
 +    int bkt;
 +    bool match = false;
 +    if (!inode || NOMOUNT_DISABLED()) return false;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return false;
 +
 +    rcu_read_lock();
 +    hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
@@ -323,10 +327,14 @@ index 000000000..db9c9c327
 +{
 +    char *target_path;
 +    struct filename *new_name;
++    unsigned int pflags;
 +
 +    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val) || !name || name->name[0] != '/') 
 +        return name;
 +
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return name;
++
++    pflags = memalloc_nofs_save();
 +    target_path = nomount_resolve_path(name->name);
 +    if (target_path) {
 +        new_name = getname_kernel(target_path); 
@@ -334,9 +342,11 @@ index 000000000..db9c9c327
 +        if (!IS_ERR(new_name)) {
 +            new_name->uptr = name->uptr;
 +            putname(name);
++            memalloc_nofs_restore(pflags);
 +            return new_name;
 +        }
 +    }
++    memalloc_nofs_restore(pflags);
 +    return name;
 +}
 +
@@ -378,6 +388,7 @@ index 000000000..db9c9c327
 +    unsigned long fake_ino;
 +
 +    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 +
 +    page_buf = __getname();
 +    if (!page_buf) return;
@@ -436,6 +447,7 @@ index 000000000..db9c9c327
 +    unsigned long fake_ino;
 +
 +    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 +
 +    page_buf = __getname();
 +    if (!page_buf) return;
@@ -783,12 +795,13 @@ index 000000000..db9c9c327
 +    spin_lock_init(&nomount_lock);
 +    ret = misc_register(&nomount_device);
 +    if (ret) return ret;
++    atomic_set(&nomount_enabled, 1);
 +    pr_info("NoMount: Loaded\n");
 +    return 0;
 +}
 +fs_initcall(nomount_init);
 diff --git a/fs/readdir.c b/fs/readdir.c
-index 09e8ed7d4..490b8f650 100644
+index 09e8ed7d4161..490b8f6507a0 100644
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
 @@ -21,6 +21,9 @@
@@ -905,7 +918,7 @@ index 09e8ed7d4..490b8f650 100644
  		lastdirent = (void __user *)buf.current_dir - buf.prev_reclen;
 diff --git a/include/linux/nomount.h b/include/linux/nomount.h
 new file mode 100644
-index 000000000..68c9caca1
+index 000000000000..68c9caca1874
 --- /dev/null
 +++ b/include/linux/nomount.h
 @@ -0,0 +1,90 @@

@@ -24,7 +24,7 @@ index 2461d8986..378e46fb1 100644
  obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
 +obj-$(CONFIG_NOMOUNT) += nomount.o
 diff --git a/fs/d_path.c b/fs/d_path.c
-index cd60c7535..e3c97cb80 100644
+index cd60c7535..1915232ff 100644
 --- a/fs/d_path.c
 +++ b/fs/d_path.c
 @@ -8,6 +8,10 @@
@@ -38,7 +38,7 @@ index cd60c7535..e3c97cb80 100644
  struct prepend_buffer {
  	char *buf;
  	int len;
-@@ -268,6 +272,21 @@ char *d_path(const struct path *path, char *buf, int buflen)
+@@ -268,6 +272,25 @@ char *d_path(const struct path *path, char *buf, int buflen)
  	DECLARE_BUFFER(b, buf, buflen);
  	struct path root;
  
@@ -48,11 +48,15 @@ index cd60c7535..e3c97cb80 100644
 +        
 +        if (v_path) {
 +            int len = strlen(v_path);
-+            prepend_char(&b, 0);
-+            prepend(&b, v_path, len);
-+            
-+            kfree(v_path);
-+            return extract_string(&b);
++            if (buflen < len + 1) {
++                kfree(v_path);
++            } else {
++                prepend_char(&b, 0);
++                prepend(&b, v_path, len);
++                
++                kfree(v_path);
++                return extract_string(&b);
++            }
 +        }
 +    }
 +#endif
@@ -126,10 +130,10 @@ index 7dd7e5271..b48ac03b0 100644
  		return retval;
 diff --git a/fs/nomount.c b/fs/nomount.c
 new file mode 100644
-index 000000000..db9c9c327
+index 000000000..0a2034283
 --- /dev/null
 +++ b/fs/nomount.c
-@@ -0,0 +1,651 @@
+@@ -0,0 +1,664 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -145,9 +149,10 @@ index 000000000..db9c9c327
 +#include <linux/miscdevice.h>
 +#include <linux/cred.h>
 +#include <linux/vmalloc.h>
++#include <linux/sched/mm.h>
 +#include <linux/nomount.h> 
 +
-+atomic_t nomount_enabled = ATOMIC_INIT(1);
++atomic_t nomount_enabled = ATOMIC_INIT(0);
 +EXPORT_SYMBOL(nomount_enabled);
 +#define NOMOUNT_DISABLED() (atomic_read(&nomount_enabled) == 0)
 +
@@ -224,6 +229,7 @@ index 000000000..db9c9c327
 +    char *found_path = NULL;
 +
 +    if (!inode || NOMOUNT_DISABLED()) return NULL;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return NULL;
 +    if (nomount_is_uid_blocked(current_uid().val)) return NULL;
 +
 +    rcu_read_lock();
@@ -262,6 +268,7 @@ index 000000000..db9c9c327
 +
 +bool nomount_is_traversal_allowed(struct inode *inode, int mask) {
 +    if (!inode || NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return false;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return false;
 +    if (!(mask & MAY_EXEC)) return false;
 +
 +    if ((nm_ino_adb != 0 && inode->i_ino == nm_ino_adb) || 
@@ -277,6 +284,7 @@ index 000000000..db9c9c327
 +    int bkt;
 +    bool match = false;
 +    if (!inode || NOMOUNT_DISABLED()) return false;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return false;
 +
 +    rcu_read_lock();
 +    hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
@@ -317,10 +325,14 @@ index 000000000..db9c9c327
 +{
 +    char *target_path;
 +    struct filename *new_name;
++    unsigned int pflags;
 +
 +    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val) || !name || name->name[0] != '/') 
 +        return name;
 +
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return name;
++
++    pflags = memalloc_nofs_save();
 +    target_path = nomount_resolve_path(name->name);
 +    if (target_path) {
 +        new_name = getname_kernel(target_path); 
@@ -328,9 +340,11 @@ index 000000000..db9c9c327
 +        if (!IS_ERR(new_name)) {
 +            new_name->uptr = name->uptr;
 +            putname(name);
++            memalloc_nofs_restore(pflags);
 +            return new_name;
 +        }
 +    }
++    memalloc_nofs_restore(pflags);
 +    return name;
 +}
 +
@@ -372,6 +386,7 @@ index 000000000..db9c9c327
 +    unsigned long fake_ino;
 +
 +    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 +
 +    page_buf = __getname();
 +    if (!page_buf) return;
@@ -430,6 +445,7 @@ index 000000000..db9c9c327
 +    unsigned long fake_ino;
 +
 +    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 +
 +    page_buf = __getname();
 +    if (!page_buf) return;
@@ -777,6 +793,7 @@ index 000000000..db9c9c327
 +    spin_lock_init(&nomount_lock);
 +    ret = misc_register(&nomount_device);
 +    if (ret) return ret;
++    atomic_set(&nomount_enabled, 1);
 +    pr_info("NoMount: Loaded\n");
 +    return 0;
 +}
