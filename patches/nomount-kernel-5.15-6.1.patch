@@ -130,10 +130,10 @@ index f376c938f30d..be9961043531 100644
  		return retval;
 diff --git a/fs/nomount.c b/fs/nomount.c
 new file mode 100644
-index 000000000000..c164724ec096
+index 000000000000..b659721b49a9
 --- /dev/null
 +++ b/fs/nomount.c
-@@ -0,0 +1,741 @@
+@@ -0,0 +1,780 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -150,6 +150,7 @@ index 000000000000..c164724ec096
 +#include <linux/cred.h>
 +#include <linux/vmalloc.h>
 +#include <linux/sched/mm.h>
++#include <linux/statfs.h>
 +#include <linux/nomount.h> 
 +
 +atomic_t nomount_enabled = ATOMIC_INIT(0);
@@ -628,6 +629,44 @@ index 000000000000..c164724ec096
 +    kfree(v_path);
 +}
 +
++void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
++{
++    char *v_path;
++    char *parent_path;
++    char *last_slash;
++    struct path p_parent;
++    bool is_new_dummy;
++
++    if (NOMOUNT_DISABLED()) return;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
++
++    struct inode *inode = d_backing_inode(path->dentry);
++    if (!inode) return;
++
++    v_path = nomount_get_rule_info(inode, &is_new_dummy);
++    if (!v_path) return;
++
++    parent_path = kstrdup(v_path, GFP_ATOMIC);
++    if (!parent_path) {
++        kfree(v_path);
++        return;
++    }
++
++    last_slash = strrchr(parent_path, '/');
++    if (last_slash) {
++        if (last_slash == parent_path) *(last_slash + 1) = '\0';
++        else *last_slash = '\0';
++
++        if (kern_path(parent_path, LOOKUP_FOLLOW, &p_parent) == 0) {
++            vfs_statfs(&p_parent, buf);
++            path_put(&p_parent);
++        }
++    }
++
++    kfree(parent_path);
++    kfree(v_path);
++}
++
 +static int nomount_ioctl_add_rule(unsigned long arg)
 +{
 +    struct nomount_ioctl_data data;
@@ -1032,7 +1071,7 @@ index 357a1db410ec..35a4c67a8804 100644
 +	}
  
  	generic_fillattr(mnt_userns, inode, stat);
-+
++	
 +#ifdef CONFIG_NOMOUNT
 +    nomount_spoof_stat(path, stat);
 +#endif
@@ -1040,12 +1079,38 @@ index 357a1db410ec..35a4c67a8804 100644
  	return 0;
  }
  EXPORT_SYMBOL(vfs_getattr_nosec);
+diff --git a/fs/statfs.c b/fs/statfs.c
+index 2a37f9f3dba1..3799bf3d11c0 100644
+--- a/fs/statfs.c
++++ b/fs/statfs.c
+@@ -11,6 +11,10 @@
+ #include <linux/compat.h>
+ #include "internal.h"
+ 
++#ifdef CONFIG_NOMOUNT
++#include <linux/nomount.h>
++#endif
++
+ static int flags_by_mnt(int mnt_flags)
+ {
+ 	int flags = 0;
+@@ -90,6 +94,10 @@ int vfs_statfs(const struct path *path, struct kstatfs *buf)
+ 	error = statfs_by_dentry(path->dentry, buf);
+ 	if (!error)
+ 		buf->f_flags = calculate_f_flags(path->mnt);
++#ifdef CONFIG_NOMOUNT
++		nomount_spoof_statfs(path, buf);
++#endif
++
+ 	return error;
+ }
+ EXPORT_SYMBOL_NS(vfs_statfs, ANDROID_GKI_VFS_EXPORT_ONLY);
 diff --git a/include/linux/nomount.h b/include/linux/nomount.h
 new file mode 100644
-index 000000000000..84bec476a218
+index 000000000000..2b80daf6181e
 --- /dev/null
 +++ b/include/linux/nomount.h
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,95 @@
 +#ifndef _LINUX_NOMOUNT_H
 +#define _LINUX_NOMOUNT_H
 +
@@ -1126,6 +1191,8 @@ index 000000000000..84bec476a218
 +bool nomount_is_traversal_allowed(struct inode *inode, int mask);
 +bool nomount_is_injected_file(struct inode *inode);
 +void nomount_spoof_stat(const struct path *path, struct kstat *stat);
++struct kstatfs;
++void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf);
 +#else
 +static inline char *nomount_resolve_path(const char *p) { return NULL; }
 +static inline struct filename *nomount_getname_hook(struct filename *name) { return name; }
@@ -1135,6 +1202,7 @@ index 000000000000..84bec476a218
 +static inline bool nomount_is_traversal_allowed(struct inode *inode, int mask) { return false; }
 +static inline bool nomount_is_injected_file(struct inode *inode) { return false; }
 +static inline void nomount_spoof_stat(const struct path *path, struct kstat *stat) {}
++static inline void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf) {}
 +#endif
 +
 +#endif /* _LINUX_NOMOUNT_H */
