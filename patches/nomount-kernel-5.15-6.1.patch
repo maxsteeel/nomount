@@ -130,10 +130,10 @@ index f376c938f30d..be9961043531 100644
  		return retval;
 diff --git a/fs/nomount.c b/fs/nomount.c
 new file mode 100644
-index 000000000000..0a203428327e
+index 000000000000..c164724ec096
 --- /dev/null
 +++ b/fs/nomount.c
-@@ -0,0 +1,664 @@
+@@ -0,0 +1,741 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -551,6 +551,83 @@ index 000000000000..0a203428327e
 +    kfree(path_copy);
 +}
 +
++static char *nomount_get_rule_info(struct inode *inode, bool *is_new) {
++    struct nomount_rule *rule;
++    int bkt;
++    char *v_path = NULL;
++
++    rcu_read_lock();
++    hash_for_each_rcu(nomount_rules_ht, bkt, rule, node) {
++        if (rule->real_ino != 0 && rule->real_ino == inode->i_ino) {
++            if (rule->is_new || current_uid().val < 10000) {
++                v_path = kstrdup(rule->virtual_path, GFP_ATOMIC);
++                if (is_new) *is_new = rule->is_new;
++            }
++            break;
++        }
++    }
++    rcu_read_unlock();
++    return v_path;
++}
++
++void nomount_spoof_stat(const struct path *path, struct kstat *stat)
++{
++    char *v_path;
++    char *parent_path;
++    char *last_slash;
++    struct path p_parent;
++    struct inode *parent_inode, *inode;
++    bool is_new_file = false;
++    if (NOMOUNT_DISABLED()) return;
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
++
++    inode = d_backing_inode(path->dentry);
++    if (!inode) return;
++
++    v_path = nomount_get_rule_info(inode, &is_new_file);
++    if (!v_path) return;
++
++    parent_path = kstrdup(v_path, GFP_ATOMIC);
++    if (!parent_path) {
++        kfree(v_path);
++        return;
++    }
++
++    last_slash = strrchr(parent_path, '/');
++    if (last_slash) {
++        if (last_slash == parent_path) {
++            *(last_slash + 1) = '\0';
++        } else {
++            *last_slash = '\0';
++        }
++
++        if (kern_path(parent_path, LOOKUP_FOLLOW, &p_parent) == 0) {
++            parent_inode = d_backing_inode(p_parent.dentry);
++            
++            if (parent_inode) {
++                stat->dev = parent_inode->i_sb->s_dev;
++                stat->blksize = (unsigned long)parent_inode->i_sb->s_blocksize;
++                stat->uid = parent_inode->i_uid;
++                stat->gid = parent_inode->i_gid;
++                stat->ino = parent_inode->i_ino ^ (stat->ino & 0xFFFF);
++                
++                // test
++                if (is_new_file) {
++                    stat->ino ^= 0x80000000;
++                } else {
++                    stat->ino ^= 0x40000000;
++                }
++
++                stat->rdev = parent_inode->i_rdev;
++            }
++            path_put(&p_parent);
++        }
++    }
++
++    kfree(parent_path);
++    kfree(v_path);
++}
++
 +static int nomount_ioctl_add_rule(unsigned long arg)
 +{
 +    struct nomount_ioctl_data data;
@@ -914,12 +991,61 @@ index 09e8ed7d4161..490b8f6507a0 100644
  	if (buf.prev_reclen) {
  		struct compat_linux_dirent __user * lastdirent;
  		lastdirent = (void __user *)buf.current_dir - buf.prev_reclen;
+diff --git a/fs/stat.c b/fs/stat.c
+index 357a1db410ec..35a4c67a8804 100644
+--- a/fs/stat.c
++++ b/fs/stat.c
+@@ -18,6 +18,10 @@
+ #include <linux/pagemap.h>
+ #include <linux/compat.h>
+ 
++#ifdef CONFIG_NOMOUNT
++#include <linux/nomount.h>
++#endif
++
+ #include <linux/uaccess.h>
+ #include <asm/unistd.h>
+ 
+@@ -95,6 +99,7 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+ {
+ 	struct user_namespace *mnt_userns;
+ 	struct inode *inode = d_backing_inode(path->dentry);
++	int ret = 0;
+ 
+ 	memset(stat, 0, sizeof(*stat));
+ 	stat->result_mask |= STATX_BASIC_STATS;
+@@ -119,11 +124,23 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+ 				  STATX_ATTR_DAX);
+ 
+ 	mnt_userns = mnt_user_ns(path->mnt);
+-	if (inode->i_op->getattr)
+-		return inode->i_op->getattr(mnt_userns, path, stat,
++	if (inode->i_op->getattr) {
++		ret = inode->i_op->getattr(mnt_userns, path, stat,
+ 					    request_mask, query_flags);
++        
++#ifdef CONFIG_NOMOUNT
++        if (ret == 0)
++            nomount_spoof_stat(path, stat);
++#endif
++        return ret;
++	}
+ 
+ 	generic_fillattr(mnt_userns, inode, stat);
++
++#ifdef CONFIG_NOMOUNT
++    nomount_spoof_stat(path, stat);
++#endif
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL(vfs_getattr_nosec);
 diff --git a/include/linux/nomount.h b/include/linux/nomount.h
 new file mode 100644
-index 000000000000..68c9caca1874
+index 000000000000..84bec476a218
 --- /dev/null
 +++ b/include/linux/nomount.h
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,92 @@
 +#ifndef _LINUX_NOMOUNT_H
 +#define _LINUX_NOMOUNT_H
 +
@@ -999,6 +1125,7 @@ index 000000000000..68c9caca1874
 +char *nomount_get_virtual_path_for_inode(struct inode *inode);
 +bool nomount_is_traversal_allowed(struct inode *inode, int mask);
 +bool nomount_is_injected_file(struct inode *inode);
++void nomount_spoof_stat(const struct path *path, struct kstat *stat);
 +#else
 +static inline char *nomount_resolve_path(const char *p) { return NULL; }
 +static inline struct filename *nomount_getname_hook(struct filename *name) { return name; }
@@ -1007,6 +1134,7 @@ index 000000000000..68c9caca1874
 +static inline char *nomount_get_virtual_path_for_inode(struct inode *inode) { return NULL; }
 +static inline bool nomount_is_traversal_allowed(struct inode *inode, int mask) { return false; }
 +static inline bool nomount_is_injected_file(struct inode *inode) { return false; }
++static inline void nomount_spoof_stat(const struct path *path, struct kstat *stat) {}
 +#endif
 +
 +#endif /* _LINUX_NOMOUNT_H */

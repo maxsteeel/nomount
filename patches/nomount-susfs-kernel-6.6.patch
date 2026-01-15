@@ -1,8 +1,8 @@
 diff --git a/fs/Kconfig b/fs/Kconfig
-index 2c756044e..0c9e83023 100644
+index 2fb08d05d..70c64078d 100644
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
-@@ -387,4 +387,11 @@ source "fs/unicode/Kconfig"
+@@ -405,4 +405,11 @@ source "fs/unicode/Kconfig"
  config IO_WQ
  	bool
  
@@ -15,21 +15,21 @@ index 2c756044e..0c9e83023 100644
 +
  endmenu
 diff --git a/fs/Makefile b/fs/Makefile
-index 2461d8986..378e46fb1 100644
+index e27ac368b..f0bdce9c3 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
-@@ -141,3 +141,4 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
+@@ -137,3 +137,4 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
  obj-$(CONFIG_EROFS_FS)		+= erofs/
  obj-$(CONFIG_VBOXSF_FS)		+= vboxsf/
  obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
 +obj-$(CONFIG_NOMOUNT) += nomount.o
 diff --git a/fs/d_path.c b/fs/d_path.c
-index cd60c7535..1915232ff 100644
+index 5f4da5c8d..d5bd8ed49 100644
 --- a/fs/d_path.c
 +++ b/fs/d_path.c
-@@ -8,6 +8,10 @@
- #include <linux/prefetch.h>
+@@ -9,6 +9,10 @@
  #include "mount.h"
+ #include "internal.h"
  
 +#ifdef CONFIG_NOMOUNT
 +#include <linux/nomount.h>
@@ -38,7 +38,7 @@ index cd60c7535..1915232ff 100644
  struct prepend_buffer {
  	char *buf;
  	int len;
-@@ -268,6 +272,25 @@ char *d_path(const struct path *path, char *buf, int buflen)
+@@ -267,6 +271,25 @@ char *d_path(const struct path *path, char *buf, int buflen)
  	DECLARE_BUFFER(b, buf, buflen);
  	struct path root;
  
@@ -65,10 +65,10 @@ index cd60c7535..1915232ff 100644
  	 * We have various synthetic filesystems that never get mounted.  On
  	 * these filesystems dentries are never used for lookup purposes, and
 diff --git a/fs/namei.c b/fs/namei.c
-index 7dd7e5271..b48ac03b0 100644
+index 2b4cf4661..507077b78 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -39,6 +39,9 @@
+@@ -41,6 +41,9 @@
  #include <linux/bitops.h>
  #include <linux/init_task.h>
  #include <linux/uaccess.h>
@@ -78,7 +78,7 @@ index 7dd7e5271..b48ac03b0 100644
  #if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
  #include <linux/susfs_def.h>
  #endif
-@@ -211,7 +214,15 @@ getname_flags(const char __user *filename, int flags, int *empty)
+@@ -213,7 +216,15 @@ getname_flags(const char __user *filename, int flags, int *empty)
  
  	result->uptr = filename;
  	result->aname = NULL;
@@ -94,7 +94,7 @@ index 7dd7e5271..b48ac03b0 100644
  	return result;
  }
  
-@@ -411,6 +422,16 @@ int generic_permission(struct user_namespace *mnt_userns, struct inode *inode,
+@@ -414,6 +425,16 @@ int generic_permission(struct mnt_idmap *idmap, struct inode *inode,
  {
  	int ret;
  
@@ -111,7 +111,7 @@ index 7dd7e5271..b48ac03b0 100644
  	/*
  	 * Do the basic permission checks.
  	 */
-@@ -515,6 +536,16 @@ int inode_permission(struct user_namespace *mnt_userns,
+@@ -518,6 +539,16 @@ int inode_permission(struct mnt_idmap *idmap,
  {
  	int retval;
  
@@ -799,7 +799,7 @@ index 000000000..0a2034283
 +}
 +fs_initcall(nomount_init);
 diff --git a/fs/readdir.c b/fs/readdir.c
-index fe6c96984..6f0a27af1 100644
+index 121909714..5f9f8a92d 100644
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
 @@ -21,6 +21,9 @@
@@ -812,7 +812,7 @@ index fe6c96984..6f0a27af1 100644
  
  #include <asm/unaligned.h>
  
-@@ -371,6 +374,9 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -410,6 +413,9 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
  		.current_dir = dirent
  	};
  	int error;
@@ -822,17 +822,18 @@ index fe6c96984..6f0a27af1 100644
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	struct inode *inode;
  #endif
-@@ -399,10 +405,25 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
- 	buf.is_base_dentry_android_data_root_dir = false;
- 	buf.is_base_dentry_sdcard_root_dir = false;
+@@ -440,9 +446,26 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
  orig_flow:
-+#endif
+ 	buf.idmap = mnt_idmap(f.file->f_path.mnt);
+ #endif
++
 +#ifdef CONFIG_NOMOUNT
 +	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
 +		error = 0;
 +		goto skip_real_iterate;
 +	}
- #endif
++#endif
++
  	error = iterate_dir(f.file, &buf.ctx);
  	if (error >= 0)
  		error = buf.error;
@@ -848,7 +849,7 @@ index fe6c96984..6f0a27af1 100644
  	if (buf.prev_reclen) {
  		struct linux_dirent __user * lastdirent;
  		lastdirent = (void __user *)buf.current_dir - buf.prev_reclen;
-@@ -508,6 +529,9 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
+@@ -550,6 +573,9 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
  		.current_dir = dirent
  	};
  	int error;
@@ -858,17 +859,18 @@ index fe6c96984..6f0a27af1 100644
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	struct inode *inode;
  #endif
-@@ -536,10 +560,25 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
- 	buf.is_base_dentry_android_data_root_dir = false;
- 	buf.is_base_dentry_sdcard_root_dir = false;
+@@ -580,9 +606,26 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
  orig_flow:
-+#endif
+ 	buf.idmap = mnt_idmap(f.file->f_path.mnt);
+ #endif
++
 +#ifdef CONFIG_NOMOUNT
 +	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
 +		error = 0;
 +		goto skip_real_iterate;
 +	}
- #endif
++#endif
++
  	error = iterate_dir(f.file, &buf.ctx);
  	if (error >= 0)
  		error = buf.error;
@@ -884,7 +886,7 @@ index fe6c96984..6f0a27af1 100644
  	if (buf.prev_reclen) {
  		struct linux_dirent64 __user * lastdirent;
  		typeof(lastdirent->d_off) d_off = buf.ctx.pos;
-@@ -784,6 +823,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -830,6 +873,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
  		.count = count
  	};
  	int error;
@@ -894,17 +896,18 @@ index fe6c96984..6f0a27af1 100644
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	struct inode *inode;
  #endif
-@@ -812,10 +854,25 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
- 	buf.is_base_dentry_android_data_root_dir = false;
- 	buf.is_base_dentry_sdcard_root_dir = false;
+@@ -860,9 +906,26 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
  orig_flow:
-+#endif
+ 	buf.idmap = mnt_idmap(f.file->f_path.mnt);
+ #endif
++
 +#ifdef CONFIG_NOMOUNT
 +	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
 +		error = 0;
 +		goto skip_real_iterate;
 +	}
- #endif
++#endif
++
  	error = iterate_dir(f.file, &buf.ctx);
  	if (error >= 0)
  		error = buf.error;
