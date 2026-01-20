@@ -1,5 +1,5 @@
 diff --git a/fs/Kconfig b/fs/Kconfig
-index 2fb08d05d158..70c64078d67e 100644
+index 2fb08d05d..70c64078d 100644
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
 @@ -405,4 +405,11 @@ source "fs/unicode/Kconfig"
@@ -15,7 +15,7 @@ index 2fb08d05d158..70c64078d67e 100644
 +
  endmenu
 diff --git a/fs/Makefile b/fs/Makefile
-index c6963a9a4d0a..043b129b299c 100644
+index c6963a9a4..043b129b2 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
 @@ -135,3 +135,4 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
@@ -24,7 +24,7 @@ index c6963a9a4d0a..043b129b299c 100644
  obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
 +obj-$(CONFIG_NOMOUNT) += nomount.o
 diff --git a/fs/d_path.c b/fs/d_path.c
-index 5f4da5c8d5db..d5bd8ed49602 100644
+index 5f4da5c8d..d5bd8ed49 100644
 --- a/fs/d_path.c
 +++ b/fs/d_path.c
 @@ -9,6 +9,10 @@
@@ -65,7 +65,7 @@ index 5f4da5c8d5db..d5bd8ed49602 100644
  	 * We have various synthetic filesystems that never get mounted.  On
  	 * these filesystems dentries are never used for lookup purposes, and
 diff --git a/fs/namei.c b/fs/namei.c
-index b31b583f1878..009b92af085c 100644
+index b31b583f1..009b92af0 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -41,6 +41,9 @@
@@ -130,10 +130,10 @@ index b31b583f1878..009b92af085c 100644
  		return retval;
 diff --git a/fs/nomount.c b/fs/nomount.c
 new file mode 100644
-index 000000000000..b659721b49a9
+index 000000000..54127152d
 --- /dev/null
 +++ b/fs/nomount.c
-@@ -0,0 +1,780 @@
+@@ -0,0 +1,914 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -151,6 +151,7 @@ index 000000000000..b659721b49a9
 +#include <linux/vmalloc.h>
 +#include <linux/sched/mm.h>
 +#include <linux/statfs.h>
++#include <linux/workqueue.h>
 +#include <linux/nomount.h> 
 +
 +atomic_t nomount_enabled = ATOMIC_INIT(0);
@@ -174,9 +175,66 @@ index 000000000000..b659721b49a9
 +static unsigned long nm_ino_adb = 0;
 +static unsigned long nm_ino_modules = 0;
 +
++/* Critical processes that NoMount should ignore to avoid instability */
++static const char *const critical_processes[] = {
++    "init",
++    "ueventd",
++    "watchdogd",
++    "vold",             // Volume Daemon (USB/SDCard)
++    "logd",             // Logging
++    "servicemanager",   // Binder
++    "hwservicemanager", // Hardware Binder
++    "lmkd",             // Low Memory Killer
++    "tombstoned",       // Crash dumps
++    "zygote",           // Android App Spawner
++    "zygote64",
++    "surfaceflinger",   // UI Compositor 
++    NULL
++};
++
++/* Returns true if the current process should be ignored */
++static bool nomount_is_critical_process(void) {
++    const char *const *proc_name;
++
++    if (current->flags & PF_KTHREAD) 
++        return true;
++
++    if (current->tgid == 1) 
++        return true;
++
++    for (proc_name = critical_processes; *proc_name; proc_name++) {
++        if (strcmp(current->comm, *proc_name) == 0)
++            return true;
++    }
++
++    return false;
++}
++
++bool nomount_should_skip(void) {
++    bool skip = false;
++
++    if (NOMOUNT_DISABLED()) 
++        return true;
++
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) 
++        return true;
++    
++    if (unlikely(!current)) 
++        return true;
++
++    rcu_read_lock();
++    if (nomount_is_critical_process()) {
++        skip = true;
++    }
++    rcu_read_unlock();
++
++    return skip;
++}
++EXPORT_SYMBOL(nomount_should_skip);
++
 +static bool nomount_is_uid_blocked(uid_t uid) {
 +    struct nomount_uid_node *entry;
-+    if (NOMOUNT_DISABLED()) return false;
++    if (nomount_should_skip()) return false;
 +    
 +    rcu_read_lock();
 +    hash_for_each_possible_rcu(nomount_uid_ht, entry, node, uid) {
@@ -214,7 +272,9 @@ index 000000000000..b659721b49a9
 +    int err;
 +    err = kern_path(path_name, LOOKUP_FOLLOW, &path);
 +    if (!err) {
++        d_drop(path.dentry);
 +        d_invalidate(path.dentry);
++        path_put(&path);
 +    }
 +}
 +
@@ -251,8 +311,8 @@ index 000000000000..b659721b49a9
 +    struct path path;
 +    unsigned long ino = 0;
 +    if (kern_path(path_str, LOOKUP_FOLLOW, &path) == 0) {
-+        if (path.dentry && path.dentry->d_inode) {
-+            ino = path.dentry->d_inode->i_ino;
++        if (path.dentry && d_backing_inode(path.dentry)) {
++            ino = d_backing_inode(path.dentry)->i_ino;
 +        }
 +        path_put(&path);
 +    }
@@ -260,11 +320,25 @@ index 000000000000..b659721b49a9
 +}
 +
 +static void nomount_refresh_critical_inodes(void) {
-+    if (nm_ino_adb == 0) 
-+        nm_ino_adb = nomount_get_inode_by_path("/data/adb");
++    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) 
++        return;
++
++    unsigned long current_adb = READ_ONCE(nm_ino_adb);
++    unsigned long current_mod = READ_ONCE(nm_ino_modules);
++
++    if (current_adb == 0) {
++        unsigned long ino = nomount_get_inode_by_path("/data/adb");
++        if (ino != 0) {
++            WRITE_ONCE(nm_ino_adb, ino);
++        }
++    }
 +    
-+    if (nm_ino_modules == 0) 
-+        nm_ino_modules = nomount_get_inode_by_path("/data/adb/modules");
++    if (current_mod == 0) {
++        unsigned long ino = nomount_get_inode_by_path("/data/adb/modules");
++        if (ino != 0) {
++            WRITE_ONCE(nm_ino_modules, ino);
++        }
++    }
 +}
 +
 +bool nomount_is_traversal_allowed(struct inode *inode, int mask) {
@@ -299,13 +373,37 @@ index 000000000000..b659721b49a9
 +    return match;
 +}
 +
++// delayed workqueue
++static void nomount_startup_check(struct work_struct *work);
++static DECLARE_DELAYED_WORK(nm_startup_work, nomount_startup_check);
++static void nomount_force_refresh_all(void);
++
++static void nomount_startup_check(struct work_struct *work) {
++    unsigned long adb_ino;
++
++    adb_ino = nomount_get_inode_by_path("/data/adb");
++
++    if (adb_ino != 0) {
++        pr_info("NoMount: /data detected (inode %lu). Loading...\n", adb_ino);
++        nomount_refresh_critical_inodes();
++        nomount_force_refresh_all();
++        atomic_set(&nomount_enabled, 1);
++        pr_info("NoMount: Loaded\n");
++        return;
++    }
++
++    pr_info("NoMount: Waiting for /data...\n");
++    schedule_delayed_work(&nm_startup_work, HZ * 2);
++}
++
++
 +char *nomount_resolve_path(const char *pathname)
 +{
 +    struct nomount_rule *rule;
 +    char *target = NULL;
 +    u32 hash;
 +
-+    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val) || !pathname) return NULL;
++    if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val) || !pathname) return NULL;
 +    hash = full_name_hash(NULL, pathname, strlen(pathname));
 +
 +    rcu_read_lock();
@@ -328,7 +426,7 @@ index 000000000000..b659721b49a9
 +    struct filename *new_name;
 +    unsigned int pflags;
 +
-+    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val) || !name || name->name[0] != '/') 
++    if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val) || !name || name->name[0] != '/') 
 +        return name;
 +
 +    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return name;
@@ -386,7 +484,7 @@ index 000000000000..b659721b49a9
 +    int name_len, reclen;
 +    unsigned long fake_ino;
 +
-+    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return;
++    if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val)) return;
 +    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 +
 +    page_buf = __getname();
@@ -445,7 +543,7 @@ index 000000000000..b659721b49a9
 +    int name_len, reclen;
 +    unsigned long fake_ino;
 +
-+    if (NOMOUNT_DISABLED() || nomount_is_uid_blocked(current_uid().val)) return;
++    if (nomount_should_skip() || nomount_is_uid_blocked(current_uid().val)) return;
 +    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 +
 +    page_buf = __getname();
@@ -579,7 +677,7 @@ index 000000000000..b659721b49a9
 +    struct path p_parent;
 +    struct inode *parent_inode, *inode;
 +    bool is_new_file = false;
-+    if (NOMOUNT_DISABLED()) return;
++    if (nomount_should_skip()) return;
 +    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 +
 +    inode = d_backing_inode(path->dentry);
@@ -637,7 +735,7 @@ index 000000000000..b659721b49a9
 +    struct path p_parent;
 +    bool is_new_dummy;
 +
-+    if (NOMOUNT_DISABLED()) return;
++    if (nomount_should_skip()) return;
 +    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return;
 +
 +    struct inode *inode = d_backing_inode(path->dentry);
@@ -665,6 +763,40 @@ index 000000000000..b659721b49a9
 +
 +    kfree(parent_path);
 +    kfree(v_path);
++}
++
++/* Forces cache flushing for all active rules. */
++static void nomount_force_refresh_all(void) {
++    struct nomount_rule *rule;
++    char **paths = NULL;
++    int count = 0, i;
++
++    spin_lock(&nomount_lock);
++
++    list_for_each_entry(rule, &nomount_rules_list, list) {
++        count++;
++    }
++    
++    if (count > 0) {
++        paths = kmalloc_array(count, sizeof(char *), GFP_ATOMIC);
++        if (paths) {
++            i = 0;
++            list_for_each_entry(rule, &nomount_rules_list, list) {
++                paths[i++] = kstrdup(rule->virtual_path, GFP_ATOMIC);
++            }
++        }
++    }
++    spin_unlock(&nomount_lock);
++
++    if (paths) {
++        for (i = 0; i < count; i++) {
++            if (paths[i]) {
++                nomount_flush_dcache(paths[i]); 
++                kfree(paths[i]);
++            }
++        }
++        kfree(paths);
++    }
 +}
 +
 +static int nomount_ioctl_add_rule(unsigned long arg)
@@ -715,6 +847,8 @@ index 000000000000..b659721b49a9
 +        rule->real_ino = 0;
 +        rule->real_dev = 0;
 +    }
++
++    nomount_flush_dcache(rule->virtual_path);
 +    
 +    spin_lock(&nomount_lock);
 +    hash_add_rcu(nomount_rules_ht, &rule->node, hash);
@@ -728,7 +862,7 @@ index 000000000000..b659721b49a9
 +        nomount_auto_inject_parent(rule->virtual_path, type);
 +        rule->is_new = true;
 +    }
-+    nomount_flush_dcache(rule->virtual_path);
++
 +    return 0;
 +}
 +
@@ -909,13 +1043,13 @@ index 000000000000..b659721b49a9
 +    spin_lock_init(&nomount_lock);
 +    ret = misc_register(&nomount_device);
 +    if (ret) return ret;
-+    atomic_set(&nomount_enabled, 1);
-+    pr_info("NoMount: Loaded\n");
++    schedule_delayed_work(&nm_startup_work, HZ * 5);
 +    return 0;
 +}
-+fs_initcall(nomount_init);
++
++late_initcall(nomount_init);
 diff --git a/fs/readdir.c b/fs/readdir.c
-index c8c46e294431..288316709d4b 100644
+index c8c46e294..288316709 100644
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
 @@ -21,6 +21,9 @@
@@ -1031,7 +1165,7 @@ index c8c46e294431..288316709d4b 100644
  		struct compat_linux_dirent __user * lastdirent;
  		lastdirent = (void __user *)buf.current_dir - buf.prev_reclen;
 diff --git a/fs/stat.c b/fs/stat.c
-index 517fa4ed885e..eb0cf15b79a9 100644
+index 517fa4ed8..eb0cf15b7 100644
 --- a/fs/stat.c
 +++ b/fs/stat.c
 @@ -20,6 +20,10 @@
@@ -1081,7 +1215,7 @@ index 517fa4ed885e..eb0cf15b79a9 100644
  }
  EXPORT_SYMBOL(vfs_getattr_nosec);
 diff --git a/fs/statfs.c b/fs/statfs.c
-index 2a37f9f3dba1..3799bf3d11c0 100644
+index 2a37f9f3d..3799bf3d1 100644
 --- a/fs/statfs.c
 +++ b/fs/statfs.c
 @@ -11,6 +11,10 @@
@@ -1108,7 +1242,7 @@ index 2a37f9f3dba1..3799bf3d11c0 100644
  EXPORT_SYMBOL_NS(vfs_statfs, ANDROID_GKI_VFS_EXPORT_ONLY);
 diff --git a/include/linux/nomount.h b/include/linux/nomount.h
 new file mode 100644
-index 000000000000..2b80daf6181e
+index 000000000..e6865ca2e
 --- /dev/null
 +++ b/include/linux/nomount.h
 @@ -0,0 +1,95 @@
