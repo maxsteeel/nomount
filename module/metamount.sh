@@ -65,5 +65,7 @@ for mod_path in "$MODULES_DIR"/*; do
 done
 
 echo "=== Injection Complete: $(date) ===" >> "$LOG_FILE"
+"$LOADER" refresh >/dev/null 2>&1 &
+echo "Refresh command sent to /dev/nomount!" >> "$LOG_FILE"
 
 sh "$MODDIR/monitor.sh" "$ACTIVE_MODULES_COUNT" &

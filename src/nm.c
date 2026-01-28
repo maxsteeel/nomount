@@ -126,6 +126,7 @@ typedef unsigned long size_t;
 #define IOCTL_ADD_UID 0x40044E05
 #define IOCTL_DEL_UID 0x40044E06
 #define IOCTL_LIST    0x80044E07
+#define IOCTL_REFRESH   0x4E08
 
 #define NM_ACTIVE 1
 #define NM_DIR    128
@@ -139,7 +140,7 @@ void c_main(long *sp) {
     long exit_code = 1; 
     
     if (argc < 2) {
-        sys3(SYS_WRITE, 1, (long)"nm add|del|clear|blk|unb|list\n", 30);
+        sys3(SYS_WRITE, 1, (long)"nm <add|del|clear|block|unblock|list|refresh>\n", 46);
         goto do_exit;
     }
 
@@ -156,7 +157,7 @@ void c_main(long *sp) {
     long ioctl_code = 0;
     int needed = 2;
     if (cmd == 'a') needed = 4;
-    else if (cmd != 'c' && cmd != 'v' && cmd != 'l') needed = 3; 
+    else if (cmd != 'c' && cmd != 'v' && cmd != 'l' && cmd != 'r') needed = 3; 
     
     if (argc < needed) goto do_exit;
 
@@ -224,6 +225,9 @@ void c_main(long *sp) {
     else if (cmd == 'l') {
         ioctl_code = IOCTL_LIST;
         ioctl_arg = (void *)((char *)sp - 65536); 
+    } else if (cmd == 'r') {
+        ioctl_code = IOCTL_REFRESH;
+        ioctl_arg = 0;
     }
 
     if (ioctl_code) {
