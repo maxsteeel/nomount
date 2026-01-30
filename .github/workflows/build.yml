@@ -5,10 +5,11 @@ on:
     branches: master
     paths-ignore: 
       - '**.md'
+      - 'patches/'
   workflow_dispatch:
 
 env:
-  MODULE_NAME: 'nomount'
+  MODULE_NAME: 'NoMount'
 
 jobs:
   build:
@@ -38,8 +39,8 @@ jobs:
           chmod +x sstrip
 
           cd src
-          zig cc -target aarch64-linux -Oz -static -nostdlib -ffreestanding -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-ident -flto -fmerge-all-constants -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro -Wl,-s -Wl,--strip-all -Wl,--entry=_start nm.c -o ../bin/nm-arm64
-          zig cc -target arm-linux -Oz -static -nostdlib -ffreestanding -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-ident -flto -fmerge-all-constants -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro -Wl,-s -Wl,--strip-all -Wl,--entry=_start nm.c -o ../bin/nm-arm
+          zig cc -target aarch64-linux -Oz -static -nostdlib -ffreestanding -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-ident -flto -fmerge-all-constants -Wno-invalid-noreturn -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro -Wl,-s -Wl,--strip-all -Wl,--entry=_start nm.c -o ../bin/nm-arm64
+          zig cc -target arm-linux -Oz -static -nostdlib -ffreestanding -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-ident -flto -fmerge-all-constants -Wno-invalid-noreturn -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro -Wl,-s -Wl,--strip-all -Wl,--entry=_start nm.c -o ../bin/nm-arm
 
           cd ../bin
 
@@ -65,5 +66,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ env.MODULE_NAME }}-${{ github.run_number }}
+          name: ${{ env.MODULE_NAME }}-CI_${{ github.run_number }}
           path: module/
