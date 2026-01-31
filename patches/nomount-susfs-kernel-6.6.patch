@@ -1,10 +1,10 @@
 diff --git a/fs/Kconfig b/fs/Kconfig
-index 1c3298e49..fb2c72b8c 100644
+index 2fb08d05d..70c64078d 100644
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
-@@ -323,4 +323,11 @@ source "fs/nls/Kconfig"
- source "fs/dlm/Kconfig"
- source "fs/unicode/Kconfig"
+@@ -405,4 +405,11 @@ source "fs/unicode/Kconfig"
+ config IO_WQ
+ 	bool
  
 +config NOMOUNT
 +	bool "NoMount Path Redirection Subsystem"
@@ -15,32 +15,32 @@ index 1c3298e49..fb2c72b8c 100644
 +
  endmenu
 diff --git a/fs/Makefile b/fs/Makefile
-index 3d717a67d..cfaa27faa 100644
+index e27ac368b..f0bdce9c3 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
-@@ -133,3 +133,4 @@ obj-$(CONFIG_CEPH_FS)		+= ceph/
- obj-$(CONFIG_PSTORE)		+= pstore/
- obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
+@@ -137,3 +137,4 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
  obj-$(CONFIG_EROFS_FS)		+= erofs/
+ obj-$(CONFIG_VBOXSF_FS)		+= vboxsf/
+ obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
 +obj-$(CONFIG_NOMOUNT) += nomount.o
 diff --git a/fs/d_path.c b/fs/d_path.c
-index a69e2cd36..c0c878db5 100644
+index 5f4da5c8d..d5bd8ed49 100644
 --- a/fs/d_path.c
 +++ b/fs/d_path.c
-@@ -8,6 +8,10 @@
- #include <linux/prefetch.h>
+@@ -9,6 +9,10 @@
  #include "mount.h"
+ #include "internal.h"
  
 +#ifdef CONFIG_NOMOUNT
 +#include <linux/nomount.h>
 +#endif
 +
- static int prepend(char **buffer, int *buflen, const char *str, int namelen)
- {
- 	*buflen -= namelen;
-@@ -265,6 +269,26 @@ char *d_path(const struct path *path, char *buf, int buflen)
+ struct prepend_buffer {
+ 	char *buf;
+ 	int len;
+@@ -267,6 +271,25 @@ char *d_path(const struct path *path, char *buf, int buflen)
+ 	DECLARE_BUFFER(b, buf, buflen);
  	struct path root;
- 	int error;
  
 +#ifdef CONFIG_NOMOUNT
 +    if (path->dentry && path->dentry->d_inode) {
@@ -51,13 +51,12 @@ index a69e2cd36..c0c878db5 100644
 +            if (buflen < len + 1) {
 +                kfree(v_path);
 +            } else {
-+				*--res = '\0';
-+				res -= len;
-+				memcpy(res, v_path, len);
-+				
-+				kfree(v_path);
-+				return res;
-+			}
++                prepend_char(&b, 0);
++                prepend(&b, v_path, len);
++                
++                kfree(v_path);
++                return extract_string(&b);
++            }
 +        }
 +    }
 +#endif
@@ -66,21 +65,20 @@ index a69e2cd36..c0c878db5 100644
  	 * We have various synthetic filesystems that never get mounted.  On
  	 * these filesystems dentries are never used for lookup purposes, and
 diff --git a/fs/namei.c b/fs/namei.c
-index 0aaf40471..84194a9fe 100644
+index 2b4cf4661..507077b78 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -43,6 +43,10 @@
- #include "internal.h"
- #include "mount.h"
- 
+@@ -41,6 +41,9 @@
+ #include <linux/bitops.h>
+ #include <linux/init_task.h>
+ #include <linux/uaccess.h>
 +#ifdef CONFIG_NOMOUNT
 +#include <linux/nomount.h>
 +#endif
-+
- #ifdef CONFIG_SELINUX_AVC_BACKTRACE
- #include <linux/avc_backtrace.h>
+ #if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+ #include <linux/susfs_def.h>
  #endif
-@@ -206,7 +210,15 @@ getname_flags(const char __user *filename, int flags, int *empty)
+@@ -213,7 +216,15 @@ getname_flags(const char __user *filename, int flags, int *empty)
  
  	result->uptr = filename;
  	result->aname = NULL;
@@ -96,7 +94,7 @@ index 0aaf40471..84194a9fe 100644
  	return result;
  }
  
-@@ -340,6 +352,16 @@ int generic_permission(struct inode *inode, int mask)
+@@ -414,6 +425,16 @@ int generic_permission(struct mnt_idmap *idmap, struct inode *inode,
  {
  	int ret;
  
@@ -113,7 +111,7 @@ index 0aaf40471..84194a9fe 100644
  	/*
  	 * Do the basic permission checks.
  	 */
-@@ -440,6 +462,16 @@ int inode_permission(struct inode *inode, int mask)
+@@ -518,6 +539,16 @@ int inode_permission(struct mnt_idmap *idmap,
  {
  	int retval;
  
@@ -1051,7 +1049,7 @@ index 000000000..54127152d
 +
 +late_initcall(nomount_init);
 diff --git a/fs/readdir.c b/fs/readdir.c
-index 07a3b5baa..77a8950e6 100644
+index 121909714..5f9f8a92d 100644
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
 @@ -21,6 +21,9 @@
@@ -1064,20 +1062,21 @@ index 07a3b5baa..77a8950e6 100644
  
  #include <asm/unaligned.h>
  
-@@ -277,6 +280,9 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -410,6 +413,9 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
  		.current_dir = dirent
  	};
  	int error;
 +#ifdef CONFIG_NOMOUNT
 +	int initial_count = count;
 +#endif
- 
- 	if (!access_ok(dirent, count))
- 		return -EFAULT;
-@@ -285,9 +291,25 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
- 	if (!f.file)
- 		return -EBADF;
- 
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ 	struct inode *inode;
+ #endif
+@@ -440,9 +446,26 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
+ orig_flow:
+ 	buf.idmap = mnt_idmap(f.file->f_path.mnt);
+ #endif
++
 +#ifdef CONFIG_NOMOUNT
 +	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
 +		error = 0;
@@ -1100,20 +1099,21 @@ index 07a3b5baa..77a8950e6 100644
  	if (buf.prev_reclen) {
  		struct linux_dirent __user * lastdirent;
  		lastdirent = (void __user *)buf.current_dir - buf.prev_reclen;
-@@ -363,6 +385,9 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
+@@ -550,6 +573,9 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
  		.current_dir = dirent
  	};
  	int error;
 +#ifdef CONFIG_NOMOUNT
 +	int initial_count = count;
 +#endif
- 
- 	if (!access_ok(dirent, count))
- 		return -EFAULT;
-@@ -371,9 +396,25 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
- 	if (!f.file)
- 		return -EBADF;
- 
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ 	struct inode *inode;
+ #endif
+@@ -580,9 +606,26 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
+ orig_flow:
+ 	buf.idmap = mnt_idmap(f.file->f_path.mnt);
+ #endif
++
 +#ifdef CONFIG_NOMOUNT
 +	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
 +		error = 0;
@@ -1136,20 +1136,21 @@ index 07a3b5baa..77a8950e6 100644
  	if (buf.prev_reclen) {
  		struct linux_dirent64 __user * lastdirent;
  		typeof(lastdirent->d_off) d_off = buf.ctx.pos;
-@@ -539,6 +580,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -830,6 +873,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
  		.count = count
  	};
  	int error;
 +#ifdef CONFIG_NOMOUNT
 +	int initial_count = count;
 +#endif
- 
- 	if (!access_ok(dirent, count))
- 		return -EFAULT;
-@@ -547,9 +591,25 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
- 	if (!f.file)
- 		return -EBADF;
- 
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ 	struct inode *inode;
+ #endif
+@@ -860,9 +906,26 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+ orig_flow:
+ 	buf.idmap = mnt_idmap(f.file->f_path.mnt);
+ #endif
++
 +#ifdef CONFIG_NOMOUNT
 +	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
 +		error = 0;
@@ -1169,17 +1170,18 @@ index 07a3b5baa..77a8950e6 100644
 +	}
 +#endif
 +
- 	lastdirent = buf.previous;
- 	if (lastdirent) {
- 		if (put_user(buf.ctx.pos, &lastdirent->d_off))
+ 	if (buf.prev_reclen) {
+ 		struct compat_linux_dirent __user * lastdirent;
+ 		lastdirent = (void __user *)buf.current_dir - buf.prev_reclen;
 diff --git a/fs/stat.c b/fs/stat.c
-index 268c9eb89..37656d576 100644
+index 855c6f41f..058f98dd2 100644
 --- a/fs/stat.c
 +++ b/fs/stat.c
-@@ -18,6 +18,10 @@
- #include <linux/pagemap.h>
- #include <linux/compat.h>
- 
+@@ -24,6 +24,11 @@
+ #include <linux/susfs_def.h>
+ #include <linux/version.h>
+ #endif
++
 +#ifdef CONFIG_NOMOUNT
 +#include <linux/nomount.h>
 +#endif
@@ -1187,24 +1189,24 @@ index 268c9eb89..37656d576 100644
  #include <linux/uaccess.h>
  #include <asm/unistd.h>
  
-@@ -65,6 +69,7 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
- 		      u32 request_mask, unsigned int query_flags)
+@@ -128,6 +133,7 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
  {
+ 	struct mnt_idmap *idmap;
  	struct inode *inode = d_backing_inode(path->dentry);
 +	int ret = 0;
  
  	memset(stat, 0, sizeof(*stat));
  	stat->result_mask |= STATX_BASIC_STATS;
-@@ -77,11 +82,23 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
- 	if (IS_AUTOMOUNT(inode))
- 		stat->attributes |= STATX_ATTR_AUTOMOUNT;
+@@ -152,12 +158,24 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+ 				  STATX_ATTR_DAX);
  
+ 	idmap = mnt_idmap(path->mnt);
 -	if (inode->i_op->getattr)
--		return inode->i_op->getattr(path, stat, request_mask,
--					    query_flags);
+-		return inode->i_op->getattr(idmap, path, stat,
 +	if (inode->i_op->getattr) {
-+		ret = inode->i_op->getattr(path, stat, request_mask,
-+						 query_flags);
++		ret = inode->i_op->getattr(idmap, path, stat,
+ 					    request_mask,
+ 					    query_flags | AT_GETATTR_NOSEC);
 +        
 +#ifdef CONFIG_NOMOUNT
 +        if (ret == 0)
@@ -1213,7 +1215,7 @@ index 268c9eb89..37656d576 100644
 +        return ret;
 +	}
  
- 	generic_fillattr(inode, stat);
+ 	generic_fillattr(idmap, request_mask, inode, stat);
 +
 +#ifdef CONFIG_NOMOUNT
 +    nomount_spoof_stat(path, stat);
@@ -1223,21 +1225,31 @@ index 268c9eb89..37656d576 100644
  }
  EXPORT_SYMBOL(vfs_getattr_nosec);
 diff --git a/fs/statfs.c b/fs/statfs.c
-index 4960c69cc..e625417f3 100644
+index 056b171a8..d43fd66ee 100644
 --- a/fs/statfs.c
 +++ b/fs/statfs.c
-@@ -11,6 +11,10 @@
- #include <linux/compat.h>
- #include "internal.h"
- 
+@@ -13,6 +13,11 @@
+ #include <linux/susfs_def.h>
+ #include "mount.h"
+ #endif
++
 +#ifdef CONFIG_NOMOUNT
 +#include <linux/nomount.h>
 +#endif
 +
+ #include "internal.h"
+ 
  static int flags_by_mnt(int mnt_flags)
- {
- 	int flags = 0;
-@@ -88,6 +92,10 @@ int vfs_statfs(const struct path *path, struct kstatfs *buf)
+@@ -100,11 +105,19 @@ int vfs_statfs(const struct path *path, struct kstatfs *buf)
+ 	error = statfs_by_dentry(mnt->mnt.mnt_root, buf);
+ 	if (!error)
+ 		buf->f_flags = calculate_f_flags(&mnt->mnt);
++#ifdef CONFIG_NOMOUNT
++		nomount_spoof_statfs(path, buf);
++#endif
++
+ 	return error;
+ #else
  	error = statfs_by_dentry(path->dentry, buf);
  	if (!error)
  		buf->f_flags = calculate_f_flags(path->mnt);
@@ -1246,8 +1258,8 @@ index 4960c69cc..e625417f3 100644
 +#endif
 +
  	return error;
+ #endif
  }
- EXPORT_SYMBOL(vfs_statfs);
 diff --git a/include/linux/nomount.h b/include/linux/nomount.h
 new file mode 100644
 index 000000000..e6865ca2e
