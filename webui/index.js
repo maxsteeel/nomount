@@ -15,7 +15,13 @@ const FILES = {
     verbose: `${NM_DATA}/.verbose`,
     disable: `${NM_DATA}/disable`,
     exclusions: `${NM_DATA}/.exclusion_list`,
-    hot_install: `${NM_DATA}/.hot_install`
+};
+
+const viewLoadState = {
+    'view-home': false,
+    'view-modules': false,
+    'view-exclusions': false,
+    'view-options': false,
 };
 
 function showToast(msg) {
@@ -34,21 +40,33 @@ function initNavigation() {
 
             const targetId = item.dataset.target;
             views.forEach(view => {
-                if (view.id === targetId) {
-                    view.classList.add('active');
-                    if (targetId === 'view-exclusions') {
-                        fabContainer.classList.add('visible');
-                        loadExclusions();
-                    } else {
-                        fabContainer.classList.remove('visible');
-                    }
-                    if (targetId === 'view-modules') loadModules();
-                    if (targetId === 'view-options') loadOptions();
-                    if (targetId === 'view-home') loadHome();
-                } else {
-                    view.classList.remove('active');
-                }
+                view.classList.remove('active');
             });
+            document.getElementById(targetId).classList.add('active');
+
+            if (targetId === 'view-exclusions') {
+                fabContainer.classList.add('visible');
+            } else {
+                fabContainer.classList.remove('visible');
+            }
+
+            if (viewLoadState[targetId] === false) {
+                viewLoadState[targetId] = true; // Set true immediately to prevent re-triggering
+                switch (targetId) {
+                    case 'view-home':
+                        loadHome();
+                        break;
+                    case 'view-modules':
+                        loadModules();
+                        break;
+                    case 'view-exclusions':
+                        loadExclusions();
+                        break;
+                    case 'view-options':
+                        loadOptions();
+                        break;
+                }
+            }
         });
     });
 }
@@ -102,7 +120,7 @@ async function loadHome() {
             modVer, 
             deviceModel, 
             androidVer, 
-            apiLvl, 
+            apiLvl,
             activeModulesCount
         ] = parts;
 
@@ -170,94 +188,138 @@ async function loadModules() {
         const result = await exec(script);
         const lines = result.stdout.split('\n').filter(line => line.trim() !== '');
         
-        listContainer.innerHTML = '';
-        listContainer.appendChild(emptyBanner);
+        const newModuleData = new Map(lines.map(line => {
+            const [modId, realName, enabledStr, fileCount, loadedStr] = line.split('|');
+            return [modId, {
+                realName: (realName || modId).trim(),
+                isEnabled: enabledStr.trim() === 'true',
+                isLoaded: loadedStr.trim() === 'true',
+                fileCount: parseInt(fileCount) || 0,
+            }];
+        }));
 
-        if (lines.length === 0) {
-            emptyBanner.classList.add('active');
-            return;
+        const existingModuleIds = new Set(Array.from(listContainer.querySelectorAll('.module-card')).map(card => card.dataset.moduleId));
+
+        // Remove modules that are no longer present
+        for (const card of listContainer.querySelectorAll('.module-card')) {
+            const modId = card.dataset.moduleId;
+            if (!newModuleData.has(modId)) {
+                card.style.animation = 'fadeOut 0.3s ease-out forwards';
+                setTimeout(() => card.remove(), 300);
+            }
         }
-        emptyBanner.classList.remove('active');
 
         const fragment = document.createDocumentFragment();
+        
+        // Add or update modules
+        for (const [modId, data] of newModuleData.entries()) {
+            const existingCard = listContainer.querySelector(`[data-module-id="${modId}"]`);
 
-        lines.forEach(line => {
-            let [modId, realName, enabledStr, fileCount, loadedStr] = line.split('|');
-            
-            realName = (realName || modId).trim();
-            const isEnabled = enabledStr.trim() === 'true'; 
-            const isLoaded = loadedStr.trim() === 'true'; 
-            const count = parseInt(fileCount) || 0;
+            if (existingCard) {
+                // Update existing card
+                const toggle = existingCard.querySelector(`#switch-${modId}`);
+                if (toggle.selected !== data.isEnabled) toggle.selected = data.isEnabled;
 
-            const card = document.createElement('div');
-            card.className = 'card module-card';
-            
-            card.innerHTML = `
-                <div class="module-header">
-                    <div class="module-info">
-                        <h3>${realName}</h3>
-                        <p>${modId}</p>
+                const fileCountEl = existingCard.querySelector('.file-count span');
+                const newFileCountText = `${data.fileCount} file${data.fileCount !== 1 ? 's' : ''} injected`;
+                if (fileCountEl.textContent !== newFileCountText) fileCountEl.textContent = newFileCountText;
+                
+                const hotBtn = existingCard.querySelector(`#btn-hot-${modId}`);
+                const newHotBtnText = data.isLoaded ? 'Hot Unload' : 'Hot Load';
+                if (hotBtn.textContent !== newHotBtnText) hotBtn.textContent = newHotBtnText;
+                
+                if (data.isLoaded) hotBtn.classList.add('unload');
+                else hotBtn.classList.remove('unload');
+
+            } else {
+                // Create new card
+                const card = document.createElement('div');
+                card.className = 'card module-card';
+                card.dataset.moduleId = modId;
+                card.style.animation = 'fadeIn 0.3s ease-in-out';
+                
+                card.innerHTML = `
+                    <div class="module-header">
+                        <div class="module-info">
+                            <h3>${data.realName}</h3>
+                            <p>${modId}</p>
+                        </div>
+                        <md-switch id="switch-${modId}" ${data.isEnabled ? 'selected' : ''}></md-switch>
                     </div>
-                    <md-switch id="switch-${modId}" ${isEnabled ? 'selected' : ''}></md-switch>
-                </div>
-
-                <div class="module-divider"></div>
-
-                <div class="module-extension">
-                    <div class="file-count">
-                        <md-icon style="font-size:16px;">description</md-icon>
-                        <span>${count} file${count !== 1 ? 's' : ''} injected</span>
+                    <div class="module-divider"></div>
+                    <div class="module-extension">
+                        <div class="file-count">
+                            <md-icon style="font-size:16px;">description</md-icon>
+                            <span>${data.fileCount} file${data.fileCount !== 1 ? 's' : ''} injected</span>
+                        </div>
+                        <button class="btn-hot-action ${data.isLoaded ? 'unload' : ''}" id="btn-hot-${modId}">
+                            ${data.isLoaded ? 'Hot Unload' : 'Hot Load'}
+                        </button>
                     </div>
-                    
-                    <button class="btn-hot-action ${isLoaded ? 'unload' : ''}" id="btn-hot-${modId}">
-                        ${isLoaded ? 'Hot Unload' : 'Hot Load'}
-                    </button>
-                </div>
-            `;
+                `;
 
-            const toggle = card.querySelector(`#switch-${modId}`);
-            toggle.addEventListener('change', async () => {
-                toggle.disabled = true;
-                try {
-                    if (toggle.selected) {
-                        await exec(`rm ${MOD_DIR}/${modId}/disable`);
-                        await loadModule(modId);
-                        showToast(`${realName} Enabled & Loaded`);
-                    } else {
-                        await unloadModule(modId);
-                        await exec(`touch ${MOD_DIR}/${modId}/disable`);
-                        showToast(`${realName} Unloaded & Disabled`);
+                const toggle = card.querySelector(`#switch-${modId}`);
+                toggle.addEventListener('change', async () => {
+                    toggle.disabled = true;
+                    try {
+                        if (toggle.selected) {
+                            await exec(`rm ${MOD_DIR}/${modId}/disable`);
+                            await loadModule(modId);
+                            showToast(`${data.realName} Enabled & Loaded`);
+                        } else {
+                            await unloadModule(modId);
+                            await exec(`touch ${MOD_DIR}/${modId}/disable`);
+                            showToast(`${data.realName} Unloaded & Disabled`);
+                        }
+                    } catch (e) {
+                        showToast(`Error: ${e.message}`);
+                    } finally {
+                        loadModules();
                     }
-                } catch (e) {
-                    showToast(`Error: ${e.message}`);
-                } finally {
-                    loadModules();
-                }
-            });
+                });
 
-            const hotBtn = card.querySelector(`#btn-hot-${modId}`);
-            hotBtn.addEventListener('click', async () => {
-                hotBtn.textContent = "...";
-                hotBtn.disabled = true;
-                try {
-                    if (isLoaded) {
-                        await unloadModule(modId);
-                        showToast(`${realName} Unloaded`);
-                    } else {
-                        await loadModule(modId);
-                        showToast(`${realName} Loaded`);
-                    }
-                } catch (e) {
-                    showToast(`Action failed: ${e.message}`);
-                } finally {
-                    loadModules();
-                }
-            });
+                const hotBtn = card.querySelector(`#btn-hot-${modId}`);
+                hotBtn.addEventListener('click', () => { // No 'async' to make it non-blocking
+                    hotBtn.textContent = "...";
+                    hotBtn.disabled = true;
 
-            fragment.appendChild(card);
-        });
+                    const performAction = async () => {
+                        try {
+                            // Check the live status instead of relying on potentially stale data
+                            const active_rules = (await exec(`${NM_BIN} list`)).stdout;
+                            const isCurrentlyLoaded = active_rules.includes(`${MOD_DIR}/${modId}/`);
+                            
+                            if (isCurrentlyLoaded) {
+                                await unloadModule(modId);
+                                showToast(`${data.realName} Unloaded`);
+                            } else {
+                                await loadModule(modId);
+                                showToast(`${data.realName} Loaded`);
+                            }
+                        } catch (e) {
+                            showToast(`Action failed: ${e.message}`);
+                        } finally {
+                            loadModules(); // Refresh view to ensure consistency
+                        }
+                    };
 
-        listContainer.appendChild(fragment);
+                    performAction(); // Fire-and-forget the promise
+                });
+
+                fragment.appendChild(card);
+            }
+        }
+        
+        if (fragment.children.length > 0) {
+            emptyBanner.classList.remove('active');
+            listContainer.appendChild(fragment);
+        }
+
+        if (newModuleData.size === 0) {
+            emptyBanner.classList.add('active');
+        } else {
+            emptyBanner.classList.remove('active');
+        }
 
     } catch (e) {
         console.error("Error loading modules:", e);
@@ -268,7 +330,8 @@ async function loadModules() {
 async function loadModule(modId) {
     const script = `
         cd ${MOD_DIR}/${modId}
-        for part in system vendor product system_ext oem odm; do
+        for part in system vendor product system_ext oem odm;
+ do
             if [ -d "$part" ]; then
                 find "$part" -type f | while read -r file; do
                     target="/$file"
@@ -286,8 +349,8 @@ async function unloadModule(modId) {
         active_rules=$(${NM_BIN} list)
         echo "$active_rules" | while read -r rule; do
             if [ -z "$rule" ]; then continue; fi
-            real_path=\${rule%%->*}
-            virtual_path=\${rule#*->}
+            real_path=\\\${rule%%->*}
+            virtual_path=\\\${rule#*->}
             if echo "$real_path" | grep -qF "${MOD_DIR}/${modId}/"; then
                 ${NM_BIN} del "$virtual_path"
             fi
@@ -299,65 +362,104 @@ async function unloadModule(modId) {
 let allAppsCache = [];
 let showSystemApps = false;
 
+// Virtualized App List State
+let currentlyDisplayedApps = [];
+let appListRenderIndex = 0;
+const APP_RENDER_BATCH_SIZE = 50;
+let listObserver = null;
+
 async function loadExclusions() {
     const listContainer = document.getElementById('exclusions-list');
-    const cat = await exec(`cat ${FILES.exclusions}`);
-    const blockedUids = cat.stdout.split('\n').filter(u => u.trim() !== '');
+    
+    try {
+        const cat = await exec(`cat ${FILES.exclusions}`);
+        const blockedUids = new Set(cat.stdout.split('\n').filter(u => u.trim() !== ''));
 
-    if (blockedUids.length === 0) {
-        listContainer.innerHTML = '<div style="opacity:0.5; text-align:center; padding:20px;">No exclusions yet</div>';
-        return;
-    }
-
-    if (allAppsCache.length === 0) {
-        listContainer.innerHTML = '<div style="padding:20px; text-align:center; opacity:0.6;">Loading apps...</div>';
-        
-        try {
-            const packages = await listPackages();
-            allAppsCache = await getPackagesInfo(packages);
-        } catch (e) {
-            console.warn("Error getting app info:", e);
+        if (allAppsCache.length === 0 && blockedUids.size > 0) {
+            listContainer.innerHTML = '<div style="padding:20px; text-align:center; opacity:0.6;">Loading apps...</div>';
+            try {
+                // Check cache again in case pre-cache just finished
+                if (allAppsCache.length === 0) {
+                    const packages = await listPackages();
+                    allAppsCache = await getPackagesInfo(packages);
+                }
+            } catch (e) {
+                console.warn("Error getting app info:", e);
+                listContainer.innerHTML = `<div style="padding:20px; color:var(--md-sys-color-error);">Error loading app info: ${e.message}</div>`;
+                return;
+            }
         }
-    }
 
-    listContainer.innerHTML = ''; 
-
-    blockedUids.forEach(uid => {
-        const appInfo = allAppsCache.find(a => a.uid == uid);
-        const label = appInfo ? (appInfo.appLabel || appInfo.packageName) : `Unknown (UID: ${uid})`;
-        const pkg = appInfo ? appInfo.packageName : 'App not installed or found';
-        const iconSrc = appInfo ? `ksu://icon/${appInfo.packageName}` : '';
-        const fallbackIcon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTA 5MTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
-
-        const item = document.createElement('div');
-        item.className = 'card setting-item';
-        item.innerHTML = `
-            <div style="display:flex; align-items:center; gap:16px; overflow: hidden;">
-                <img src="${iconSrc}" class="app-icon-img" style="width: 40px; height: 40px; border-radius: 10px;" loading="lazy" onerror="this.src='${fallbackIcon}'" />
-                
-                <div class="setting-text" style="overflow: hidden;">
-                    <h3 style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${label}</h3>
-                    <p style="font-size: 12px; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${pkg}</p>
-                    <p style="font-size: 10px; color: var(--md-sys-color-error); margin-top: 2px;">Blocked</p>
-                </div>
-            </div>
-
-            <md-icon-button class="btn-delete">
-                <md-icon>delete</md-icon>
-            </md-icon-button>
-        `;
+        const existingUids = new Set(Array.from(listContainer.children).map(child => child.dataset.uid));
         
-        item.querySelector('.btn-delete').addEventListener('click', async () => {
-            item.style.opacity = '0.5';
-            item.style.pointerEvents = 'none';
-            
-            await exec(`sed -i "/${uid}/d" ${FILES.exclusions}`);
-            await exec(`${NM_BIN} unblock ${uid}`);
-            loadExclusions();
-        });
+        // Remove old entries
+        for (const child of listContainer.children) {
+            const uid = child.dataset.uid;
+            if (uid && !blockedUids.has(uid)) {
+                child.style.animation = 'fadeOut 0.3s ease-out forwards';
+                setTimeout(() => child.remove(), 300);
+            }
+        }
 
-        listContainer.appendChild(item);
-    });
+        // Add new entries
+        const fragment = document.createDocumentFragment();
+        for (const uid of blockedUids) {
+            if (!existingUids.has(uid)) {
+                const appInfo = allAppsCache.find(a => a.uid == uid);
+                const label = appInfo ? (appInfo.appLabel || appInfo.packageName) : `Unknown (UID: ${uid})`;
+                const pkg = appInfo ? appInfo.packageName : 'App not installed or found';
+                const iconSrc = appInfo ? `ksu://icon/${appInfo.packageName}` : '';
+                const fallbackIcon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
+
+                const item = document.createElement('div');
+                item.className = 'card setting-item';
+                item.dataset.uid = uid;
+                item.style.animation = 'fadeIn 0.3s ease-in-out';
+                item.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:16px; overflow: hidden;">
+                        <img src="${iconSrc}" class="app-icon-img" style="width: 40px; height: 40px; border-radius: 10px;" loading="lazy" onerror="this.src='${fallbackIcon}'" />
+                        
+                        <div class="setting-text" style="overflow: hidden;">
+                            <h3 style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${label}</h3>
+                            <p style="font-size: 12px; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${pkg}</p>
+                            <p style="font-size: 10px; color: var(--md-sys-color-error); margin-top: 2px;">Blocked</p>
+                        </div>
+                    </div>
+
+                    <md-icon-button class="btn-delete">
+                        <md-icon>delete</md-icon>
+                    </md-icon-button>
+                `;
+                
+                item.querySelector('.btn-delete').addEventListener('click', async () => {
+                    item.style.opacity = '0.5';
+                    item.style.pointerEvents = 'none';
+                    
+                    await exec(`sed -i "/${uid}/d" ${FILES.exclusions}`);
+                    await exec(`${NM_BIN} unblock ${uid}`);
+                    loadExclusions();
+                });
+
+                fragment.appendChild(item);
+            }
+        }
+        if (fragment.children.length > 0) {
+            // If the placeholder was there, remove it
+            const placeholder = listContainer.querySelector('.empty-list-placeholder, div[style*="text-align:center"]');
+            if(placeholder) placeholder.remove();
+
+            listContainer.appendChild(fragment);
+        }
+        
+        // Handle empty case
+        if (blockedUids.size === 0) {
+            listContainer.innerHTML = '<div class="empty-list-placeholder" style="opacity:0.5; text-align:center; padding:20px;">No exclusions yet</div>';
+        }
+
+    } catch (e) {
+        console.error("Error loading exclusions:", e);
+        listContainer.innerHTML = `<div style="padding:20px; color:var(--md-sys-color-error);">Error: ${e.message}</div>`;
+    }
 }
 
 async function openAppSelector() {
@@ -367,14 +469,31 @@ async function openAppSelector() {
     const filterMenu = document.getElementById('filter-menu');
     const filterBtn = document.getElementById('btn-filter-toggle');
     const sysSwitch = document.getElementById('switch-system-apps');
+    const closeModalBtn = document.getElementById('btn-close-modal');
 
     modal.classList.add('active');
 
+    // Cleanup previous state
+    if (listObserver) listObserver.disconnect();
     filterMenu.classList.remove('active'); 
     searchInput.value = '';
     sysSwitch.selected = showSystemApps;
 
+    const closeModal = () => {
+        modal.classList.remove('active');
+        if (listObserver) listObserver.disconnect();
+        closeModalBtn.removeEventListener('click', closeModal);
+    };
+    closeModalBtn.addEventListener('click', closeModal);
+
     container.innerHTML = '<div class="loading-spinner" style="padding:20px; text-align:center;">Loading apps...</div>';
+    
+    listObserver = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) {
+            renderNextAppBatch();
+        }
+    }, { root: container, rootMargin: '200px' });
+
     try {
         if (!allAppsCache || allAppsCache.length === 0) {
             const packages = await listPackages();
@@ -405,7 +524,8 @@ async function openAppSelector() {
 
 function filterAndRender(searchTerm = '') {
     const term = searchTerm.toLowerCase();
-    const filtered = allAppsCache.filter(app => {
+    
+    currentlyDisplayedApps = allAppsCache.filter(app => {
         const matchesSearch = (app.appLabel || "").toLowerCase().includes(term) || 
                               (app.packageName || "").toLowerCase().includes(term);
 
@@ -413,29 +533,40 @@ function filterAndRender(searchTerm = '') {
         return matchesSearch && matchesType;
     });
 
-    renderAppList(filtered);
-}
-
-function renderAppList(apps) {
     const container = document.getElementById('app-list-container');
     container.innerHTML = '';
-    
-    if (apps.length === 0) {
+    appListRenderIndex = 0;
+    if (listObserver) listObserver.disconnect();
+
+    if (currentlyDisplayedApps.length === 0) {
         container.innerHTML = '<div style="padding:20px; text-align:center; opacity:0.6;">No apps found</div>';
         return;
     }
+    
+    renderNextAppBatch();
+}
 
-    const limit = 100; 
-    const appsToShow = apps.slice(0, limit);
+function renderNextAppBatch() {
+    const container = document.getElementById('app-list-container');
+    
+    const batch = currentlyDisplayedApps.slice(
+        appListRenderIndex, 
+        appListRenderIndex + APP_RENDER_BATCH_SIZE
+    );
+
+    if (batch.length === 0) {
+        if (listObserver) listObserver.disconnect();
+        return;
+    }
 
     const fragment = document.createDocumentFragment();
 
-    appsToShow.forEach(app => {
+    batch.forEach(app => {
         const item = document.createElement('div');
         item.className = 'app-item';
         
         const iconSrc = `ksu://icon/${app.packageName}`;
-        const fallback = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTA 5MTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
+        const fallback = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
 
         item.innerHTML = `
             <img src="${iconSrc}" class="app-icon-img" loading="lazy" onerror="this.src='${fallback}'" /> 
@@ -458,14 +589,11 @@ function renderAppList(apps) {
     });
     
     container.appendChild(fragment);
-    if (apps.length > limit) {
-        const moreInfo = document.createElement('div');
-        moreInfo.style.textAlign = 'center';
-        moreInfo.style.padding = '10px';
-        moreInfo.style.opacity = '0.5';
-        moreInfo.style.fontSize = '12px';
-        moreInfo.textContent = `...and ${apps.length - limit} more. Refine search.`;
-        container.appendChild(moreInfo);
+    appListRenderIndex += batch.length;
+
+    const lastElement = container.querySelector('.app-item:last-child');
+    if (lastElement && listObserver) {
+        listObserver.observe(lastElement);
     }
 }
 
@@ -509,13 +637,27 @@ async function loadOptions() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    loadExclusions();
-    loadModules();
     initNavigation();
-    loadHome();
     document.getElementById('fab-add-exclusion').addEventListener('click', openAppSelector);
-    document.getElementById('btn-close-modal').addEventListener('click', () => {
-        document.getElementById('app-selector-modal').classList.remove('active');
-    });
-    document.querySelector('.nav-item.active').click();
+
+    // Pre-cache apps in the background for faster loading later
+    (async () => {
+        try {
+            if (!allAppsCache || allAppsCache.length === 0) {
+                const packages = await listPackages();
+                allAppsCache = await getPackagesInfo(packages);
+                allAppsCache.sort((a, b) => (a.appLabel || a.packageName).localeCompare(b.appLabel || b.packageName));
+                console.log(`Pre-cached ${allAppsCache.length} apps.`);
+            }
+        } catch (e) {
+            console.error("Failed to pre-cache apps:", e);
+            // Don't bother the user with a toast for a background task
+        }
+        loadModules();
+        loadExclusions();
+    })();
+
+    // Load initial view
+    viewLoadState['view-home'] = true;
+    loadHome();
 });

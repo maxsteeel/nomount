@@ -47,7 +47,7 @@ md-icon {
     min-height: 0;
     position: relative;
     width: 100%;
-    padding-bottom: 24px; 
+    padding-bottom: 100px; 
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
 }
