@@ -636,8 +636,106 @@ async function loadOptions() {
     };
 }
 
+function initPullToRefresh() {
+    const container = document.querySelector('.page-container');
+    const indicator = document.querySelector('.pull-to-refresh-indicator');
+    const indicatorIcon = indicator.querySelector('md-icon');
+
+    let startY = 0;
+    let pullDistance = 0;
+    let isRefreshing = false;
+    const pullThreshold = 80; // How far user needs to pull down
+
+    const isRefreshableView = () => {
+        const activeView = document.querySelector('.view-content.active');
+        return activeView && (activeView.id === 'view-modules' || activeView.id === 'view-exclusions');
+    };
+
+    container.addEventListener('touchstart', (e) => {
+        if (!isRefreshableView() || isRefreshing || container.scrollTop !== 0) {
+            startY = 0;
+            return;
+        }
+        startY = e.touches[0].pageY;
+    }, { passive: true });
+
+    container.addEventListener('touchmove', (e) => {
+        if (isRefreshing || startY === 0) return;
+
+        const currentY = e.touches[0].pageY;
+        pullDistance = Math.max(0, currentY - startY);
+
+        if (container.scrollTop === 0) {
+            const rotation = Math.min(180, pullDistance / pullThreshold * 180);
+            indicator.style.top = `${Math.min(pullDistance, pullThreshold) - 50}px`;
+            indicatorIcon.style.transform = `rotate(${rotation}deg)`;
+        } else {
+            // Scrolled down, reset
+            startY = 0;
+            pullDistance = 0;
+        }
+    }, { passive: true });
+
+    container.addEventListener('touchend', async () => {
+        if (isRefreshing || startY === 0) return;
+
+        if (pullDistance >= pullThreshold) {
+            isRefreshing = true;
+            indicator.classList.add('refreshing');
+            indicator.style.top = '20px'; // Hold indicator in view
+            
+            try {
+                await refreshCurrentView();
+            } catch (e) {
+                console.error("Refresh failed:", e);
+                showToast("Refresh failed."); // Keep toast for errors
+            } finally {
+                // Reset everything after a short delay for animation
+                setTimeout(() => {
+                    isRefreshing = false;
+                    indicator.classList.remove('refreshing');
+                    indicator.style.top = '-50px';
+                    indicatorIcon.style.transform = 'rotate(0deg)';
+                }, 500);
+            }
+        } else {
+            // Not pulled far enough, reset
+            indicator.style.top = '-50px';
+            indicatorIcon.style.transform = 'rotate(0deg)';
+        }
+        
+        startY = 0;
+        pullDistance = 0;
+    });
+}
+
+async function refreshCurrentView() {
+    const activeView = document.querySelector('.view-content.active');
+    if (!activeView) return;
+
+    const viewId = activeView.id;
+    console.log(`Refreshing view: ${viewId}`);
+
+    // Bypass the 'viewLoadState' check for a forced refresh
+    switch (viewId) {
+        case 'view-home':
+            await loadHome();
+            break;
+        case 'view-modules':
+            await loadModules();
+            break;
+        case 'view-exclusions':
+            await loadExclusions();
+            break;
+        case 'view-options':
+            await loadOptions();
+            break;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
+    initPullToRefresh();
     document.getElementById('fab-add-exclusion').addEventListener('click', openAppSelector);
 
     // Pre-cache apps in the background for faster loading later

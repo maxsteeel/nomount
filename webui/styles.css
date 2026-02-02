@@ -40,6 +40,33 @@ md-icon {
     height: 100%;
     width: 100%;
 }
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.pull-to-refresh-indicator {
+    position: absolute;
+    top: -50px;
+    left: 0;
+    right: 0;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    color: var(--md-sys-color-primary);
+    transition: top 0.2s ease-out;
+    z-index: 1;
+}
+
+.pull-to-refresh-indicator md-icon {
+    transition: transform 0.3s ease-out;
+}
+
+.pull-to-refresh-indicator.refreshing md-icon {
+    animation: spin 1s linear infinite;
+}
 
 .page-container {
     flex: 1;
