@@ -5,7 +5,6 @@
 /* --- ARCH --- */
 #if defined(__aarch64__)
     #define SYS_GETCWD     17
-    #define SYS_GETDENTS64 61
     #define SYS_IOCTL      29
     #define SYS_OPENAT     56
     #define SYS_CLOSE      57
@@ -63,7 +62,6 @@
     #define SYS_CLOSE      6
     #define SYS_IOCTL      54
     #define SYS_GETCWD     183
-    #define SYS_GETDENTS64 141
     #define SYS_OPENAT     322
     #define SYS_FSTATAT    327
     #define STAT_MODE_IDX  4
@@ -119,7 +117,6 @@
 /* --- DEFS --- */
 typedef unsigned long size_t;
 #define AT_FDCWD -100
-#define AT_SYMLINK_NOFOLLOW 0x100
 #define O_RDWR 2
 
 #define IOCTL_ADD     0x40184E01
@@ -135,21 +132,6 @@ typedef unsigned long size_t;
 #define NM_DIR    128
 #define PATH_MAX  4096
 
-/* Helpers */
-struct linux_dirent64 {
-    unsigned long long d_ino;
-    long long          d_off;
-    unsigned short     d_reclen;
-    unsigned char      d_type;
-    char               d_name[];
-};
-
-static void fast_concat(char *dest, const char *s1, const char *s2) {
-    while (*s1) *dest++ = *s1++;
-    if (dest > (char *)dest && *(dest - 1) != '/') *dest++ = '/';
-    while ((*dest++ = *s2++));
-}
-
 /* --- MAIN --- */
 __attribute__((noreturn, used))
 void c_main(long *sp) {
@@ -158,7 +140,7 @@ void c_main(long *sp) {
     long exit_code = 1; 
     
     if (argc < 2) {
-        sys3(SYS_WRITE, 1, (long)"nm add|del|cls|blk|unblk|list\n", 30);
+        sys3(SYS_WRITE, 1, (long)"nm add|del|cls|blk|unblk|ls\n", 28);
         goto do_exit;
     }
 
@@ -170,94 +152,111 @@ void c_main(long *sp) {
 
     char cmd = argv[1][0];
     struct ioctl_data data;
+    void *ioctl_arg = 0;
+    unsigned int uid = 0;
     long ioctl_code = 0;
-    void *ioctl_ptr = &data;
-    unsigned long uid = 0;
+    int needed = 2;
+    if (cmd == 'a') needed = 4; 
+    else if (cmd == 'l' || cmd == 'c' || cmd == 'r' || cmd == 'v') needed = 2;
+    else needed = 3; 
+    
+    if (argc < needed) goto do_exit;
 
     if (cmd == 'a' || cmd == 'd') {
-        char *v_base = argv[2];
-        char *r_base = (cmd == 'a') ? argv[3] : 0;
-        int v_len = 0; while(v_base[v_len]) v_len++;
-        
-        if (v_base[v_len-1] == '*') {
-            v_base[v_len-1] = 0;
-            char *p_open = (cmd == 'a') ? r_base : v_base;
-            if (cmd == 'a') {
-                int r_len = 0; while(r_base[r_len]) r_len++;
-                if (r_base[r_len-1] == '*') r_base[r_len-1] = 0;
-            }
-
-            int dfd = sys4(SYS_OPENAT, AT_FDCWD, (long)p_open, 0, 0);
-            if (dfd >= 0) {
-                char *dbuf = (char *)sp - 65536; // dents buffer 
-                char *fv = dbuf - 66560;        // full virtual path buffer
-                char *fr = fv - 67584;          // full real path buffer
-                long nr;
-                while ((nr = sys3(SYS_GETDENTS64, dfd, (long)dbuf, 8192)) > 0) {
-                    for (long p = 0; p < nr; ) {
-                        struct linux_dirent64 *d = (struct linux_dirent64 *)(dbuf + p);
-                        if (d->d_name[0] != '.' || (d->d_name[1] && (d->d_name[1] != '.' || d->d_name[2]))) {
-                            fast_concat(fv, v_base, d->d_name);
-                            #if defined(__aarch64__)
-                                data.vp = (long)fv;
-                                if (cmd == 'a') {
-                                    fast_concat(fr, r_base, d->d_name);
-                                    data.rp = (long)fr;
-                                    data.flags = (d->d_type == 4) ? (NM_ACTIVE | NM_DIR) : NM_ACTIVE;
-                                }
-                            #else
-                                data.vp_lo = (long)fv;
-                                if (cmd == 'a') {
-                                    fast_concat(fr, r_base, d->d_name);
-                                    data.rp_lo = (long)fr;
-                                    data.flags = (d->d_type == 4) ? (NM_ACTIVE | NM_DIR) : NM_ACTIVE;
-                                }
-                            #endif
-                            sys3(SYS_IOCTL, fd, (cmd == 'a') ? IOCTL_ADD : IOCTL_DEL, (long)&data);
-                        }
-                        p += d->d_reclen;
-                    }
-                }
-            }
-            exit_code = 0;
-            goto do_exit;
-        }
-
         #if defined(__aarch64__)
-            data.vp = (long)v_base;
-            data.rp = (long)r_base;
+            data.vp = (unsigned long)argv[2];
         #else
-            data.vp_lo = (long)v_base;
-            data.rp_lo = (long)r_base;
+            data.vp_lo = (unsigned int)argv[2];
+            data.vp_hi = 0;
         #endif
-        data.flags = NM_ACTIVE;
-        
-        if (cmd == 'a') {
-            unsigned int st[32];
-            if (!sys4(SYS_FSTATAT, AT_FDCWD, (long)r_base, (long)st, AT_SYMLINK_NOFOLLOW))
-                if ((st[4] & 0xF000) == 0x4000) data.flags |= NM_DIR;
+        ioctl_arg = &data;
+
+        if (cmd == 'd') {
+            ioctl_code = IOCTL_DEL;
+        } else { 
+            char *v_src = argv[2];
+            char *r_src = argv[3];
+            char *v_ptr;
+            char *r_ptr;
+
+            char *v_buf = (char *)sp - 16384; 
+            char *r_buf = v_buf - 8192;
+
+            if (v_src[0] != '/') {
+                long l = sys2(SYS_GETCWD, (long)v_buf, 4096);
+                if (l > 0) {
+                    int idx = 0; while (v_buf[idx]) idx++;
+                    if (idx > 0 && v_buf[idx-1] != '/') v_buf[idx++] = '/';
+                    char *s = v_src;
+                    if (s[0] == '.' && s[1] == '/') s += 2;
+                    char *d = v_buf + idx;
+                    while ((*d++ = *s++));
+                    v_ptr = v_buf;
+                } else { v_ptr = v_src; }
+            } else { v_ptr = v_src; }
+
+            if (r_src[0] != '/') {
+                long l = sys2(SYS_GETCWD, (long)r_buf, 4096);
+                if (l > 0) {
+                    int idx = 0; while (r_buf[idx]) idx++;
+                    if (idx > 0 && r_buf[idx-1] != '/') r_buf[idx++] = '/';
+                    char *s = r_src;
+                    if (s[0] == '.' && s[1] == '/') s += 2;
+                    char *d = r_buf + idx;
+                    while ((*d++ = *s++));
+                    r_ptr = r_buf;
+                } else { r_ptr = r_src; }
+            } else { r_ptr = r_src; }
+
+            #if defined(__aarch64__)
+                data.vp = (unsigned long)v_ptr;
+                data.rp = (unsigned long)r_ptr;
+            #else
+                data.vp_lo = (unsigned int)v_ptr;
+                data.rp_lo = (unsigned int)r_ptr;
+                data.vp_hi = 0;
+                data.rp_hi = 0;
+            #endif
+            
+            data.flags = NM_ACTIVE;
+            
+            unsigned int *stat_buf = (unsigned int *)((char*)sp + 256);
+            if (sys4(SYS_FSTATAT, AT_FDCWD, (long)r_ptr, (long)stat_buf, 0) == 0) {
+                unsigned int mode = stat_buf[STAT_MODE_IDX];
+                if ((mode & 0170000) == 0040000) data.flags |= NM_DIR;
+            }
             ioctl_code = IOCTL_ADD;
-        } else ioctl_code = IOCTL_DEL;
-    } else {
-        if (cmd == 'c') ioctl_code = IOCTL_CLEAR;
-        else if (cmd == 'l') {
-            ioctl_code = IOCTL_LIST;
-            ioctl_ptr = (char *)sp - 131072;
         }
-        else if (cmd == 'r') ioctl_code = IOCTL_REFRESH;
-        else if (cmd == 'v') ioctl_code = IOCTL_VER;
-        else if (cmd == 'b' || cmd == 'u') {
-            char *s = argv[2]; while (*s) uid = uid * 10 + (*s++ - '0');
-            ioctl_ptr = (void *)(long)uid;
-            ioctl_code = (cmd == 'b') ? IOCTL_ADD_UID : IOCTL_DEL_UID;
-        }
+    } 
+    else if (cmd == 'b' || cmd == 'u') {
+        const char *s = argv[2];
+        while (*s) uid = uid * 10 + (*s++ - '0');
+        ioctl_arg = &uid;
+        ioctl_code = (cmd == 'b') ? IOCTL_ADD_UID : IOCTL_DEL_UID;
+    }
+    else if (cmd == 'c') {
+        ioctl_code = IOCTL_CLEAR;
+    }
+    else if (cmd == 'v') {
+        ioctl_code = IOCTL_VER;
+    }
+    else if (cmd == 'l') {
+        ioctl_code = IOCTL_LIST;
+        ioctl_arg = (void *)((char *)sp - 131072); 
+    } else if (cmd == 'r') {
+        ioctl_code = IOCTL_REFRESH;
+        ioctl_arg = 0;
     }
 
     if (ioctl_code) {
-        long res = sys3(SYS_IOCTL, fd, ioctl_code, (long)ioctl_ptr);
-        if (cmd == 'l' && res > 0) sys3(SYS_WRITE, 1, (long)ioctl_ptr, res);
-        if (cmd == 'v') {
-            char v = res + '0'; sys3(SYS_WRITE, 1, (long)&v, 1);
+        long res = sys3(SYS_IOCTL, fd, ioctl_code, (long)ioctl_arg);
+        
+        if (cmd == 'v' && res > 0) {
+            char v_buf[2] = {res + '0', '\n'};
+            sys3(SYS_WRITE, 1, (long)v_buf, 2);
+        }
+        else if (cmd == 'l' && res > 0) {
+            sys3(SYS_WRITE, 1, (long)ioctl_arg, res);
         }
     }
 
