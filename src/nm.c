@@ -217,9 +217,12 @@ void c_main(long *sp) {
                     for (int k = 0; k < i; k++) v_tmp[k] = v_ptr[k];
                     v_tmp[i] = '\0';
 
+                    int slashes = 0;
+                    for(int k=0; v_tmp[k]; k++) if(v_tmp[k] == '/') slashes++;
+                    if (slashes < 2) { i++; continue; } 
+
                     int v_len = 0; while(v_ptr[v_len]) v_len++;
                     int r_len = 0; while(r_ptr[r_len]) r_len++;
-                    
                     int diff = v_len - i;
                     int r_cut = r_len - diff;
                     
@@ -229,7 +232,9 @@ void c_main(long *sp) {
                     }
 
                     unsigned int st_tmp[32];
-                    if (sys4(SYS_FSTATAT, AT_FDCWD, (long)v_tmp, (long)st_tmp, 0) != 0) {
+ 
+                    long stat_res = sys4(SYS_FSTATAT, AT_FDCWD, (long)v_tmp, (long)st_tmp, 0);
+                    if (stat_res != 0) {
                         struct ioctl_data step_data;
                         #if defined(__aarch64__)
                             step_data.vp = (unsigned long)v_tmp;
