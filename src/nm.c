@@ -208,6 +208,45 @@ void c_main(long *sp) {
                 } else { r_ptr = r_src; }
             } else { r_ptr = r_src; }
 
+            char *v_tmp = r_buf - 4096; 
+            char *r_tmp = v_tmp - 4096; 
+            int i = 0;
+
+            while (v_ptr[i]) {
+                if (v_ptr[i] == '/' && i > 0) {
+                    for (int k = 0; k < i; k++) v_tmp[k] = v_ptr[k];
+                    v_tmp[i] = '\0';
+
+                    int v_len = 0; while(v_ptr[v_len]) v_len++;
+                    int r_len = 0; while(r_ptr[r_len]) r_len++;
+                    
+                    int diff = v_len - i;
+                    int r_cut = r_len - diff;
+                    
+                    if (r_cut > 0) {
+                        for (int k = 0; k < r_cut; k++) r_tmp[k] = r_ptr[k];
+                        r_tmp[r_cut] = '\0';
+                    }
+
+                    unsigned int st_tmp[32];
+                    if (sys4(SYS_FSTATAT, AT_FDCWD, (long)v_tmp, (long)st_tmp, 0) != 0) {
+                        struct ioctl_data step_data;
+                        #if defined(__aarch64__)
+                            step_data.vp = (unsigned long)v_tmp;
+                            step_data.rp = (unsigned long)r_tmp;
+                        #else
+                            step_data.vp_lo = (unsigned int)v_tmp;
+                            step_data.rp_lo = (unsigned int)r_tmp;
+                            step_data.vp_hi = 0;
+                            step_data.rp_hi = 0;
+                        #endif
+                        step_data.flags = NM_ACTIVE | NM_DIR;
+                        sys3(SYS_IOCTL, fd, IOCTL_ADD, (long)&step_data);
+                    }
+                }
+                i++;
+            }
+
             #if defined(__aarch64__)
                 data.vp = (unsigned long)v_ptr;
                 data.rp = (unsigned long)r_ptr;
