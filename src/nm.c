@@ -391,7 +391,7 @@ void c_main(long *sp) {
     else if (cmd == 'l') {
         if (argc > 2 && argv[2][0] == 'j') json = 1;
         ioctl_code = IOCTL_LIST;
-        ioctl_arg = (void *)((char *)sp - 131072); 
+        ioctl_arg = (void *)((char *)sp - 1048576); 
     } else if (cmd == 'r') {
         ioctl_code = IOCTL_REFRESH;
         ioctl_arg = 0;
