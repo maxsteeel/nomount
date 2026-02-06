@@ -132,6 +132,13 @@ typedef unsigned long size_t;
 #define NM_DIR    128
 #define PATH_MAX  4096
 
+/* helper for json list */
+__attribute__((always_inline))
+static inline void ps(const char *s, int max) {
+    int l = 0; while (l < max && s[l]) l++;
+    sys3(SYS_WRITE, 1, (long)s, l);
+}
+
 /* --- MAIN --- */
 __attribute__((noreturn, used))
 void c_main(long *sp) {
@@ -159,7 +166,8 @@ void c_main(long *sp) {
     if (cmd == 'a') needed = 4; 
     else if (cmd == 'l' || cmd == 'c' || cmd == 'r' || cmd == 'v') needed = 2;
     else needed = 3; 
-    
+    int json = 0;
+
     if (argc < needed) goto do_exit;
 
     if (cmd == 'a' || cmd == 'd') {
@@ -285,6 +293,7 @@ void c_main(long *sp) {
         ioctl_code = IOCTL_VER;
     }
     else if (cmd == 'l') {
+        if (argc > 2 && argv[2][0] == 'j') json = 1;
         ioctl_code = IOCTL_LIST;
         ioctl_arg = (void *)((char *)sp - 131072); 
     } else if (cmd == 'r') {
@@ -300,7 +309,43 @@ void c_main(long *sp) {
             sys3(SYS_WRITE, 1, (long)v_buf, 2);
         }
         else if (cmd == 'l' && res > 0) {
-            sys3(SYS_WRITE, 1, (long)ioctl_arg, res);
+            if (json) {
+                char *curr = (char *)ioctl_arg;
+                char *end = curr + res;
+                ps("[\n", 2);
+
+                while (curr < end && *curr) {
+                    char *line_start = curr;
+                    char *arrow = 0;
+                    char *line_end = curr;
+
+                    while (line_end < end && *line_end != '\n') {
+                        if (*line_end == '-' && *(line_end + 1) == '>') arrow = line_end;
+                        line_end++;
+                    }
+
+                    if (arrow) {
+                        ps("  {\n    \"virtual\": \"", 24);
+                        sys3(SYS_WRITE, 1, (long)line_start, arrow - line_start);
+                        
+                        ps("\",\n    \"real\": \"", 21);
+                        char *r_start = arrow + 2;
+                        sys3(SYS_WRITE, 1, (long)r_start, line_end - r_start);
+                        
+                        ps("\"\n  }", 5);
+                    }
+
+                    curr = line_end + 1;
+                    if (curr < end && *curr != '\0' && *curr != '\n') {
+                        ps(",\n", 2);
+                    } else {
+                        ps("\n", 1);
+                    }
+                }
+                ps("]\n", 2);
+            } else {
+                sys3(SYS_WRITE, 1, (long)ioctl_arg, res);
+            }
         }
     }
 
