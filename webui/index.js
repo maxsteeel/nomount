@@ -97,29 +97,48 @@ async function loadHome() {
     (async () => {
         const script = `
             uname -r; echo "|||"
-            ${NM_BIN} v; echo "|||"
-            grep "version=" ${MOD_DIR}/nomount/module.prop | head -n1 | cut -d= -f2; echo "|||"
-            model=$(getprop ro.product.vendor.model); [ -z "$model" ] && model=$(getprop ro.product.model); echo "$model"; echo "|||"
+            getprop ro.product.vendor.model; [ -z "$(getprop ro.product.vendor.model)" ] && getprop ro.product.model; echo "|||"
             getprop ro.build.version.release; echo "|||"
             getprop ro.build.version.sdk; echo "|||"
-            ${NM_BIN} list | grep "${MOD_DIR}" | sed 's|.*${MOD_DIR}/\\([^/]*\\)/.*|\\1|' | sort -u | wc -l
+            grep "version=" ${MOD_DIR}/nomount/module.prop | cut -d= -f2; echo "|||"
+            ${NM_BIN} v; echo "|||"
+            ${NM_BIN} list json
         `;
 
         try {
             const result = await exec(script);
             const parts = result.stdout.split('|||').map(s => s.trim());
-            if (parts.length < 7) return;
+            
+            const jsonRaw = parts[6];
+            let activeModulesCount = 0;
+            let dVer = "Unknown";
 
-            const [kVer, dVer, mVer, model, aRel, aSdk, activeCount] = parts;
+            try {
+                const rules = JSON.parse(jsonRaw);
+                const uniqueMods = new Set();
+                rules.forEach(r => {
+                    if (r.real.includes(MOD_DIR)) {
+                        const parts = r.real.split('/');
+                        const modName = parts[4];
+                        if (modName && modName !== 'nomount') uniqueMods.add(modName);
+                    }
+                });
+                activeModulesCount = uniqueMods.size;
+                dVer = parts[5]; 
+            } catch (e) {
+                console.error("Error parsing rules in Home:", e);
+            }
+
+            const [kVer, model, aRel, aSdk, mVer] = parts;
             const androidInfo = `Android ${aRel} (API ${aSdk})`;
             const versionFull = `${mVer} (${dVer})`;
 
             requestAnimationFrame(() => {
-                kernelDisplay.textContent = kVer;
-                deviceDisplay.textContent = model;
+                kernelDisplay.textContent = kVer || "Unknown";
+                deviceDisplay.textContent = model || "Unknown";
                 androidDisplay.textContent = androidInfo;
                 versionDisplay.textContent = versionFull;
-                statsDisplay.textContent = `${activeCount} modules injecting`;
+                statsDisplay.textContent = `${activeModulesCount} modules injecting`;
 
                 if (dVer !== "Unknown") {
                     indicator.textContent = "Active";
@@ -140,49 +159,53 @@ async function loadHome() {
     })();
 }
 
+let currentRenderId = 0;
 async function loadModules() {
     const listContainer = document.getElementById('modules-list');
     const emptyBanner = document.getElementById('modules-empty');
-
-    const script = `
-        active_rules=$(${NM_BIN} list)
-        cd ${MOD_DIR}
-        for mod in *; do
-            [ ! -d "$mod" ] || [ "$mod" = "nomount" ] && continue
-            [ ! -f "$mod/module.prop" ] && continue
-            v_paths=""
-            for p in system vendor product system_ext oem odm; do
-                [ -d "$mod/$p" ] && v_paths="$v_paths $mod/$p"
-            done
-            [ -z "$v_paths" ] && continue
-            name=$(grep "^name=" "$mod/module.prop" | head -n1 | cut -d= -f2-)
-            [ -f "$mod/disable" ] && enabled="false" || enabled="true"
-            is_loaded="false"
-            count=0
-            if echo "$active_rules" | grep -qF "${MOD_DIR}/$mod/"; then
-                is_loaded="true"
-                count=$(find $v_paths -type f 2>/dev/null | wc -l)
-            fi
-            echo "$mod|$name|$enabled|$count|$is_loaded"
-        done
-    `;
+    const renderId = ++currentRenderId;
 
     try {
+        const rulesRes = await exec(`${NM_BIN} list json`);
+        const activeRules = JSON.parse(rulesRes.stdout || "[]");
+
+        const script = `
+            cd ${MOD_DIR}
+            for mod in *; do
+                [ ! -d "$mod" ] || [ "$mod" = "nomount" ] && continue
+                [ ! -f "$mod/module.prop" ] && continue
+                has_injectable=0
+                for p in system vendor product system_ext oem odm my_* tran_*; do
+                    if [ -d "$mod/$p" ]; then has_injectable=1; break; fi
+                done
+                [ $has_injectable -eq 0 ] && continue
+                name=$(grep "^name=" "$mod/module.prop" | head -n1 | cut -d= -f2-)
+                [ -f "$mod/disable" ] && enabled="false" || enabled="true"
+                echo "$mod|$name|$enabled"
+            done
+        `;
+
         const result = await exec(script);
         const lines = result.stdout.split('\n').filter(l => l.trim() !== '');
         
         const newModuleData = new Map(lines.map(line => {
-            const [modId, realName, en, cnt, ld] = line.split('|');
+            const [modId, realName, en] = line.split('|');;
+            const moduleRules = activeRules.filter(r => r && r.real && r.real.includes(`${MOD_DIR}/${modId}/`));
             return [modId, {
                 realName: (realName || modId).trim(),
                 isEnabled: en === 'true',
-                isLoaded: ld === 'true',
-                fileCount: parseInt(cnt) || 0,
+                isLoaded: moduleRules.length > 0,
+                fileCount: moduleRules.length,
             }];
         }));
 
         const currentCards = Array.from(listContainer.querySelectorAll('.module-card'));
         const existingCardsMap = new Map(currentCards.map(c => [c.dataset.moduleId, c]));
+
+        if (newModuleData.size === 0) {
+            listContainer.innerHTML = `<div style="padding:20px; opacity:0.5;">No inyectable modules found.</div>`;
+            return;
+        }
 
         for (const [modId, card] of existingCardsMap) {
             if (!newModuleData.has(modId)) {
@@ -192,8 +215,10 @@ async function loadModules() {
         }
 
         const entries = Array.from(newModuleData.entries());
-        
+
+        listContainer.innerHTML = '';
         const processEntries = () => {
+            if (renderId !== currentRenderId) return;
             const chunk = entries.splice(0, 3);
             
             chunk.forEach(([modId, data]) => {
@@ -254,32 +279,37 @@ async function loadModules() {
                             } catch (e) {
                                 showToast(`Error: ${e.message}`);
                             } finally {
-                                loadModules();
+                                setTimeout(() => loadModules(), 10);
                             }
                         })();
                     });
 
                     const hotBtn = card.querySelector('.btn-hot-action');
-                    hotBtn.addEventListener('click', () => {
+                    hotBtn.addEventListener('click', async () => {
+                        const originalText = hotBtn.textContent;
                         hotBtn.textContent = "...";
                         hotBtn.disabled = true;
 
-                        (async () => {
-                            try {
-                                const rules = (await exec(`${NM_BIN} list`)).stdout;
-                                if (rules.includes(`${MOD_DIR}/${modId}/`)) {
-                                    await unloadModule(modId);
-                                    showToast(`${data.realName} Unloaded`);
-                                } else {
-                                    await loadModule(modId);
-                                    showToast(`${data.realName} Loaded`);
-                                }
-                            } catch (e) {
-                                showToast(`Action failed: ${e.message}`);
-                            } finally {
-                                loadModules();
+                        try {
+                            const rulesRes = await exec(`${NM_BIN} list json`);
+                            const rules = JSON.parse(rulesRes.stdout);
+
+                            const isLoaded = rules.some(r => r && r.real && r.real.includes(`${MOD_DIR}/${modId}/`));
+
+                            if (isLoaded) {
+                                await unloadModule(modId);
+                                showToast(`${data.realName} Unloaded`);
+                            } else {
+                                await loadModule(modId);
+                                showToast(`${data.realName} Loaded`);
                             }
-                        })();
+                        } catch (e) {
+                            showToast(`Action failed: ${e.message}`);
+                            hotBtn.textContent = originalText;
+                            hotBtn.disabled = false;
+                        } finally {
+                            await loadModules(); 
+                        }
                     });
 
                     listContainer.appendChild(card);
@@ -302,35 +332,42 @@ async function loadModules() {
 }
 
 async function loadModule(modId) {
-    const script = `
-        cd ${MOD_DIR}/${modId}
-        for part in system vendor product system_ext oem odm;
- do
-            if [ -d "$part" ]; then
-                find "$part" -type f | while read -r file; do
-                    target="/$file"
-                    source="${MOD_DIR}/${modId}/$file"
-                    ${NM_BIN} add "$target" "$source"
-                done
-            fi
-        done
-    `;
-    await exec(script);
+    const findScript = `find ${MOD_DIR}/${modId} -type f`;
+    const res = await exec(findScript);
+    const files = res.stdout.split('\n').filter(f => f.trim() !== '');
+
+    if (files.length === 0) return;
+
+    const batchScript = files.map(file => {
+        const relativePath = file.replace(`${MOD_DIR}/${modId}/`, '');
+        return `${NM_BIN} add "/${relativePath}" "${file}"`;
+    }).join('\n');
+
+    await exec(batchScript);
 }
 
 async function unloadModule(modId) {
-    const script = `
-        active_rules=$(${NM_BIN} list)
-        echo "$active_rules" | while read -r rule; do
-            if [ -z "$rule" ]; then continue; fi
-            real_path=\\\${rule%%->*}
-            virtual_path=\\\${rule#*->}
-            if echo "$real_path" | grep -qF "${MOD_DIR}/${modId}/"; then
-                ${NM_BIN} del "$virtual_path"
-            fi
-        done
-    `;
-    await exec(script);
+    try {
+        const res = await exec(`${NM_BIN} list json`);
+        const rules = JSON.parse(res.stdout);
+
+        const modulePath = `${MOD_DIR}/${modId}/`;
+        const targets = rules
+            .filter(r => r && r.real && r.real.includes(modulePath))
+            .map(r => r.virtual);
+
+        if (targets.length === 0) return;
+
+        const chunkSize = 100;
+        for (let i = 0; i < targets.length; i += chunkSize) {
+            const chunk = targets.slice(i, i + chunkSize);
+            const batch = chunk.map(t => `${NM_BIN} del "${t}"`).join('\n');
+            await exec(batch);
+        }
+    } catch (e) {
+        console.error("Error in unloadModule:", e);
+        throw e;
+    }
 }
 
 let allAppsCache = [];
@@ -357,30 +394,27 @@ async function loadExclusions() {
             }
 
             const appsMap = new Map(allAppsCache.map(app => [String(app.uid), app]));
-            const existingUids = new Set(Array.from(listContainer.children).map(child => child.dataset.uid));
+            const currentItems = Array.from(listContainer.querySelectorAll('.setting-item'));
+            const existingUids = new Set(currentItems.map(i => i.dataset.uid));
 
-            for (const child of listContainer.children) {
-                const uid = child.dataset.uid;
-                if (uid && !blockedUids.has(uid)) {
-                    child.remove();
-                }
-            }
+            currentItems.forEach(item => {
+                if (!blockedUids.has(item.dataset.uid)) item.remove();
+            });
 
             const fragment = document.createDocumentFragment();
-            for (const uid of blockedUids) {
+            blockedUids.forEach(uid => {
                 if (!existingUids.has(uid)) {
-                    const appInfo = appsMap.get(uid);
-                    const label = appInfo ? (appInfo.appLabel || appInfo.packageName) : `UID: ${uid}`;
-                    const pkg = appInfo ? appInfo.packageName : 'System/Unknown';
-                    const iconSrc = appInfo ? `ksu://icon/${appInfo.packageName}` : '';
-
+                    const app = appsMap.get(uid);
+                    const label = app ? (app.appLabel || app.packageName) : `UID: ${uid}`;
+                    const pkg = app ? app.packageName : 'System/Unknown';
+                    
                     const item = document.createElement('div');
                     item.className = 'card setting-item';
                     item.dataset.uid = uid;
                     item.innerHTML = `
                         <div style="display:flex; align-items:center; gap:16px;">
-                            <img src="${iconSrc}" style="width: 40px; height: 40px; border-radius: 10px;" 
-                                 onerror="this.src='data:image/svg+xml;base64,...'" />
+                            <img src="ksu://icon/${pkg}" style="width: 40px; height: 40px; border-radius: 10px;" 
+                                onerror="this.src='data:image/svg+xml;base64,...'" />
                             <div class="setting-text">
                                 <h3>${label}</h3>
                                 <p>${pkg}</p>
@@ -392,7 +426,7 @@ async function loadExclusions() {
                     item.querySelector('.btn-delete').onclick = () => removeExclusion(uid, label);
                     fragment.appendChild(item);
                 }
-            }
+            });
 
             requestAnimationFrame(() => {
                 const placeholder = listContainer.querySelector('.empty-list-placeholder');
@@ -400,7 +434,7 @@ async function loadExclusions() {
                 listContainer.appendChild(fragment);
                 
                 if (blockedUids.size === 0) {
-                    listContainer.innerHTML = '<div class="empty-list-placeholder">No exclusions yet</div>';
+                    listContainer.innerHTML = '<div style="padding:20px; opacity:0.5;" class="empty-list-placeholder">No exclusions yet</div>';
                 }
             });
 
@@ -542,9 +576,13 @@ async function removeExclusion(uid, name) {
     showToast(`Unblocking ${name}...`);
     (async () => {
         try {
-            await exec(`sed -i "/${uid}/d" ${FILES.exclusions}`);
+            const cat = await exec(`cat ${FILES.exclusions}`);
+            const lines = cat.stdout.split('\n').map(l => l.trim()).filter(l => l !== '' && l !== String(uid));
+            const newContent = lines.join('\n');
+            await exec(`echo "${newContent}" > ${FILES.exclusions}`);
+
             await exec(`${NM_BIN} unblock ${uid}`);
-            loadExclusions();
+            await loadExclusions();
         } catch (e) { showToast("Error unblocking"); }
     })();
 }
@@ -552,13 +590,13 @@ async function removeExclusion(uid, name) {
 async function addExclusion(uid, name) {
     (async () => {
         try {
-            const check = await exec(`grep "^${uid}$" ${FILES.exclusions}`);
-            if (check.stdout.trim()) return showToast("Already blocked");
+            const cat = await exec(`cat ${FILES.exclusions}`);
+            if (cat.stdout.includes(String(uid))) return showToast("Already blocked");
 
             await exec(`echo "${uid}" >> ${FILES.exclusions}`);
             await exec(`${NM_BIN} block ${uid}`);
             showToast(`Blocked: ${name}`);
-            loadExclusions();
+            await loadExclusions();
         } catch (e) { showToast("Error blocking"); }
     })();
 }
@@ -598,6 +636,7 @@ async function loadOptions() {
     };
 }
 
+let isGlobalLoading = false;
 function initPullToRefresh() {
     const container = document.querySelector('.page-container');
     const indicator = document.querySelector('.pull-to-refresh-indicator');
@@ -605,70 +644,76 @@ function initPullToRefresh() {
 
     let startY = 0;
     let pullDistance = 0;
-    let isRefreshing = false;
-    const pullThreshold = 80; // How far user needs to pull down
+    const pullThreshold = 90; 
 
     const isRefreshableView = () => {
         const activeView = document.querySelector('.view-content.active');
-        return activeView && (activeView.id === 'view-modules' || activeView.id === 'view-exclusions');
+        return activeView !== null; 
     };
 
     container.addEventListener('touchstart', (e) => {
-        if (!isRefreshableView() || isRefreshing || container.scrollTop !== 0) {
+        if (isGlobalLoading || container.scrollTop !== 0 || !isRefreshableView()) {
             startY = 0;
             return;
         }
         startY = e.touches[0].pageY;
+        indicator.style.transition = 'none';
     }, { passive: true });
 
     container.addEventListener('touchmove', (e) => {
-        if (isRefreshing || startY === 0) return;
+        if (startY === 0 || isGlobalLoading) return;
 
         const currentY = e.touches[0].pageY;
-        pullDistance = Math.max(0, currentY - startY);
+        pullDistance = (currentY - startY) * 0.4;
 
-        if (container.scrollTop === 0) {
-            const rotation = Math.min(180, pullDistance / pullThreshold * 180);
-            indicator.style.top = `${Math.min(pullDistance, pullThreshold) - 50}px`;
+        if (pullDistance > 0 && container.scrollTop === 0) {
+            if (e.cancelable) e.preventDefault(); 
+            
+            const rotation = Math.min(180, (pullDistance / pullThreshold) * 180);
+            const opacity = Math.min(1, pullDistance / pullThreshold);
+            
+            indicator.style.top = `${Math.min(pullDistance, pullThreshold) - 60}px`;
+            indicator.style.opacity = opacity;
             indicatorIcon.style.transform = `rotate(${rotation}deg)`;
-        } else {
-            // Scrolled down, reset
-            startY = 0;
-            pullDistance = 0;
         }
-    }, { passive: true });
+    }, { passive: false });
 
     container.addEventListener('touchend', async () => {
-        if (isRefreshing || startY === 0) return;
+        if (startY === 0 || isGlobalLoading) return;
+
+        indicator.style.transition = 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
 
         if (pullDistance >= pullThreshold) {
-            isRefreshing = true;
+            isGlobalLoading = true;
             indicator.classList.add('refreshing');
-            indicator.style.top = '20px'; // Hold indicator in view
-            
+            indicator.style.top = '24px';
+            indicator.style.opacity = '1';
+
             try {
                 await refreshCurrentView();
+                await new Promise(r => setTimeout(r, 400));
             } catch (e) {
-                console.error("Refresh failed:", e);
-                showToast("Refresh failed."); // Keep toast for errors
+                showToast("Refresh failed");
             } finally {
-                // Reset everything after a short delay for animation
-                setTimeout(() => {
-                    isRefreshing = false;
-                    indicator.classList.remove('refreshing');
-                    indicator.style.top = '-50px';
-                    indicatorIcon.style.transform = 'rotate(0deg)';
-                }, 50);
+                resetIndicator();
             }
         } else {
-            // Not pulled far enough, reset
-            indicator.style.top = '-50px';
-            indicatorIcon.style.transform = 'rotate(0deg)';
+            resetIndicator();
         }
-        
+
         startY = 0;
         pullDistance = 0;
     });
+
+    function resetIndicator() {
+        isGlobalLoading = false;
+        indicator.classList.remove('refreshing');
+        indicator.style.top = '-60px';
+        indicator.style.opacity = '0';
+        setTimeout(() => {
+            indicatorIcon.style.transform = 'rotate(0deg)';
+        }, 300);
+    }
 }
 
 async function refreshCurrentView() {

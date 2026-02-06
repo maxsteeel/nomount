@@ -18,6 +18,21 @@
     --md-sys-color-error-container: #880000;
     --md-sys-color-on-error: #ffffff;
     --md-sys-color-on-error-container: #ffdad6;
+    --md-sys-typescale-body-large-font: system-ui;
+    --md-sys-typescale-body-medium-font: system-ui;
+    --md-sys-typescale-body-small-font: system-ui;
+    --md-sys-typescale-display-large-font: system-ui;
+    --md-sys-typescale-display-medium-font: system-ui;
+    --md-sys-typescale-display-small-font: system-ui;
+    --md-sys-typescale-headline-large-font: system-ui;
+    --md-sys-typescale-headline-medium-font: system-ui;
+    --md-sys-typescale-headline-small-font: system-ui;
+    --md-sys-typescale-label-large-font: system-ui;
+    --md-sys-typescale-label-medium-font: system-ui;
+    --md-sys-typescale-label-small-font: system-ui;
+    --md-sys-typescale-title-large-font: system-ui;
+    --md-sys-typescale-title-medium-font: system-ui;
+    --md-sys-typescale-title-small-font: system-ui;
     --top-inset: env(safe-area-inset-top, 0px);
     --bottom-inset: env(safe-area-inset-bottom, 0px);
 }

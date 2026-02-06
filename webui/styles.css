@@ -2,6 +2,7 @@
 
 * {
     box-sizing: border-box;
+    font-family: inherit;
 }
 
 :root {
@@ -21,7 +22,7 @@ html, body {
 }
 
 md-icon {
-    font-family: 'Material Symbols Outlined';
+    font-family: 'Material Symbols Outlined' !important;
     font-weight: normal;
     font-style: normal;
     font-size: 24px;
@@ -367,6 +368,7 @@ md-fab {
     background: transparent;
     border: none;
     color: var(--md-sys-color-on-surface);
+    font-family: inherit;
     font-size: 16px;
     width: 100%;
     outline: none;
@@ -375,7 +377,7 @@ md-fab {
 .filter-menu {
     display: none;
     background-color: rgba(30, 30, 30, 0.8);
-    backdrop-filter: blur(10px); /* El efecto Blur */
+    backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     
     border-radius: 16px;
