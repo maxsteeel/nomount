@@ -132,6 +132,96 @@ typedef unsigned long size_t;
 #define NM_DIR    128
 #define PATH_MAX  4096
 
+/* complete path resolution */
+__attribute__((noinline))
+static int resolve_path(char *result, const char *cwd, const char *rel_path, int max_len) {
+    int r_pos = 0;
+    int c_len = 0;
+
+    /* if its a relative path and we have cwd, prepend cwd */
+    if (rel_path[0] != '/' && cwd && cwd[0]) {
+        while (cwd[c_len] && r_pos < max_len-1) {
+            result[r_pos++] = cwd[c_len++];
+        }
+        /* secure slash */
+        if (r_pos > 0 && result[r_pos-1] != '/') {
+            if (r_pos < max_len-1) result[r_pos++] = '/';
+        }
+    }
+
+    const char *src = rel_path;
+    while (*src && r_pos < max_len-1) {
+        /* ignore ./ */
+        if (src[0] == '.' && src[1] == '/') {
+            src += 2;
+            continue;
+        }
+
+        /* ignore redundant slashes, but keep the initial one if it is absolute. */
+        if (src[0] == '/') {
+            if (src == rel_path && rel_path[0] == '/') {
+                /* absolute path - retain the initial slash */
+                if (r_pos == 0) {
+                    result[r_pos++] = '/';
+                }
+            } else if (src > rel_path && src[-1] == '/') {
+                /* redundant slash - skip it */
+                src++;
+                continue;
+            }
+            src++;
+            continue;
+        }
+
+        /* handle ../ OR .. at end of string */
+        if (src[0] == '.' && src[1] == '.' && (src[2] == '/' || src[2] == '\0')) {
+            if (r_pos > 1) {
+                /* search last slash */
+                int last_slash = r_pos-1;
+                while (last_slash > 0 && result[last_slash] != '/') 
+                    last_slash--;
+                
+                /* back to that slash */
+                if (last_slash >= 0) {
+                    r_pos = (last_slash > 0) ? last_slash : 1;
+                    /* keep slash root */
+                    if (r_pos == 1 && result[0] == '/') {
+                        /* OK */
+                    }
+                }
+            }
+
+            if (src[2] == '/') {
+                src += 3;  /* skip "../" */
+            } else {
+                src += 2;  /* skip ".." y terminar */
+            }
+            continue;
+        }
+
+        /* copy normal component */
+        while (*src && *src != '/' && r_pos < max_len-1) {
+            result[r_pos++] = *src++;
+        }
+
+        /* add slash if there is more path */
+        if (*src == '/') {
+            if (r_pos < max_len-1) result[r_pos++] = '/';
+            src++;
+        }
+    }
+    
+    /* null terminate */
+    if (r_pos < max_len) {
+        result[r_pos] = '\0';
+    } else {
+        result[max_len-1] = '\0';
+        r_pos = max_len-1;
+    }
+    
+    return r_pos;
+}
+
 /* helper for json list */
 __attribute__((always_inline))
 static inline void ps(const char *s, int max) {
@@ -187,56 +277,61 @@ void c_main(long *sp) {
             char *v_ptr;
             char *r_ptr;
 
-            char *v_buf = (char *)sp - 16384; 
-            char *r_buf = v_buf - 8192;
+            char *stack_buf = (char *)sp - 65536;
+            char *cwd_buf = stack_buf;
+            char *v_resolved = cwd_buf + 8192;
+            char *r_resolved = v_resolved + 8192;
+            char *v_temp = r_resolved + 8192;
+            char *r_temp = v_temp + 8192;
 
-            if (v_src[0] != '/') {
-                long l = sys2(SYS_GETCWD, (long)v_buf, 4096);
-                if (l > 0) {
-                    int idx = 0; while (v_buf[idx]) idx++;
-                    if (idx > 0 && v_buf[idx-1] != '/') v_buf[idx++] = '/';
-                    char *s = v_src;
-                    if (s[0] == '.' && s[1] == '/') s += 2;
-                    char *d = v_buf + idx;
-                    while ((*d++ = *s++));
-                    v_ptr = v_buf;
-                } else { v_ptr = v_src; }
-            } else { v_ptr = v_src; }
+            long cwd_len = sys2(SYS_GETCWD, (long)cwd_buf, 8192);
+            const char *cwd = (cwd_len > 0) ? cwd_buf : "/";
 
-            if (r_src[0] != '/') {
-                long l = sys2(SYS_GETCWD, (long)r_buf, 4096);
-                if (l > 0) {
-                    int idx = 0; while (r_buf[idx]) idx++;
-                    if (idx > 0 && r_buf[idx-1] != '/') r_buf[idx++] = '/';
-                    char *s = r_src;
-                    if (s[0] == '.' && s[1] == '/') s += 2;
-                    char *d = r_buf + idx;
-                    while ((*d++ = *s++));
-                    r_ptr = r_buf;
-                } else { r_ptr = r_src; }
-            } else { r_ptr = r_src; }
+            int v_len = resolve_path(v_resolved, cwd, v_src, 8192);
+            int r_len = resolve_path(r_resolved, cwd, r_src, 8192);
 
-            char *v_tmp = r_buf - 4096; 
-            char *r_tmp = v_tmp - 4096; 
+            if (v_len == 0 || r_len == 0) {
+                exit_code = 3;
+                goto do_exit;
+            }
+            
+            v_ptr = v_resolved;
+            r_ptr = r_resolved;
+
+            char *v_tmp = r_temp;
+            char *r_tmp = v_temp;
             int i = 0;
 
-            while (v_ptr[i]) {
+            while (v_ptr[i] && i < 8191) {
                 if (v_ptr[i] == '/' && i > 0) {
-                    for (int k = 0; k < i; k++) v_tmp[k] = v_ptr[k];
-                    v_tmp[i] = '\0';
+                    int copy_len = (i < 8191) ? i : 8191;
+                    for (int k = 0; k < copy_len; k++) v_tmp[k] = v_ptr[k];
+                    v_tmp[copy_len] = '\0';
 
                     int slashes = 0;
-                    for(int k=0; v_tmp[k]; k++) if(v_tmp[k] == '/') slashes++;
-                    if (slashes < 2) { i++; continue; } 
-
-                    int v_len = 0; while(v_ptr[v_len]) v_len++;
-                    int r_len = 0; while(r_ptr[r_len]) r_len++;
-                    int diff = v_len - i;
-                    int r_cut = r_len - diff;
+                    for(int k = 0; v_tmp[k]; k++) 
+                        if(v_tmp[k] == '/') slashes++;
                     
-                    if (r_cut > 0) {
-                        for (int k = 0; k < r_cut; k++) r_tmp[k] = r_ptr[k];
+                    if (slashes < 2) { 
+                        i++; 
+                        continue; 
+                    }
+
+                    int v_len_full = 0;
+                    while(v_ptr[v_len_full]) v_len_full++;
+                    int r_len_full = 0;
+                    while(r_ptr[r_len_full]) r_len_full++;
+                    
+                    int diff = v_len_full - i;
+                    int r_cut = r_len_full - diff;
+                    
+                    if (r_cut > 0 && r_cut < 8192) {
+                        for (int k = 0; k < r_cut; k++) 
+                            r_tmp[k] = r_ptr[k];
                         r_tmp[r_cut] = '\0';
+                    } else {
+                        r_tmp[0] = '/';
+                        r_tmp[1] = '\0';
                     }
 
                     unsigned int st_tmp[32];
@@ -271,12 +366,13 @@ void c_main(long *sp) {
             #endif
             
             data.flags = NM_ACTIVE;
-            
-            unsigned int *stat_buf = (unsigned int *)((char*)sp + 256);
+
+            unsigned int *stat_buf = (unsigned int *)(stack_buf + 32768);
             if (sys4(SYS_FSTATAT, AT_FDCWD, (long)r_ptr, (long)stat_buf, 0) == 0) {
                 unsigned int mode = stat_buf[STAT_MODE_IDX];
                 if ((mode & 0170000) == 0040000) data.flags |= NM_DIR;
             }
+
             ioctl_code = IOCTL_ADD;
         }
     } 
