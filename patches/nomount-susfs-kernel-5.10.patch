@@ -1,10 +1,10 @@
 diff --git a/fs/Kconfig b/fs/Kconfig
-index 1c3298e49..fb2c72b8c 100644
+index c34b9d4e0..8ec1f2b07 100644
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
-@@ -323,4 +323,11 @@ source "fs/nls/Kconfig"
- source "fs/dlm/Kconfig"
- source "fs/unicode/Kconfig"
+@@ -351,4 +351,11 @@ source "fs/unicode/Kconfig"
+ config IO_WQ
+ 	bool
  
 +config NOMOUNT
 +	bool "NoMount Path Redirection Subsystem"
@@ -15,16 +15,16 @@ index 1c3298e49..fb2c72b8c 100644
 +
  endmenu
 diff --git a/fs/Makefile b/fs/Makefile
-index 3d717a67d..cfaa27faa 100644
+index e951f5487..4e67adf49 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
-@@ -133,3 +133,4 @@ obj-$(CONFIG_CEPH_FS)		+= ceph/
- obj-$(CONFIG_PSTORE)		+= pstore/
- obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
+@@ -139,3 +139,4 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
  obj-$(CONFIG_EROFS_FS)		+= erofs/
+ obj-$(CONFIG_VBOXSF_FS)		+= vboxsf/
+ obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
 +obj-$(CONFIG_NOMOUNT) += nomount.o
 diff --git a/fs/d_path.c b/fs/d_path.c
-index a69e2cd36..c1310b717 100644
+index a69e2cd36..127a40f23 100644
 --- a/fs/d_path.c
 +++ b/fs/d_path.c
 @@ -8,6 +8,10 @@
@@ -43,13 +43,13 @@ index a69e2cd36..c1310b717 100644
  	int error;
  
 +#ifdef CONFIG_NOMOUNT
-+	const char *v_path;
++    const char *v_path;
 +	int len;
 +
 +    if (path->dentry && path->dentry->d_inode && !nomount_should_skip()) {
 +		nm_enter();
 +        v_path = nomount_get_static_vpath(path->dentry->d_inode);
-+
++        
 +        if (v_path) {
 +            len = strlen(v_path);
 +            if (buflen >= len + 1) {
@@ -69,10 +69,10 @@ index a69e2cd36..c1310b717 100644
  	 * We have various synthetic filesystems that never get mounted.  On
  	 * these filesystems dentries are never used for lookup purposes, and
 diff --git a/fs/namei.c b/fs/namei.c
-index 0aaf40471..e73222df7 100644
+index a61fe9bb7..c427e640c 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -43,6 +43,11 @@
+@@ -46,6 +46,11 @@
  #include "internal.h"
  #include "mount.h"
  
@@ -81,10 +81,10 @@ index 0aaf40471..e73222df7 100644
 +#include <linux/sched/mm.h>
 +#endif
 +
- #ifdef CONFIG_SELINUX_AVC_BACKTRACE
- #include <linux/avc_backtrace.h>
- #endif
-@@ -206,7 +211,15 @@ getname_flags(const char __user *filename, int flags, int *empty)
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/namei.h>
+ 
+@@ -214,7 +219,15 @@ getname_flags(const char __user *filename, int flags, int *empty)
  
  	result->uptr = filename;
  	result->aname = NULL;
@@ -100,7 +100,7 @@ index 0aaf40471..e73222df7 100644
  	return result;
  }
  
-@@ -340,6 +353,18 @@ int generic_permission(struct inode *inode, int mask)
+@@ -362,6 +375,18 @@ int generic_permission(struct inode *inode, int mask)
  {
  	int ret;
  
@@ -119,7 +119,7 @@ index 0aaf40471..e73222df7 100644
  	/*
  	 * Do the basic permission checks.
  	 */
-@@ -440,6 +465,18 @@ int inode_permission(struct inode *inode, int mask)
+@@ -455,6 +480,18 @@ int inode_permission(struct inode *inode, int mask)
  {
  	int retval;
  
@@ -138,10 +138,10 @@ index 0aaf40471..e73222df7 100644
  	retval = sb_permission(inode->i_sb, inode, mask);
  	if (retval)
  		return retval;
-@@ -3659,14 +3696,49 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
- 	struct nameidata nd;
- 	int flags = op->lookup_flags;
- 	struct file *filp;
+@@ -3783,8 +3820,39 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
+ #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+ 	struct filename *fake_pathname;
+ #endif
 +#ifdef CONFIG_NOMOUNT
 +    struct filename *nm_name = pathname;
 +    const char *real_path;
@@ -167,9 +167,9 @@ index 0aaf40471..e73222df7 100644
 +            }
 +        }
 +        rcu_read_unlock();
-+
 +        memalloc_nofs_restore(pflags);
 +    }
++
 +    set_nameidata(&nd, dfd, nm_name); 
 +#else
 +    set_nameidata(&nd, dfd, pathname);
@@ -179,8 +179,19 @@ index 0aaf40471..e73222df7 100644
  	filp = path_openat(&nd, op, flags | LOOKUP_RCU);
  	if (unlikely(filp == ERR_PTR(-ECHILD)))
  		filp = path_openat(&nd, op, flags);
- 	if (unlikely(filp == ERR_PTR(-ESTALE)))
- 		filp = path_openat(&nd, op, flags | LOOKUP_REVAL);
+@@ -3804,12 +3872,20 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
+ 			if (unlikely(filp == ERR_PTR(-ESTALE)))
+ 				filp = path_openat(&nd, op, flags | LOOKUP_REVAL);
+ 			restore_nameidata();
++#ifdef CONFIG_NOMOUNT
++    		if (nm_name != pathname)
++        		putname(nm_name);
++#endif
+ 			putname(fake_pathname);
+ 			return filp;
+ 		}
+ 	}
+ #endif
  	restore_nameidata();
 +#ifdef CONFIG_NOMOUNT
 +    if (nm_name != pathname)
@@ -1526,7 +1537,7 @@ index 000000000..bec38c5f5
 +
 +fs_initcall(nomount_init);
 diff --git a/fs/open.c b/fs/open.c
-index 437decd76..ab28a52e1 100644
+index 0c0e3c076..39eae61ec 100644
 --- a/fs/open.c
 +++ b/fs/open.c
 @@ -32,6 +32,9 @@
@@ -1536,10 +1547,10 @@ index 437decd76..ab28a52e1 100644
 +#ifdef CONFIG_NOMOUNT
 +#include <linux/nomount.h>
 +#endif
- 
- #include "internal.h"
- 
-@@ -401,6 +404,16 @@ long do_faccessat(int dfd, const char __user *filename, int mode)
+ #ifdef CONFIG_KSU_SUSFS
+ #include <linux/susfs_def.h>
+ #endif
+@@ -449,6 +452,16 @@ static long do_faccessat(int dfd, const char __user *filename, int mode, int fla
  
  	inode = d_backing_inode(path.dentry);
  
@@ -1557,20 +1568,20 @@ index 437decd76..ab28a52e1 100644
  		/*
  		 * MAY_EXEC on regular files is denied if the fs is mounted
 diff --git a/fs/proc/base.c b/fs/proc/base.c
-index 424cf2eeb..bd80213d8 100644
+index ccd797116..0d790bfb6 100644
 --- a/fs/proc/base.c
 +++ b/fs/proc/base.c
-@@ -95,6 +95,9 @@
- #include <linux/sched/stat.h>
- #include <linux/posix-timers.h>
+@@ -99,6 +99,9 @@
+ #include <linux/time_namespace.h>
+ #include <linux/resctrl.h>
  #include <linux/cpufreq_times.h>
 +#ifdef CONFIG_NOMOUNT
 +#include <linux/nomount.h>
 +#endif
- #include <trace/events/oom.h>
- #include "internal.h"
- #include "fd.h"
-@@ -1647,9 +1650,48 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
+ #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+ #include <linux/susfs_def.h>
+ #endif
+@@ -1846,9 +1849,48 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
  	char *pathname;
  	int len;
  
@@ -1620,33 +1631,33 @@ index 424cf2eeb..bd80213d8 100644
  	len = PTR_ERR(pathname);
  	if (IS_ERR(pathname))
 diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
-index c547f2d68..30871eb84 100644
+index 8de421e24..af436f140 100644
 --- a/fs/proc/task_mmu.c
 +++ b/fs/proc/task_mmu.c
-@@ -21,6 +21,9 @@
+@@ -20,6 +20,9 @@
+ #include <linux/shmem_fs.h>
+ #include <linux/uaccess.h>
  #include <linux/pkeys.h>
- #include <linux/mm_inline.h>
- #include <linux/ctype.h>
 +#ifdef CONFIG_NOMOUNT
 +#include <linux/nomount.h>
 +#endif
- 
- #include <asm/elf.h>
- #include <asm/tlb.h>
-@@ -377,6 +380,11 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
- 		struct inode *inode = file_inode(vma->vm_file);
- 		dev = inode->i_sb->s_dev;
+ #if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP)
+ #include <linux/susfs_def.h>
+ #endif
+@@ -367,6 +370,11 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
  		ino = inode->i_ino;
+ #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+ bypass_orig_flow:
++#endif
 +#ifdef CONFIG_NOMOUNT
 +		if (!nomount_should_skip()) {
 +			nomount_spoof_mmap_metadata(inode, &dev, &ino);
 +		}
-+#endif
+ #endif
  		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
  	}
- 
 diff --git a/fs/readdir.c b/fs/readdir.c
-index 07a3b5baa..77a8950e6 100644
+index fe6c96984..115a1c281 100644
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
 @@ -21,6 +21,9 @@
@@ -1659,121 +1670,139 @@ index 07a3b5baa..77a8950e6 100644
  
  #include <asm/unaligned.h>
  
-@@ -277,6 +280,9 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -371,6 +374,9 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
  		.current_dir = dirent
  	};
  	int error;
 +#ifdef CONFIG_NOMOUNT
 +	int initial_count = count;
 +#endif
- 
- 	if (!access_ok(dirent, count))
- 		return -EFAULT;
-@@ -285,9 +291,25 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
- 	if (!f.file)
- 		return -EBADF;
- 
-+#ifdef CONFIG_NOMOUNT
-+	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
-+		error = 0;
-+		goto skip_real_iterate;
-+	}
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ 	struct inode *inode;
+ #endif
+@@ -399,10 +405,31 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
+ 	buf.is_base_dentry_android_data_root_dir = false;
+ 	buf.is_base_dentry_sdcard_root_dir = false;
+ orig_flow:
 +#endif
-+
++#ifdef CONFIG_NOMOUNT
++	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode
++		 && !nomount_should_skip()) {
++        if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
++            error = 0;
++            goto skip_real_iterate;
++        }
++    }
+ #endif
  	error = iterate_dir(f.file, &buf.ctx);
  	if (error >= 0)
  		error = buf.error;
 +
 +#ifdef CONFIG_NOMOUNT
 +skip_real_iterate:
-+	if (error >= 0 && !signal_pending(current)) {
++	if (error >= 0 && !signal_pending(current) && !nomount_should_skip() && 
++        f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
++		nm_enter();
 +		nomount_inject_dents64(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
 +		error = initial_count - buf.count;
++		nm_exit();
 +	}
 +#endif
 +
  	if (buf.prev_reclen) {
  		struct linux_dirent __user * lastdirent;
  		lastdirent = (void __user *)buf.current_dir - buf.prev_reclen;
-@@ -363,6 +385,9 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
+@@ -508,6 +535,9 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
  		.current_dir = dirent
  	};
  	int error;
 +#ifdef CONFIG_NOMOUNT
 +	int initial_count = count;
 +#endif
- 
- 	if (!access_ok(dirent, count))
- 		return -EFAULT;
-@@ -371,9 +396,25 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
- 	if (!f.file)
- 		return -EBADF;
- 
-+#ifdef CONFIG_NOMOUNT
-+	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
-+		error = 0;
-+		goto skip_real_iterate;
-+	}
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ 	struct inode *inode;
+ #endif
+@@ -536,10 +566,31 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
+ 	buf.is_base_dentry_android_data_root_dir = false;
+ 	buf.is_base_dentry_sdcard_root_dir = false;
+ orig_flow:
 +#endif
-+
++#ifdef CONFIG_NOMOUNT
++	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode
++		 && !nomount_should_skip()) {
++        if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
++            error = 0;
++            goto skip_real_iterate;
++        }
++    }
+ #endif
  	error = iterate_dir(f.file, &buf.ctx);
  	if (error >= 0)
  		error = buf.error;
 +
 +#ifdef CONFIG_NOMOUNT
 +skip_real_iterate:
-+	if (error >= 0 && !signal_pending(current)) {
++	if (error >= 0 && !signal_pending(current) && !nomount_should_skip() && 
++        f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
++		nm_enter();
 +		nomount_inject_dents64(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
 +		error = initial_count - buf.count;
++		nm_exit();
 +	}
 +#endif
 +
  	if (buf.prev_reclen) {
  		struct linux_dirent64 __user * lastdirent;
  		typeof(lastdirent->d_off) d_off = buf.ctx.pos;
-@@ -539,6 +580,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -784,6 +835,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
  		.count = count
  	};
  	int error;
 +#ifdef CONFIG_NOMOUNT
 +	int initial_count = count;
 +#endif
- 
- 	if (!access_ok(dirent, count))
- 		return -EFAULT;
-@@ -547,9 +591,25 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
- 	if (!f.file)
- 		return -EBADF;
- 
-+#ifdef CONFIG_NOMOUNT
-+	if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
-+		error = 0;
-+		goto skip_real_iterate;
-+	}
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ 	struct inode *inode;
+ #endif
+@@ -812,10 +866,31 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+ 	buf.is_base_dentry_android_data_root_dir = false;
+ 	buf.is_base_dentry_sdcard_root_dir = false;
+ orig_flow:
 +#endif
-+
++#ifdef CONFIG_NOMOUNT
++	if (f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode
++		 && !nomount_should_skip()) {
++        if (f.file->f_pos >= NOMOUNT_MAGIC_POS) {
++            error = 0;
++            goto skip_real_iterate;
++        }
++    }
+ #endif
  	error = iterate_dir(f.file, &buf.ctx);
  	if (error >= 0)
  		error = buf.error;
 +
 +#ifdef CONFIG_NOMOUNT
 +skip_real_iterate:
-+	if (error >= 0 && !signal_pending(current)) {
++	if (error >= 0 && !signal_pending(current) && !nomount_should_skip() && 
++        f.file && f.file->f_path.dentry && f.file->f_path.dentry->d_inode) {
++		nm_enter();
 +		nomount_inject_dents(f.file, (void __user **)&buf.current_dir, &buf.count, &f.file->f_pos);
 +		error = initial_count - buf.count;
++		nm_exit();
 +	}
 +#endif
 +
- 	lastdirent = buf.previous;
- 	if (lastdirent) {
- 		if (put_user(buf.ctx.pos, &lastdirent->d_off))
+ 	if (buf.prev_reclen) {
+ 		struct compat_linux_dirent __user * lastdirent;
+ 		lastdirent = (void __user *)buf.current_dir - buf.prev_reclen;
 diff --git a/fs/stat.c b/fs/stat.c
-index 268c9eb89..60f8554f8 100644
+index 6ee413a71..6d5ff7e8d 100644
 --- a/fs/stat.c
 +++ b/fs/stat.c
-@@ -18,6 +18,10 @@
- #include <linux/pagemap.h>
- #include <linux/compat.h>
+@@ -22,6 +22,10 @@
+ #include <linux/version.h>
+ #endif
  
 +#ifdef CONFIG_NOMOUNT
 +#include <linux/nomount.h>
@@ -1782,7 +1811,7 @@ index 268c9eb89..60f8554f8 100644
  #include <linux/uaccess.h>
  #include <asm/unistd.h>
  
-@@ -65,6 +69,7 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+@@ -87,6 +91,7 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
  		      u32 request_mask, unsigned int query_flags)
  {
  	struct inode *inode = d_backing_inode(path->dentry);
@@ -1790,9 +1819,9 @@ index 268c9eb89..60f8554f8 100644
  
  	memset(stat, 0, sizeof(*stat));
  	stat->result_mask |= STATX_BASIC_STATS;
-@@ -77,11 +82,24 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
- 	if (IS_AUTOMOUNT(inode))
- 		stat->attributes |= STATX_ATTR_AUTOMOUNT;
+@@ -110,11 +115,24 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+ 	stat->attributes_mask |= (STATX_ATTR_AUTOMOUNT |
+ 				  STATX_ATTR_DAX);
  
 -	if (inode->i_op->getattr)
 -		return inode->i_op->getattr(path, stat, request_mask,
@@ -1819,11 +1848,11 @@ index 268c9eb89..60f8554f8 100644
  }
  EXPORT_SYMBOL(vfs_getattr_nosec);
 diff --git a/fs/statfs.c b/fs/statfs.c
-index 4960c69cc..7ffee7efb 100644
+index a21875ca3..f89b58bf8 100644
 --- a/fs/statfs.c
 +++ b/fs/statfs.c
-@@ -11,6 +11,10 @@
- #include <linux/compat.h>
+@@ -15,6 +15,10 @@
+ #endif
  #include "internal.h"
  
 +#ifdef CONFIG_NOMOUNT
@@ -1833,7 +1862,17 @@ index 4960c69cc..7ffee7efb 100644
  static int flags_by_mnt(int mnt_flags)
  {
  	int flags = 0;
-@@ -88,6 +92,11 @@ int vfs_statfs(const struct path *path, struct kstatfs *buf)
+@@ -100,11 +104,21 @@ int vfs_statfs(const struct path *path, struct kstatfs *buf)
+ 	error = statfs_by_dentry(mnt->mnt.mnt_root, buf);
+ 	if (!error)
+ 		buf->f_flags = calculate_f_flags(&mnt->mnt);
++#ifdef CONFIG_NOMOUNT
++	if (!nomount_should_skip())
++		nomount_spoof_statfs(path, buf);
++#endif
++
+ 	return error;
+ #else
  	error = statfs_by_dentry(path->dentry, buf);
  	if (!error)
  		buf->f_flags = calculate_f_flags(path->mnt);
@@ -1843,10 +1882,10 @@ index 4960c69cc..7ffee7efb 100644
 +#endif
 +
  	return error;
+ #endif
  }
- EXPORT_SYMBOL(vfs_statfs);
 diff --git a/fs/xattr.c b/fs/xattr.c
-index 8a6c46e69..bf0bca944 100644
+index 8d7151492..77c6f8537 100644
 --- a/fs/xattr.c
 +++ b/fs/xattr.c
 @@ -22,6 +22,9 @@
@@ -1859,7 +1898,7 @@ index 8a6c46e69..bf0bca944 100644
  
  #include <linux/uaccess.h>
  
-@@ -251,6 +254,12 @@ vfs_setxattr(struct dentry *dentry, const char *name, const void *value,
+@@ -278,6 +281,12 @@ vfs_setxattr(struct dentry *dentry, const char *name, const void *value,
  	struct inode *delegated_inode = NULL;
  	int error;
  
@@ -1872,7 +1911,7 @@ index 8a6c46e69..bf0bca944 100644
  retry_deleg:
  	inode_lock(inode);
  	error = __vfs_setxattr_locked(dentry, name, value, size, flags,
-@@ -376,6 +385,12 @@ EXPORT_SYMBOL(__vfs_getxattr);
+@@ -403,6 +412,12 @@ EXPORT_SYMBOL(__vfs_getxattr);
  ssize_t
  vfs_getxattr(struct dentry *dentry, const char *name, void *value, size_t size)
  {
@@ -1884,13 +1923,13 @@ index 8a6c46e69..bf0bca944 100644
 +
  	return __vfs_getxattr(dentry, dentry->d_inode, name, value, size, 0);
  }
- EXPORT_SYMBOL_GPL(vfs_getxattr);
+ EXPORT_SYMBOL_NS_GPL(vfs_getxattr, ANDROID_GKI_VFS_EXPORT_ONLY);
 diff --git a/include/linux/nomount.h b/include/linux/nomount.h
 new file mode 100644
-index 000000000..8690e2631
+index 000000000..0548cb37a
 --- /dev/null
 +++ b/include/linux/nomount.h
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,162 @@
 +#ifndef _LINUX_NOMOUNT_H
 +#define _LINUX_NOMOUNT_H
 +
@@ -1904,7 +1943,8 @@ index 000000000..8690e2631
 +#include <linux/stat.h>
 +#include <linux/ioctl.h>
 +#include <linux/rcupdate.h>
-+#include <linux/percpu.h>
++
++#include <asm/local.h>
 +
 +#define NOMOUNT_MAGIC_CODE 0x4E /* 'N' */
 +#define NOMOUNT_VERSION    1
