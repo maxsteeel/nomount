@@ -69,7 +69,7 @@ index a69e2cd36..c1310b717 100644
  	 * We have various synthetic filesystems that never get mounted.  On
  	 * these filesystems dentries are never used for lookup purposes, and
 diff --git a/fs/namei.c b/fs/namei.c
-index 40e10b159..410eb5b2c 100644
+index 40e10b159..5ca00cc32 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -43,6 +43,11 @@
@@ -138,7 +138,7 @@ index 40e10b159..410eb5b2c 100644
  	retval = sb_permission(inode->i_sb, inode, mask);
  	if (retval)
  		return retval;
-@@ -3539,6 +3576,35 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
+@@ -3539,14 +3576,50 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
  	struct nameidata nd;
  	int flags = op->lookup_flags;
  	struct file *filp;
@@ -170,11 +170,16 @@ index 40e10b159..410eb5b2c 100644
 +
 +        memalloc_nofs_restore(pflags);
 +    }
++
++    set_nameidata(&nd, dfd, nm_name); 
++#else
++    set_nameidata(&nd, dfd, pathname);
 +#endif
  
- 	set_nameidata(&nd, dfd, pathname);
+-	set_nameidata(&nd, dfd, pathname);
  	filp = path_openat(&nd, op, flags | LOOKUP_RCU);
-@@ -3547,6 +3613,10 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
+ 	if (unlikely(filp == ERR_PTR(-ECHILD)))
+ 		filp = path_openat(&nd, op, flags);
  	if (unlikely(filp == ERR_PTR(-ESTALE)))
  		filp = path_openat(&nd, op, flags | LOOKUP_REVAL);
  	restore_nameidata();
@@ -187,10 +192,10 @@ index 40e10b159..410eb5b2c 100644
  
 diff --git a/fs/nomount.c b/fs/nomount.c
 new file mode 100644
-index 000000000..de5d8317b
+index 000000000..bec38c5f5
 --- /dev/null
 +++ b/fs/nomount.c
-@@ -0,0 +1,1173 @@
+@@ -0,0 +1,1330 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -209,7 +214,7 @@ index 000000000..de5d8317b
 +#include <linux/sched/mm.h>
 +#include <linux/statfs.h>
 +#include <linux/workqueue.h>
-+#include <linux/seq_file.h>
++#include <linux/xattr.h>
 +#include <linux/nomount.h> 
 +
 +atomic_t nomount_enabled = ATOMIC_INIT(0);
@@ -230,38 +235,10 @@ index 000000000..de5d8317b
 +static DEFINE_HASHTABLE(nomount_rules_by_v_ino,    NOMOUNT_HASH_BITS);
 +static LIST_HEAD(nomount_rules_list);
 +static DEFINE_SPINLOCK(nomount_lock);
-+DEFINE_PER_CPU(int, nm_recursion_level);
-+EXPORT_PER_CPU_SYMBOL(nm_recursion_level);
++static DEFINE_MUTEX(nm_refresh_lock);
 +
 +static unsigned long nm_ino_adb = 0;
 +static unsigned long nm_ino_modules = 0;
-+
-+/* seq_file logic */
-+static void *nm_seq_start(struct seq_file *s, loff_t *pos) {
-+    spin_lock(&nomount_lock);
-+    return seq_list_start(&nomount_rules_list, *pos);
-+}
-+
-+static void *nm_seq_next(struct seq_file *s, void *v, loff_t *pos) {
-+    return seq_list_next(v, &nomount_rules_list, pos);
-+}
-+
-+static void nm_seq_stop(struct seq_file *s, void *v) {
-+    spin_unlock(&nomount_lock);
-+}
-+
-+static int nm_seq_show(struct seq_file *s, void *v) {
-+    struct nomount_rule *rule = list_entry(v, struct nomount_rule, list);
-+    seq_printf(s, "%s->%s\n", rule->virtual_path, rule->real_path);
-+    return 0;
-+}
-+
-+static const struct seq_operations nm_seq_ops = {
-+    .start = nm_seq_start,
-+    .next  = nm_seq_next,
-+    .stop  = nm_seq_stop,
-+    .show  = nm_seq_show,
-+};
 +
 +/* Critical processes that NoMount should ignore to avoid instability */
 +static const char *critical_processes[] = {
@@ -377,34 +354,28 @@ index 000000000..de5d8317b
 +    return false;
 +}
 +
-+static void nomount_free_rule_rcu(struct rcu_head *head)
-+{
-+    struct nomount_rule *rule = container_of(head, struct nomount_rule, rcu);
-+    kfree(rule->virtual_path);
-+    kfree(rule->real_path);
-+    kfree(rule);
-+}
-+
 +static void nomount_flush_parent(const char *parent_path_str, const char *child_name) {
 +    struct path parent_path;
 +    struct dentry *child_dentry;
++    struct qstr qname;
 +    int err;
 +
 +    err = kern_path(parent_path_str, LOOKUP_FOLLOW, &parent_path);
 +    if (err) return;
 +
++    qname.name = child_name;
++    qname.len = strlen(child_name);
++    qname.hash = full_name_hash(parent_path.dentry, child_name, qname.len);
++
 +    nm_enter();
-+    inode_lock(parent_path.dentry->d_inode);
++    child_dentry = d_hash_and_lookup(parent_path.dentry, &qname);
 +
-+    child_dentry = lookup_one_len(child_name, parent_path.dentry, strlen(child_name));
-+
-+    if (!IS_ERR(child_dentry)) {
++    if (child_dentry && !IS_ERR(child_dentry)) {
 +        d_invalidate(child_dentry);
 +        d_drop(child_dentry);
 +        dput(child_dentry);
 +    }
 +
-+    inode_unlock(parent_path.dentry->d_inode);
 +    nm_exit();
 +    path_put(&parent_path);
 +}
@@ -413,6 +384,9 @@ index 000000000..de5d8317b
 +    struct path path;
 +    char *parent_name, *last_slash, *child_name;
 +    int err;
++
++    if (!path_name || NOMOUNT_DISABLED())
++        return;
 +
 +    nm_enter();
 +    err = kern_path(path_name, LOOKUP_FOLLOW, &path);
@@ -731,11 +705,18 @@ index 000000000..de5d8317b
 +    dir_ino = d_backing_inode(parent)->i_ino;
 +
 +    if (*pos >= NOMOUNT_MAGIC_POS) {
-+        v_index = *pos - NOMOUNT_MAGIC_POS;
++        unsigned long long diff = (unsigned long long)*pos - NOMOUNT_MAGIC_POS;
++        if (diff > 0x7FFFFFFF) {
++            v_index = 0;
++            *pos = NOMOUNT_MAGIC_POS;
++        } else {
++            v_index = (unsigned long)diff;
++        }
 +    } else {
 +        v_index = 0;
 +        *pos = NOMOUNT_MAGIC_POS;
 +    }
++
 +    nm_enter();
 +    while (1) {
 +        child_fake_ino = 0;
@@ -796,7 +777,13 @@ index 000000000..de5d8317b
 +    dir_ino = d_backing_inode(parent)->i_ino;
 +
 +    if (*pos >= NOMOUNT_MAGIC_POS) {
-+        v_index = *pos - NOMOUNT_MAGIC_POS;
++        unsigned long long diff = (unsigned long long)*pos - NOMOUNT_MAGIC_POS;
++        if (diff > 0x7FFFFFFF) {
++            v_index = 0;
++            *pos = NOMOUNT_MAGIC_POS;
++        } else {
++            v_index = (unsigned long)diff;
++        }
 +    } else {
 +        v_index = 0;
 +        *pos = NOMOUNT_MAGIC_POS;
@@ -865,6 +852,31 @@ index 000000000..de5d8317b
 +    *last_slash = '\0';
 +    parent_path = path_copy;
 +    name = last_slash + 1;
++
++    /* Try to get the REAL parent inode first */
++    parent_ino = 0;
++    {
++        struct nomount_rule *rule;
++        u32 parent_hash = full_name_hash(NULL, parent_path, strlen(parent_path));
++
++        rcu_read_lock();
++        hash_for_each_possible_rcu(nomount_rules_by_vpath, rule, vpath_node, parent_hash) {
++            if (strcmp(parent_path, rule->virtual_path) == 0) {
++                /* Parent is also a redirect - use real path's inode */
++                rcu_read_unlock();
++                nm_enter();
++                if (kern_path(rule->real_path, LOOKUP_FOLLOW, &path) == 0) {
++                    parent_ino = path.dentry->d_inode->i_ino;
++                    path_put(&path);
++                }
++                nm_exit();
++                goto found_parent_ino;
++            }
++        }
++        rcu_read_unlock();
++    }
++
++    /* Fallback: use virtual path's inode */
 +    nm_enter();
 +    if (kern_path(parent_path, LOOKUP_FOLLOW, &path) == 0) {
 +        parent_ino = path.dentry->d_inode->i_ino;
@@ -873,6 +885,7 @@ index 000000000..de5d8317b
 +        parent_ino = (unsigned long)full_name_hash(NULL, parent_path, strlen(parent_path));
 +    }
 +
++found_parent_ino:
 +    spin_lock(&nomount_lock);
 +    hash_for_each_possible(nomount_dirs_ht, curr, node, parent_ino) {
 +        if (curr->dir_ino == parent_ino) {
@@ -884,6 +897,7 @@ index 000000000..de5d8317b
 +    if (!dir_node) {
 +        dir_node = kzalloc(sizeof(*dir_node), GFP_ATOMIC);
 +        if (dir_node) {
++            INIT_LIST_HEAD(&dir_node->cleanup_list);
 +            dir_node->dir_path = kstrdup(parent_path, GFP_ATOMIC);
 +            dir_node->dir_ino = parent_ino;
 +            INIT_LIST_HEAD(&dir_node->children_names);
@@ -917,6 +931,102 @@ index 000000000..de5d8317b
 +    nm_exit();
 +    kfree(path_copy);
 +}
++
++ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *value, size_t size)
++{
++    struct nomount_rule *rule;
++    struct path real_path;
++    const struct cred *old_cred;
++    struct cred *new_cred;
++    ssize_t ret;
++
++    if (nomount_should_skip() || !dentry || !dentry->d_inode)
++        return -EOPNOTSUPP;
++
++    rcu_read_lock();
++    // we check if this dentry is one of our injected files
++    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, dentry->d_inode->i_ino) {
++        if (rule->real_ino == dentry->d_inode->i_ino) {
++            rcu_read_unlock();
++            
++            // if it's an injected file, we redirect the request to the REAL file.
++            nm_enter();
++            if (kern_path(rule->real_path, LOOKUP_FOLLOW, &real_path) == 0) {
++                new_cred = prepare_creds();
++                if (new_cred) {
++                    new_cred->cap_effective = CAP_FULL_SET;
++                    new_cred->cap_permitted = CAP_FULL_SET;
++                    old_cred = override_creds(new_cred);
++                    /* we use __vfs_getxattr from the actual (source) file
++                        to skip SELinux and permissions checks */
++                    ret = __vfs_getxattr(real_path.dentry, real_path.dentry->d_inode, name, value, size, 0);
++
++                    revert_creds(old_cred);
++                    put_cred(new_cred);
++                } else {
++                    ret = -ENOMEM;
++                }
++
++                path_put(&real_path);
++                nm_exit();
++                return ret;
++            }
++            nm_exit();
++            return -ENOENT;
++        }
++    }
++    rcu_read_unlock();
++
++    return -EOPNOTSUPP; // it is not a file injected by NoMount
++}
++EXPORT_SYMBOL(nomount_getxattr_hook);
++
++int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *value, size_t size, int flags)
++{
++    struct nomount_rule *rule;
++    struct path real_path;
++    const struct cred *old_cred;
++    struct cred *new_cred;
++    int ret;
++
++    if (nomount_should_skip() || !dentry || !dentry->d_inode)
++        return -EOPNOTSUPP;
++
++    rcu_read_lock();
++    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, dentry->d_inode->i_ino) {
++        if (rule->real_ino == dentry->d_inode->i_ino) {
++            rcu_read_unlock();
++
++            nm_enter();
++            if (kern_path(rule->real_path, LOOKUP_FOLLOW, &real_path) == 0) {
++                new_cred = prepare_creds();
++                if (new_cred) {
++                    new_cred->cap_effective = CAP_FULL_SET;
++                    new_cred->cap_permitted = CAP_FULL_SET;
++                    old_cred = override_creds(new_cred);
++
++                    /* redirect attribute writing to the source file 
++                        ignoring SELinux and permissions checks */
++                    ret = __vfs_setxattr_noperm(real_path.dentry, name, value, size, flags);
++
++                    revert_creds(old_cred);
++                    put_cred(new_cred);
++                } else {
++                    ret = -ENOMEM;
++                }
++                path_put(&real_path);
++                nm_exit();
++                return ret;
++            }
++            nm_exit();
++            return -ENOENT;
++        }
++    }
++    rcu_read_unlock();
++
++    return -EOPNOTSUPP;
++}
++EXPORT_SYMBOL(nomount_setxattr_hook);
 +
 +void nomount_spoof_stat(const struct path *path, struct kstat *stat)
 +{
@@ -970,23 +1080,27 @@ index 000000000..de5d8317b
 +}
 +
 +/* Forces cache flushing for all active rules. */
-+static void nomount_force_refresh_all(void) {
-+    struct nomount_rule *rule, *tmp;
-+    LIST_HEAD(refresh_list);
-+
-+    spin_lock(&nomount_lock);
-+    list_cut_position(&refresh_list, &nomount_rules_list, nomount_rules_list.prev);
-+    spin_unlock(&nomount_lock);
-+
-+    list_for_each_entry_safe(rule, tmp, &refresh_list, list) {
++static void __nomount_force_refresh_all_unsafe(void) {
++    struct nomount_rule *rule;
++    
++    nm_enter();
++    rcu_read_lock();
++    list_for_each_entry_rcu(rule, &nomount_rules_list, list) {
 +        if (rule->virtual_path) {
 +            nomount_flush_dcache(rule->virtual_path);
 +        }
 +    }
++    rcu_read_unlock();
++    nm_exit();
++}
 +
-+    spin_lock(&nomount_lock);
-+    list_splice(&refresh_list, &nomount_rules_list);
-+    spin_unlock(&nomount_lock);
++static void nomount_force_refresh_all(void) {
++    if (!mutex_trylock(&nm_refresh_lock))
++        return;
++    
++    __nomount_force_refresh_all_unsafe();
++    
++    mutex_unlock(&nm_refresh_lock);
 +}
 +
 +static void nomount_collect_parent_inodes(struct nomount_rule *rule)
@@ -1149,6 +1263,9 @@ index 000000000..de5d8317b
 +    if (copy_from_user(&data, (void __user *)arg, sizeof(data)))
 +        return -EFAULT;
 +
++    if (!capable(CAP_SYS_ADMIN))
++        return -EPERM;
++
 +    v_path = strndup_user(data.virtual_path, PATH_MAX);
 +    if (IS_ERR(v_path))
 +        return PTR_ERR(v_path);
@@ -1159,25 +1276,32 @@ index 000000000..de5d8317b
 +    hash_for_each_possible_safe(nomount_rules_by_vpath,
 +                                rule, tmp, vpath_node, hash) {
 +        if (strcmp(rule->virtual_path, v_path) == 0) {
++            rule->flags &= ~NM_FLAG_ACTIVE;
 +            hash_del_rcu(&rule->vpath_node);
 +            if (rule->real_ino)
 +                hash_del_rcu(&rule->real_ino_node);
 +            if (rule->v_ino)
 +                hash_del_rcu(&rule->v_ino_node);
-+            list_del(&rule->list);
++            list_del_rcu(&rule->list);
 +            victim = rule;
 +            break;
 +        }
 +    }
 +    spin_unlock(&nomount_lock);
 +
-+    kfree(v_path);
-+
 +    if (victim) {
-+        call_rcu(&victim->rcu, nomount_free_rule_rcu);
++        nomount_flush_dcache(v_path);
++
++        synchronize_rcu();
++        kfree(victim->virtual_path);
++        kfree(victim->real_path);
++        kfree(victim);
++        
++        kfree(v_path);
 +        return 0;
 +    }
 +
++    kfree(v_path);
 +    return -ENOENT;
 +}
 +
@@ -1185,40 +1309,78 @@ index 000000000..de5d8317b
 +{
 +    struct nomount_rule *rule, *tmp_rule;
 +    struct nomount_uid_node *uid_node, *tmp_uid;
++    struct nomount_dir_node *dir_node, *tmp_dir;
++    struct nomount_child_name *child, *tmp_child;
 +    struct hlist_node *hlist_tmp;
 +    LIST_HEAD(rule_victims);
 +    LIST_HEAD(uid_victims);
++    LIST_HEAD(dir_victims);
 +    int bkt;
++    
++    if (!capable(CAP_SYS_ADMIN))
++        return -EPERM;
++    
++    if (!mutex_trylock(&nm_refresh_lock))
++        return -EBUSY;
 +
 +    spin_lock(&nomount_lock);
-+
 +    list_for_each_entry_safe(rule, tmp_rule, &nomount_rules_list, list) {
 +        hash_del_rcu(&rule->vpath_node);
 +        if (rule->real_ino)
 +            hash_del_rcu(&rule->real_ino_node);
 +        if (rule->v_ino)
 +            hash_del_rcu(&rule->v_ino_node);
-+        list_del(&rule->list);
-+        list_add(&rule->list, &rule_victims);
++
++        list_del_rcu(&rule->list);
++        list_add_tail(&rule->cleanup_list, &rule_victims);
++        rule->flags &= ~NM_FLAG_ACTIVE;
 +    }
 +
 +    hash_for_each_safe(nomount_uid_ht, bkt, hlist_tmp, uid_node, node) {
 +        hash_del_rcu(&uid_node->node);
-+        list_add(&uid_node->list, &uid_victims);
++        list_add_tail(&uid_node->cleanup_list, &uid_victims);
 +    }
 +
++    hash_for_each_safe(nomount_dirs_ht, bkt, hlist_tmp, dir_node, node) {
++        hash_del_rcu(&dir_node->node);
++        list_add_tail(&dir_node->cleanup_list, &dir_victims);
++    }
++    
 +    spin_unlock(&nomount_lock);
 +
-+    list_for_each_entry_safe(rule, tmp_rule, &rule_victims, list) {
-+        list_del(&rule->list);
-+        call_rcu(&rule->rcu, nomount_free_rule_rcu);
++    synchronize_rcu();
++
++    list_for_each_entry_safe(dir_node, tmp_dir, &dir_victims, cleanup_list) {
++        list_del(&dir_node->cleanup_list);
++
++        list_for_each_entry_safe(child, tmp_child, &dir_node->children_names, list) {
++            list_del(&child->list);
++            kfree(child->name);
++            kfree(child);
++        }
++        
++        kfree(dir_node->dir_path);
++        kfree(dir_node);
 +    }
 +
-+    list_for_each_entry_safe(uid_node, tmp_uid, &uid_victims, list) {
-+        list_del(&uid_node->list);
-+        kfree_rcu(uid_node, rcu);
++    list_for_each_entry_safe(rule, tmp_rule, &rule_victims, cleanup_list) {
++        list_del(&rule->cleanup_list);
++
++        if (rule->virtual_path) {
++            nomount_flush_dcache(rule->virtual_path);
++        }
++        
++        kfree(rule->virtual_path);
++        kfree(rule->real_path);
++        kfree(rule);
 +    }
 +
++    list_for_each_entry_safe(uid_node, tmp_uid, &uid_victims, cleanup_list) {
++        list_del(&uid_node->cleanup_list);
++        kfree(uid_node);
++    }
++    
++    mutex_unlock(&nm_refresh_lock);
 +    return 0;
 +}
 +
@@ -1364,8 +1526,39 @@ index 000000000..de5d8317b
 +}
 +
 +fs_initcall(nomount_init);
+diff --git a/fs/open.c b/fs/open.c
+index 1438eb643..a8706c40b 100644
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -32,6 +32,9 @@
+ #include <linux/ima.h>
+ #include <linux/dnotify.h>
+ #include <linux/compat.h>
++#ifdef CONFIG_NOMOUNT
++#include <linux/nomount.h>
++#endif
+ 
+ #include "internal.h"
+ #include <trace/hooks/syscall_check.h>
+@@ -427,6 +430,16 @@ static long do_faccessat(int dfd, const char __user *filename, int mode, int fla
+ 
+ 	inode = d_backing_inode(path.dentry);
+ 
++#ifdef CONFIG_NOMOUNT
++    /* spoof writable attribute */
++    if (!nomount_should_skip() && nomount_is_injected_file(inode)) {
++        if (mode & MAY_WRITE) {
++            res = -EACCES; // non-writable
++            goto out_path_release;
++        }
++    }
++#endif
++
+ 	if ((mode & MAY_EXEC) && S_ISREG(inode->i_mode)) {
+ 		/*
+ 		 * MAY_EXEC on regular files is denied if the fs is mounted
 diff --git a/fs/proc/base.c b/fs/proc/base.c
-index d0884f38c..ef20fdd55 100644
+index d0884f38c..ba9c5fcad 100644
 --- a/fs/proc/base.c
 +++ b/fs/proc/base.c
 @@ -99,6 +99,9 @@
@@ -1378,7 +1571,7 @@ index d0884f38c..ef20fdd55 100644
  #include <trace/events/oom.h>
  #include "internal.h"
  #include "fd.h"
-@@ -1824,9 +1827,67 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
+@@ -1824,9 +1827,48 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
  	char *pathname;
  	int len;
  
@@ -1396,15 +1589,6 @@ index d0884f38c..ef20fdd55 100644
 +		if (!strcmp(current->comm, "main") || !strcmp(current->comm, "zygote") || !strcmp(current->comm, "zygote64") || !strcmp(current->comm, "system_server") || !strcmp(current->comm, "webview_zygote")) {
 +			vpath = nomount_get_static_vpath_readlink(d_backing_inode(path->dentry));
 +			if (vpath) {
-+		        if (strncmp(vpath, "/proc", 5) == 0 ||
-+			        strncmp(vpath, "/sys", 4) == 0 ||
-+			        strncmp(vpath, "/apex", 5) == 0 ||
-+			        strncmp(vpath, "/dev", 4) == 0 ||
-+			        strncmp(vpath, "/cache", 6) == 0 ||
-+			        strncmp(vpath, "/mnt", 4) == 0) {
-+			        nm_exit();
-+		        	goto bypass;
-+			    }
 +				len = strlen(vpath);
 +				if (len < buflen && len < PAGE_SIZE) {
 +					if (copy_to_user(buffer, vpath, len) == 0) {
@@ -1419,15 +1603,6 @@ index d0884f38c..ef20fdd55 100644
 +		if (!should_skip) {
 +			vpath = nomount_get_static_vpath_readlink(d_backing_inode(path->dentry));
 +			if (vpath) {
-+				if (strncmp(vpath, "/proc", 5) == 0 ||
-+			        strncmp(vpath, "/sys", 4) == 0 ||
-+			        strncmp(vpath, "/apex", 5) == 0 ||
-+			        strncmp(vpath, "/dev", 4) == 0 ||
-+			        strncmp(vpath, "/cache", 6) == 0 ||
-+			        strncmp(vpath, "/mnt", 4) == 0) {
-+			        nm_exit();
-+		        	goto bypass;
-+			    }
 +				len = strlen(vpath);
 +				if (len < buflen && len < PAGE_SIZE) {
 +					if (copy_to_user(buffer, vpath, len) == 0) {
@@ -1440,7 +1615,6 @@ index d0884f38c..ef20fdd55 100644
 +		}
 +		nm_exit();
 +	}
-+bypass:
 +#endif
 +
  	pathname = d_path(path, tmp, PAGE_SIZE);
@@ -1666,12 +1840,52 @@ index d42b44dc0..61b8bf022 100644
  	return error;
  }
  EXPORT_SYMBOL(vfs_statfs);
+diff --git a/fs/xattr.c b/fs/xattr.c
+index 8d7151492..77c6f8537 100644
+--- a/fs/xattr.c
++++ b/fs/xattr.c
+@@ -22,6 +22,9 @@
+ #include <linux/audit.h>
+ #include <linux/vmalloc.h>
+ #include <linux/posix_acl_xattr.h>
++#ifdef CONFIG_NOMOUNT
++#include <linux/nomount.h>
++#endif
+ 
+ #include <linux/uaccess.h>
+ 
+@@ -278,6 +281,12 @@ vfs_setxattr(struct dentry *dentry, const char *name, const void *value,
+ 	struct inode *delegated_inode = NULL;
+ 	int error;
+ 
++#ifdef CONFIG_NOMOUNT
++	int nm_ret = nomount_setxattr_hook(dentry, name, value, size, flags);
++    if (nm_ret != -EOPNOTSUPP)
++        return nm_ret;
++#endif
++
+ retry_deleg:
+ 	inode_lock(inode);
+ 	error = __vfs_setxattr_locked(dentry, name, value, size, flags,
+@@ -403,6 +412,12 @@ EXPORT_SYMBOL(__vfs_getxattr);
+ ssize_t
+ vfs_getxattr(struct dentry *dentry, const char *name, void *value, size_t size)
+ {
++#ifdef CONFIG_NOMOUNT
++	ssize_t nm_ret = nomount_getxattr_hook(dentry, name, value, size);
++    if (nm_ret != -EOPNOTSUPP)
++        return nm_ret;
++#endif
++
+ 	return __vfs_getxattr(dentry, dentry->d_inode, name, value, size, 0);
+ }
+ EXPORT_SYMBOL_NS_GPL(vfs_getxattr, ANDROID_GKI_VFS_EXPORT_ONLY);
 diff --git a/include/linux/nomount.h b/include/linux/nomount.h
 new file mode 100644
-index 000000000..807113f75
+index 000000000..0548cb37a
 --- /dev/null
 +++ b/include/linux/nomount.h
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,162 @@
 +#ifndef _LINUX_NOMOUNT_H
 +#define _LINUX_NOMOUNT_H
 +
@@ -1685,7 +1899,8 @@ index 000000000..807113f75
 +#include <linux/stat.h>
 +#include <linux/ioctl.h>
 +#include <linux/rcupdate.h>
-+#include <linux/percpu.h>
++
++#include <asm/local.h>
 +
 +#define NOMOUNT_MAGIC_CODE 0x4E /* 'N' */
 +#define NOMOUNT_VERSION    1
@@ -1702,7 +1917,7 @@ index 000000000..807113f75
 +#define NOMOUNT_IOC_DEL_UID     _IOW(NOMOUNT_IOC_MAGIC, 6, unsigned int)
 +#define NOMOUNT_IOC_GET_LIST _IOR(NOMOUNT_IOC_MAGIC, 7, int)
 +#define NOMOUNT_IOC_REFRESH _IO(NOMOUNT_MAGIC_CODE, 8)
-+#define MAX_LIST_BUFFER_SIZE (128 * 1024)
++#define MAX_LIST_BUFFER_SIZE (1024 * 1024)
 +#define NM_MAX_PARENTS 16
 +
 +struct nomount_ioctl_data {
@@ -1722,6 +1937,7 @@ index 000000000..807113f75
 +    struct hlist_node v_ino_node;
 +
 +    struct list_head list;
++    struct list_head cleanup_list;
 +    size_t vp_len;
 +    char *virtual_path;
 +    char *real_path;
@@ -1746,6 +1962,7 @@ index 000000000..807113f75
 +    struct hlist_node node;      
 +    char *dir_path;              
 +    unsigned long dir_ino;
++    struct list_head cleanup_list;
 +    struct list_head children_names; 
 +    unsigned long next_child_index; /* next v_index to assign */
 +    struct rcu_head rcu;
@@ -1764,28 +1981,41 @@ index 000000000..807113f75
 +    uid_t uid;
 +    struct hlist_node node;
 +    struct list_head list;
++    struct list_head cleanup_list;
 +    struct rcu_head rcu;
 +};
 +
 +#ifdef CONFIG_NOMOUNT
 +extern atomic_t nomount_enabled;
 +
-+DECLARE_PER_CPU(int, nm_recursion_level);
++struct nm_recursion_slot {
++    pid_t pid;
++    int level;
++};
++
++static DEFINE_PER_CPU(struct nm_recursion_slot, nm_recursion_table);
 +
 +static inline void nm_enter(void) {
-+    preempt_disable();
-+    __this_cpu_inc(nm_recursion_level);
-+    preempt_enable();
++    struct nm_recursion_slot *slot = this_cpu_ptr(&nm_recursion_table);
++    pid_t nr = current->pid;
++
++    if (slot->pid != nr) {
++        slot->pid = nr;
++        slot->level = 1;
++    } else {
++        slot->level++;
++    }
 +}
 +
 +static inline void nm_exit(void) {
-+    preempt_disable();
-+    __this_cpu_dec(nm_recursion_level);
-+    preempt_enable();
++    struct nm_recursion_slot *slot = this_cpu_ptr(&nm_recursion_table);
++    if (slot->level > 0)
++        slot->level--;
 +}
 +
 +static inline bool nm_is_recursive(void) {
-+    return __this_cpu_read(nm_recursion_level) > 0;
++    struct nm_recursion_slot *slot = this_cpu_ptr(&nm_recursion_table);
++    return (slot->pid == current->pid && slot->level > 2);
 +}
 +
 +bool nomount_should_skip(void);
@@ -1799,6 +2029,8 @@ index 000000000..807113f75
 +const char *nomount_get_static_vpath_readlink(struct inode *inode);
 +bool nomount_is_traversal_allowed(struct inode *inode, int mask);
 +bool nomount_is_injected_file(struct inode *inode);
++ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *value, size_t size);
++int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *value, size_t size, int flags);
 +void nomount_spoof_stat(const struct path *path, struct kstat *stat);
 +struct kstatfs;
 +void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf);
