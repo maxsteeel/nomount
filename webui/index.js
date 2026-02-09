@@ -166,6 +166,7 @@ async function loadModules() {
     const renderId = ++currentRenderId;
 
     try {
+        listContainer.innerHTML = '';
         const rulesRes = await exec(`${NM_BIN} list json`);
         const activeRules = JSON.parse(rulesRes.stdout || "[]");
 
@@ -216,7 +217,6 @@ async function loadModules() {
 
         const entries = Array.from(newModuleData.entries());
 
-        listContainer.innerHTML = '';
         const processEntries = () => {
             if (renderId !== currentRenderId) return;
             const chunk = entries.splice(0, 3);
@@ -385,6 +385,7 @@ async function loadExclusions() {
 
     (async () => {
         try {
+            listContainer.innerHTML = '';
             const cat = await exec(`cat ${FILES.exclusions}`);
             const blockedUids = new Set(cat.stdout.split('\n').filter(u => u.trim() !== ''));
 
@@ -765,11 +766,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     viewLoadState['view-home'] = true;
-    setTimeout(() => {
-        loadHome(); 
-    }, 100);
+    loadHome(); 
 
-    setTimeout(async () => {
+    (async () => {
         try {
             if (allAppsCache.length === 0) {
                 const packages = await listPackages();
@@ -783,5 +782,5 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
             console.error("Background pre-cache failed", e);
         }
-    }, 500);
+    });
 });
