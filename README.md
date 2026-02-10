@@ -103,6 +103,7 @@ nm block 10256
 ## Special thanks:
 
 -  **[HymoFS](https://github.com/Anatdx/HymoFS)**: Inspiration for this project.
+-  **[A7mdwassa](https://github.com/A7mdwassa)**: Tester and contributor.
 -  **[backslashxx](https://github.com/backslashxx)**: Code optimization.
 -  **[KernelSU](https://github.com/tiann/KernelSU)**: Root solution.
 
