@@ -122,11 +122,12 @@ async function loadHome() {
             const parts = result.stdout.split('|||').map(s => s.trim());
             
             const jsonRaw = parts[6];
+            if (!jsonRaw) jsonRaw = "[]";
             let activeModulesCount = 0;
             let dVer = "Unknown";
 
             try {
-                const rules = JSON.parse(jsonRaw || "[]");
+                const rules = JSON.parse(jsonRaw);
                 const uniqueMods = new Set();
                 rules.forEach(r => {
                     if (r.real.includes(MOD_DIR)) {
