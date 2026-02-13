@@ -243,7 +243,7 @@ void c_main(long *sp) {
 
     int fd = sys4(SYS_OPENAT, AT_FDCWD, (long)"/dev/nomount", O_RDWR, 0);
     if (fd < 0) {
-        exit_code = 2;
+        exit_code = (long)(-fd);
         goto do_exit;
     }
 
@@ -443,9 +443,12 @@ void c_main(long *sp) {
                 sys3(SYS_WRITE, 1, (long)ioctl_arg, res);
             }
         }
+        
+        if (res < 0)
+            exit_code = (long)(-res);
+        else
+            exit_code = (long)(res);
     }
-
-    exit_code = 0;
 
 do_exit:
     sys1(SYS_EXIT, exit_code);
