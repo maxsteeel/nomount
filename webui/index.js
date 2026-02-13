@@ -78,6 +78,8 @@ async function loadHome() {
     const androidDisplay = document.getElementById('android-ver');
     const versionDisplay = document.getElementById('nomount-version');
     const indicator = document.getElementById('status-indicator');
+    const indicator_box = document.querySelector('.card.status-card-compact');
+    const indicator_icon = document.querySelector('.status-icon-box');
 
     const cache = localStorage.getItem('nm_home_cache');
     if (cache) {
@@ -90,6 +92,16 @@ async function loadHome() {
             if (data.active) {
                 indicator.textContent = "Active";
                 indicator.style.color = "var(--md-sys-color-primary)";
+            } else {
+                indicator.textContent = "Inactive";
+                indicator.style.color = "var(--md-sys-color-on-error)";
+                indicator_box.style.backgroundColor = "var(--md-sys-color-error-container)"
+                indicator_icon.style.backgroundColor = "var(--md-sys-color-error)"
+                const nuevoSvgHtml = `
+                    <svg xmlns="http://www.w3.org/2000/svg" height="32" viewBox="0 -960 960 960" width="32" fill="var(--md-sys-color-on-error)">
+                        <path d="M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240Zm40 360q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/>
+                    </svg>`;
+                indicator_icon.innerHTML = nuevoSvgHtml;
             }
         } catch (e) {}
     }
@@ -114,7 +126,7 @@ async function loadHome() {
             let dVer = "Unknown";
 
             try {
-                const rules = JSON.parse(jsonRaw);
+                const rules = JSON.parse(jsonRaw || "[]");
                 const uniqueMods = new Set();
                 rules.forEach(r => {
                     if (r.real.includes(MOD_DIR)) {
@@ -140,9 +152,19 @@ async function loadHome() {
                 versionDisplay.textContent = versionFull;
                 statsDisplay.textContent = `${activeModulesCount} modules injecting`;
 
-                if (dVer !== "Unknown") {
+                if (dVer && dVer !== "Unknown") {
                     indicator.textContent = "Active";
                     indicator.style.color = "var(--md-sys-color-primary)";
+                } else {
+                    indicator.textContent = "Inactive";
+                    indicator.style.color = "var(--md-sys-color-on-error)";
+                    indicator_box.style.backgroundColor = "var(--md-sys-color-error-container)"
+                    indicator_icon.style.backgroundColor = "var(--md-sys-color-error)"
+                    const nuevoSvgHtml = `
+                        <svg xmlns="http://www.w3.org/2000/svg" height="32" viewBox="0 -960 960 960" width="32" fill="var(--md-sys-color-on-error)">
+                            <path d="M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240Zm40 360q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/>
+                        </svg>`;
+                    indicator_icon.innerHTML = nuevoSvgHtml;
                 }
 
                 localStorage.setItem('nm_home_cache', JSON.stringify({
@@ -150,7 +172,7 @@ async function loadHome() {
                     deviceModel: model,
                     androidInfo: androidInfo,
                     versionFull: versionFull,
-                    active: dVer !== "Unknown"
+                    active: dVer && dVer !== "Unknown"
                 }));
             });
         } catch (e) {
@@ -292,7 +314,7 @@ async function loadModules() {
 
                         try {
                             const rulesRes = await exec(`${NM_BIN} list json`);
-                            const rules = JSON.parse(rulesRes.stdout);
+                            const rules = JSON.parse(rulesRes.stdout || "[]");
 
                             const isLoaded = rules.some(r => r && r.real && r.real.includes(`${MOD_DIR}/${modId}/`));
 
@@ -349,7 +371,7 @@ async function loadModule(modId) {
 async function unloadModule(modId) {
     try {
         const res = await exec(`${NM_BIN} list json`);
-        const rules = JSON.parse(res.stdout);
+        const rules = JSON.parse(res.stdout || "[]");
 
         const modulePath = `${MOD_DIR}/${modId}/`;
         const targets = rules
@@ -759,6 +781,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 const indicator = document.getElementById('status-indicator');
                 indicator.textContent = "Active";
                 indicator.style.color = "var(--md-sys-color-primary)";
+            } else {
+                const indicator = document.getElementById('status-indicator');
+                const indicator_box = document.querySelector('.card.status-card-compact');
+                const indicator_icon = document.querySelector('.status-icon-box');
+                indicator.textContent = "Inactive";
+                indicator.style.color = "var(--md-sys-color-on-error)";
+                indicator_box.style.backgroundColor = "var(--md-sys-color-error-container)"
+                indicator_icon.style.backgroundColor = "var(--md-sys-color-error)"
+                const nuevoSvgHtml = `
+                    <svg xmlns="http://www.w3.org/2000/svg" height="32" viewBox="0 -960 960 960" width="32" fill="var(--md-sys-color-on-error)">
+                        <path d="M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240Zm40 360q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/>
+                    </svg>`;
+                indicator_icon.innerHTML = nuevoSvgHtml;
             }
         } catch (e) {
             console.error("Error parsing Home cache", e);
