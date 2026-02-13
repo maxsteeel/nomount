@@ -32,7 +32,7 @@ for mod_path in "$MODULES_DIR"/*; do
     [ -d "$mod_path" ] || continue
     mod_name="${mod_path##*/}"
     [ "$mod_name" = "nomount" ] && continue
-    if [ -f "$mod_path/disable" ] || [ -f "$mod_path/remove" ]; then
+    if [ -f "$mod_path/disable" ] || [ -f "$mod_path/remove" ] || [ -f "$mod_path/skip_mount" ]; then
         if $VERBOSE; then echo "[SKIP] Module $mod_name is disabled/removed" >> "$LOG_FILE"; fi
         continue
     fi

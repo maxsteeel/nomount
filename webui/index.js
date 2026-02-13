@@ -203,7 +203,7 @@ async function loadModules() {
                 done
                 [ $has_injectable -eq 0 ] && continue
                 name=$(grep "^name=" "$mod/module.prop" | head -n1 | cut -d= -f2-)
-                [ -f "$mod/disable" ] && enabled="false" || enabled="true"
+                [ -f "$mod/disable" ] || [ -f "$mod/skip_mount" ] && enabled="false" || enabled="true"
                 echo "$mod|$name|$enabled"
             done
         `;
