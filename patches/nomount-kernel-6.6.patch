@@ -190,10 +190,10 @@ index b31b583f1878..d3209d8605ab 100644
  
 diff --git a/fs/nomount.c b/fs/nomount.c
 new file mode 100644
-index 000000000000..0a63e506d2c1
+index 000000000000..198c9e23c262
 --- /dev/null
 +++ b/fs/nomount.c
-@@ -0,0 +1,1056 @@
+@@ -0,0 +1,1073 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -273,11 +273,28 @@ index 000000000000..0a63e506d2c1
 +    }
 +}
 +
++/* Returns true if the current process should be ignored */
++static bool nomount_is_critical_process(void) {
++    const char *comm = current->comm;
++
++    switch (comm[0]) {
++        case 'i': if (comm[1] == 'n' && comm[2] == 'i') return true; break; // init
++        case 'u': if (comm[1] == 'e' && comm[2] == 'v') return true; break; // ueventd
++        case 'v': if (comm[1] == 'o' && comm[2] == 'l') return true; break; // vold
++    }
++
++    if (current->flags & PF_KTHREAD) return true;
++
++    return false;
++}
++
 +bool nomount_should_skip(void) {
 +    if (NOMOUNT_DISABLED()) return true;
 +    if (nm_is_recursive()) return true;
 +    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return true;
++    if (unlikely(!current || !current->mm)) return true;
 +    if (current->flags & (PF_KTHREAD | PF_EXITING)) return true;
++    if (nomount_is_critical_process()) return true;
 +
 +    return false;
 +}

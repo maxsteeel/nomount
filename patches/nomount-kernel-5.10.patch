@@ -193,10 +193,10 @@ index 40e10b159b7e..823b5c5f2ff1 100644
  
 diff --git a/fs/nomount.c b/fs/nomount.c
 new file mode 100644
-index 000000000000..4ccc1c67f39b
+index 000000000000..3e2059bcbefa
 --- /dev/null
 +++ b/fs/nomount.c
-@@ -0,0 +1,1050 @@
+@@ -0,0 +1,1067 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -276,11 +276,28 @@ index 000000000000..4ccc1c67f39b
 +    }
 +}
 +
++/* Returns true if the current process should be ignored */
++static bool nomount_is_critical_process(void) {
++    const char *comm = current->comm;
++
++    switch (comm[0]) {
++        case 'i': if (comm[1] == 'n' && comm[2] == 'i') return true; break; // init
++        case 'u': if (comm[1] == 'e' && comm[2] == 'v') return true; break; // ueventd
++        case 'v': if (comm[1] == 'o' && comm[2] == 'l') return true; break; // vold
++    }
++
++    if (current->flags & PF_KTHREAD) return true;
++
++    return false;
++}
++
 +bool nomount_should_skip(void) {
 +    if (NOMOUNT_DISABLED()) return true;
 +    if (nm_is_recursive()) return true;
 +    if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return true;
++    if (unlikely(!current || !current->mm)) return true;
 +    if (current->flags & (PF_KTHREAD | PF_EXITING)) return true;
++    if (nomount_is_critical_process()) return true;
 +
 +    return false;
 +}
@@ -1572,7 +1589,7 @@ index 8d7151492ad3..77c6f853799d 100644
  EXPORT_SYMBOL_NS_GPL(vfs_getxattr, ANDROID_GKI_VFS_EXPORT_ONLY);
 diff --git a/include/linux/nomount.h b/include/linux/nomount.h
 new file mode 100644
-index 000000000000..26ad436bd98f
+index 000000000000..01e2fbf5bbf1
 --- /dev/null
 +++ b/include/linux/nomount.h
 @@ -0,0 +1,150 @@
