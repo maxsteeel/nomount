@@ -43,7 +43,7 @@ Apply the provided patch to your kernel source (Compatible with Linux 4.14 ~ 6.x
 
 ```bash
 cd your_kernel_source/
-patch -p1 < nomount-kernel-5.4.patch
+patch -p1 --fuzz=10 < nomount-kernel-5.4.patch
 
 ```
 
