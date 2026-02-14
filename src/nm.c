@@ -18,6 +18,8 @@
         unsigned long rp;
         unsigned int flags;
         unsigned int _pad;
+        unsigned long real_ino;
+        unsigned long real_dev;
     };
 
     __attribute__((always_inline))
@@ -73,6 +75,10 @@
         unsigned int rp_hi;
         unsigned int flags;
         unsigned int _pad;
+        unsigned int real_ino_lo;
+        unsigned int real_ino_hi;
+        unsigned int real_dev_lo;
+        unsigned int real_dev_hi;
     };
 
     __attribute__((always_inline))
@@ -119,8 +125,8 @@ typedef unsigned long size_t;
 #define AT_FDCWD -100
 #define O_RDWR 2
 
-#define IOCTL_ADD     0x40184E01
-#define IOCTL_DEL     0x40184E02
+#define IOCTL_ADD     0x40284E01
+#define IOCTL_DEL     0x40284E02
 #define IOCTL_CLEAR   0x4E03
 #define IOCTL_VER     0x80044E04
 #define IOCTL_ADD_UID 0x40044E05
@@ -339,14 +345,21 @@ void c_main(long *sp) {
                     long stat_res = sys4(SYS_FSTATAT, AT_FDCWD, (long)v_tmp, (long)st_tmp, 0);
                     if (stat_res != 0) {
                         struct ioctl_data step_data;
+                        unsigned long long *st_large = (unsigned long long *)st_tmp;
                         #if defined(__aarch64__)
                             step_data.vp = (unsigned long)v_tmp;
                             step_data.rp = (unsigned long)r_tmp;
+                            step_data.real_dev = st_large[0];
+                            step_data.real_ino = st_large[1];
                         #else
                             step_data.vp_lo = (unsigned int)v_tmp;
                             step_data.rp_lo = (unsigned int)r_tmp;
+                            step_data.real_dev_lo = ((unsigned int*)st_tmp)[0]; 
+                            step_data.real_ino_lo = ((unsigned int*)st_tmp)[3];
                             step_data.vp_hi = 0;
                             step_data.rp_hi = 0;
+                            step_data.real_dev_hi = 0;
+                            step_data.real_ino_hi = 0;
                         #endif
                         step_data.flags = NM_ACTIVE | NM_DIR;
                         sys3(SYS_IOCTL, fd, IOCTL_ADD, (long)&step_data);
@@ -371,6 +384,17 @@ void c_main(long *sp) {
             if (sys4(SYS_FSTATAT, AT_FDCWD, (long)r_ptr, (long)stat_buf, 0) == 0) {
                 unsigned int mode = stat_buf[STAT_MODE_IDX];
                 if ((mode & 0170000) == 0040000) data.flags |= NM_DIR;
+                unsigned long long *st_large = (unsigned long long *)stat_buf;
+
+                #if defined(__aarch64__)
+                    data.real_dev = st_large[0]; 
+                    data.real_ino = st_large[1];
+                #else
+                    data.real_dev_lo = ((unsigned int*)stat_buf)[0]; 
+                    data.real_ino_lo = ((unsigned int*)stat_buf)[3];
+                    data.real_dev_hi = 0;
+                    data.real_ino_hi = 0;
+                #endif
             }
 
             ioctl_code = IOCTL_ADD;
