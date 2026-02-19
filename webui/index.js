@@ -355,7 +355,10 @@ async function loadModules() {
 }
 
 async function loadModule(modId) {
-    const findScript = `find ${MOD_DIR}/${modId} -type f`;
+    const TARGET_PARTITIONS = ["system", "vendor", "product", "system_ext", "odm", "oem"];
+    const partitionPaths = TARGET_PARTITIONS.map(p => `${MOD_DIR}/${modId}/${p}`).join(' ');
+    const findScript = `find ${partitionPaths} -type f 2>/dev/null`;
+
     const res = await exec(findScript);
     const files = res.stdout.split('\n').filter(f => f.trim() !== '');
 
