@@ -186,10 +186,11 @@ let currentRenderId = 0;
 async function loadModules() {
     const listContainer = document.getElementById('modules-list');
     const emptyBanner = document.getElementById('modules-empty');
+    if (!listContainer) return;
+
     const renderId = ++currentRenderId;
 
     try {
-        listContainer.innerHTML = '';
         const rulesRes = await exec(`${NM_BIN} list json`);
         const activeRules = JSON.parse(rulesRes.stdout || "[]");
 
@@ -211,9 +212,16 @@ async function loadModules() {
 
         const result = await exec(script);
         const lines = result.stdout.split('\n').filter(l => l.trim() !== '');
-        
-        const newModuleData = new Map(lines.map(line => {
-            const [modId, realName, en] = line.split('|');;
+
+        listContainer.innerHTML = ''; 
+
+        if (lines.length === 0) {
+            emptyBanner?.classList.add('active');
+            return;
+        }
+
+        const entries = lines.map(line => {
+            const [modId, realName, en] = line.split('|');
             const moduleRules = activeRules.filter(r => r && r.real && r.real.includes(`${MOD_DIR}/${modId}/`));
             return [modId, {
                 realName: (realName || modId).trim(),
@@ -221,128 +229,71 @@ async function loadModules() {
                 isLoaded: moduleRules.length > 0,
                 fileCount: moduleRules.length,
             }];
-        }));
-
-        const currentCards = Array.from(listContainer.querySelectorAll('.module-card'));
-        const existingCardsMap = new Map(currentCards.map(c => [c.dataset.moduleId, c]));
-
-        if (newModuleData.size === 0) {
-            listContainer.innerHTML = `<div style="padding:20px; opacity:0.5;">No inyectable modules found.</div>`;
-            return;
-        }
-
-        for (const [modId, card] of existingCardsMap) {
-            if (!newModuleData.has(modId)) {
-                card.remove();
-                existingCardsMap.delete(modId);
-            }
-        }
-
-        const entries = Array.from(newModuleData.entries());
+        });
 
         const processEntries = () => {
             if (renderId !== currentRenderId) return;
             const chunk = entries.splice(0, 3);
             
             chunk.forEach(([modId, data]) => {
-                let card = existingCardsMap.get(modId);
-
-                if (card) {
-                    const toggle = card.querySelector('md-switch');
-                    if (toggle && !toggle.disabled) toggle.selected = data.isEnabled;
-
-                    const fileCountEl = card.querySelector('.file-count span');
-                    if (fileCountEl) fileCountEl.textContent = `${data.fileCount} file${data.fileCount !== 1 ? 's' : ''} injected`;
-                    
-                    const hotBtn = card.querySelector('.btn-hot-action');
-                    if (hotBtn && !hotBtn.disabled) {
-                        hotBtn.textContent = data.isLoaded ? 'Hot Unload' : 'Hot Load';
-                        data.isLoaded ? hotBtn.classList.add('unload') : hotBtn.classList.remove('unload');
-                    }
-                } else {
-                    card = document.createElement('div');
-                    card.className = 'card module-card';
-                    card.dataset.moduleId = modId;
-                    card.innerHTML = `
-                        <div class="module-header">
-                            <div class="module-info">
-                                <h3>${data.realName}</h3>
-                                <p>${modId}</p>
-                            </div>
-                            <md-switch id="switch-${modId}" ${data.isEnabled ? 'selected' : ''}></md-switch>
+                const card = document.createElement('div');
+                card.className = 'card module-card';
+                card.dataset.moduleId = modId;
+                card.innerHTML = `
+                    <div class="module-header">
+                        <div class="module-info">
+                            <h3>${data.realName}</h3>
+                            <p>${modId}</p>
                         </div>
-                        <div class="module-divider"></div>
-                        <div class="module-extension">
-                            <div class="file-count">
-                                <md-icon style="font-size:16px;">description</md-icon>
-                                <span>${data.fileCount} files injected</span>
-                            </div>
-                            <button class="btn-hot-action ${data.isLoaded ? 'unload' : ''}" id="btn-hot-${modId}">
-                                ${data.isLoaded ? 'Hot Unload' : 'Hot Load'}
-                            </button>
+                        <md-switch id="switch-${modId}" ${data.isEnabled ? 'selected' : ''}></md-switch>
+                    </div>
+                    <div class="module-divider"></div>
+                    <div class="module-extension">
+                        <div class="file-count">
+                            <md-icon style="font-size:16px;">description</md-icon>
+                            <span>${data.fileCount} files injected</span>
                         </div>
-                    `;
+                        <button class="btn-hot-action ${data.isLoaded ? 'unload' : ''}" id="btn-hot-${modId}">
+                            ${data.isLoaded ? 'Hot Unload' : 'Hot Load'}
+                        </button>
+                    </div>
+                `;
 
-                    const toggle = card.querySelector('md-switch');
-                    toggle.addEventListener('change', () => {
-                        const targetState = toggle.selected;
-                        toggle.disabled = true;
-
-                        (async () => {
-                            try {
-                                if (targetState) {
-                                    await exec(`rm ${MOD_DIR}/${modId}/disable`);
-                                    await loadModule(modId);
-                                    showToast(`${data.realName} Enabled`);
-                                } else {
-                                    await unloadModule(modId);
-                                    await exec(`touch ${MOD_DIR}/${modId}/disable`);
-                                    showToast(`${data.realName} Disabled`);
-                                }
-                            } catch (e) {
-                                showToast(`Error: ${e.message}`);
-                            } finally {
-                                setTimeout(() => loadModules(), 10);
-                            }
-                        })();
-                    });
-
-                    const hotBtn = card.querySelector('.btn-hot-action');
-                    hotBtn.addEventListener('click', async () => {
-                        const originalText = hotBtn.textContent;
-                        hotBtn.textContent = "...";
-                        hotBtn.disabled = true;
-
-                        try {
-                            const rulesRes = await exec(`${NM_BIN} list json`);
-                            const rules = JSON.parse(rulesRes.stdout || "[]");
-
-                            const isLoaded = rules.some(r => r && r.real && r.real.includes(`${MOD_DIR}/${modId}/`));
-
-                            if (isLoaded) {
-                                await unloadModule(modId);
-                                showToast(`${data.realName} Unloaded`);
-                            } else {
-                                await loadModule(modId);
-                                showToast(`${data.realName} Loaded`);
-                            }
-                        } catch (e) {
-                            showToast(`Action failed: ${e.message}`);
-                            hotBtn.textContent = originalText;
-                            hotBtn.disabled = false;
-                        } finally {
-                            await loadModules(); 
+                const toggle = card.querySelector('md-switch');
+                toggle.addEventListener('change', async () => {
+                    const targetState = toggle.selected;
+                    toggle.disabled = true;
+                    try {
+                        if (targetState) {
+                            await exec(`rm ${MOD_DIR}/${modId}/disable`);
+                            await loadModule(modId);
+                        } else {
+                            await unloadModule(modId);
+                            await exec(`touch ${MOD_DIR}/${modId}/disable`);
                         }
-                    });
+                    } finally {
+                        loadModules();
+                    }
+                });
 
-                    listContainer.appendChild(card);
-                }
+                const hotBtn = card.querySelector('.btn-hot-action');
+                hotBtn.addEventListener('click', async () => {
+                    hotBtn.disabled = true;
+                    try {
+                        if (data.isLoaded) await unloadModule(modId);
+                        else await loadModule(modId);
+                    } finally {
+                        loadModules();
+                    }
+                });
+
+                listContainer.appendChild(card);
             });
 
             if (entries.length > 0) {
                 setTimeout(processEntries, 16);
             } else {
-                emptyBanner.classList.toggle('active', listContainer.children.length === 0);
+                emptyBanner?.classList.toggle('active', listContainer.children.length === 0);
             }
         };
 
