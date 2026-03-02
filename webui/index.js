@@ -205,8 +205,10 @@ async function loadModules() {
                 done
                 [ $has_injectable -eq 0 ] && continue
                 name=$(grep "^name=" "$mod/module.prop" | head -n1 | cut -d= -f2-)
-                [ -f "$mod/disable" ] || [ -f "$mod/skip_mount" ] && enabled="false" || enabled="true"
-                echo "$mod|$name|$enabled"
+                [ -f "$mod/disable" ] && disable="true" || disable="false"
+                [ -f "$mod/skip_mount" ] && skip_mount="true" || skip_mount="false"
+
+                echo "$mod|$name|$disable|$skip_mount"
             done
         `;
 
@@ -221,12 +223,27 @@ async function loadModules() {
         }
 
         const entries = lines.map(line => {
-            const [modId, realName, en] = line.split('|');
+            const [modId, realName, disableStr, skipStr] = line.split('|');
+            const hasDisable = disableStr === 'true';
+            const hasSkipMount = skipStr === 'true';
+
             const moduleRules = activeRules.filter(r => r && r.real && r.real.includes(`${MOD_DIR}/${modId}/`));
+            const isLoaded = moduleRules.length > 0;
+
+            let status = "Inactive";
+            if (isLoaded) {
+                status = hasDisable ? "Loaded" : "Active";
+            } else {
+                if (hasDisable) status = "Disabled";
+                else if (hasSkipMount) status = "Skipped";
+            }
+
             return [modId, {
                 realName: (realName || modId).trim(),
-                isEnabled: en === 'true',
-                isLoaded: moduleRules.length > 0,
+                hasDisable,
+                hasSkipMount,
+                isLoaded,
+                status, // "Active", "Loaded", "Disabled", "Skipped" or "Inactive"
                 fileCount: moduleRules.length,
             }];
         });
@@ -243,9 +260,9 @@ async function loadModules() {
                     <div class="module-header">
                         <div class="module-info">
                             <h3>${data.realName}</h3>
-                            <p>${modId}</p>
+                            <p>${modId} • ${data.status}</p>
                         </div>
-                        <md-switch id="switch-${modId}" ${data.isEnabled ? 'selected' : ''}></md-switch>
+                        <md-switch id="switch-${modId}" ${!data.hasDisable ? 'selected' : ''}></md-switch>
                     </div>
                     <div class="module-divider"></div>
                     <div class="module-extension">
