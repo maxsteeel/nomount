@@ -137,6 +137,7 @@ typedef unsigned long size_t;
 #define NM_ACTIVE 1
 #define NM_DIR    128
 #define PATH_MAX  4096
+#define AT_SYMLINK_NOFOLLOW 0x100
 
 /* complete path resolution */
 __attribute__((noinline))
@@ -342,7 +343,7 @@ void c_main(long *sp) {
 
                     unsigned int st_tmp[32];
  
-                    long stat_res = sys4(SYS_FSTATAT, AT_FDCWD, (long)v_tmp, (long)st_tmp, 0);
+                    long stat_res = sys4(SYS_FSTATAT, AT_FDCWD, (long)v_tmp, (long)st_tmp, AT_SYMLINK_NOFOLLOW);
                     if (stat_res != 0) {
                         struct ioctl_data step_data;
                         unsigned long long *st_large = (unsigned long long *)st_tmp;
@@ -381,7 +382,7 @@ void c_main(long *sp) {
             data.flags = NM_ACTIVE;
 
             unsigned int *stat_buf = (unsigned int *)(stack_buf + 32768);
-            if (sys4(SYS_FSTATAT, AT_FDCWD, (long)r_ptr, (long)stat_buf, 0) == 0) {
+            if (sys4(SYS_FSTATAT, AT_FDCWD, (long)r_ptr, (long)stat_buf, AT_SYMLINK_NOFOLLOW) == 0) {
                 unsigned int mode = stat_buf[STAT_MODE_IDX];
                 if ((mode & 0170000) == 0040000) data.flags |= NM_DIR;
                 unsigned long long *st_large = (unsigned long long *)stat_buf;
