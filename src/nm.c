@@ -469,10 +469,7 @@ void c_main(long *sp) {
             }
         }
         
-        if (res < 0)
-            exit_code = (long)(-res);
-        else
-            exit_code = (long)(res);
+        exit_code = (res < 0) ? -res : 0;
     }
 
 do_exit:
