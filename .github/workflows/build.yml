@@ -38,11 +38,11 @@ jobs:
 
           chmod +x sstrip
 
-          cd src
-          zig cc -target aarch64-linux -Oz -static -nostdlib -ffreestanding -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-ident -flto -fmerge-all-constants -Wno-invalid-noreturn -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro -Wl,-s -Wl,--strip-all -Wl,--entry=_start nm.c -o ../bin/nm-arm64
-          zig cc -target arm-linux -Oz -static -nostdlib -ffreestanding -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-ident -flto -fmerge-all-constants -Wno-invalid-noreturn -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro -Wl,-s -Wl,--strip-all -Wl,--entry=_start nm.c -o ../bin/nm-arm
+          cd userspace/src
+          zig cc -target aarch64-linux -Oz -static -nostdlib -ffreestanding -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-ident -flto -fmerge-all-constants -Wno-invalid-noreturn -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro -Wl,-s -Wl,--strip-all -Wl,--entry=_start nm.c -o ../../bin/nm-arm64
+          zig cc -target arm-linux -Oz -static -nostdlib -ffreestanding -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-ident -flto -fmerge-all-constants -Wno-invalid-noreturn -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,norelro -Wl,-s -Wl,--strip-all -Wl,--entry=_start nm.c -o ../../bin/nm-arm
 
-          cd ../bin
+          cd ../../bin
 
           wc -c nm-*
           
@@ -52,13 +52,15 @@ jobs:
           wc -c nm-*
           file nm-*
           mkdir -p ../module/bin
-          mv nm-* ../module
+          mv nm-* ../module/bin/
 
       - name: Build WebUI
         run: |
-          cd webui
+          cd module/webui
           npm ci
           npm run build
+          cd ..
+          rm -rf webui
 
       - name: Update version code
         run: sed -i 's/^versionCode=.*/versionCode=${{ github.run_number }}/' module/module.prop
