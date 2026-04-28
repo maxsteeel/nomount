@@ -4,7 +4,7 @@ import { createHtmlPlugin } from 'vite-plugin-html'
 export default defineConfig({
     base: './',
     build: {
-        outDir: '../module/webroot',
+        outDir: '../webroot',
     },
     plugins: [
         createHtmlPlugin({
