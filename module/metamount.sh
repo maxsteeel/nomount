@@ -43,7 +43,7 @@ for mod_path in "$MODULES_DIR"/*; do
             echo "[INFO] Mounting module: $mod_name (/$partition)" >> "$LOG_FILE"
             (
                 cd "$mod_path" || exit
-                find "$partition" \( -type f -o -type l \) | while read -r relative_path; do
+                find "$partition" -type f | while read -r relative_path; do
                     real_path="$mod_path/$relative_path"
                     virtual_path="/$relative_path"
                     if $VERBOSE; then
