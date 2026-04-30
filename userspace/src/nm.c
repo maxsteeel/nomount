@@ -302,24 +302,19 @@ void c_main(long *sp) {
                     v_ptr = v_resolved;
                     r_ptr = r_resolved;
 
-                    int v_len_full = 0;
-                    while (v_ptr[v_len_full]) v_len_full++;
-                    int r_len_full = 0;
-                    while (r_ptr[r_len_full]) r_len_full++;
-
                     int slashes = 0;
-                    for (int i = 0; i < v_len_full; i++) {
+                    for (int i = 0; i < v_len; i++) {
                         if (v_ptr[i] == '/') {
                             slashes++;
                             if (slashes < 2 || i == 0) continue;
                             
                             v_ptr[i] = '\0';
 
-                            int diff = v_len_full - i;
-                            int r_cut = r_len_full - diff;
+                            int diff = v_len - i;
+                            int r_cut = r_len - diff;
                             char r_saved = 0;
 
-                            if (r_cut > 0 && r_cut < r_len_full) {
+                            if (r_cut > 0 && r_cut < r_len) {
                                 r_saved = r_ptr[r_cut];
                                 r_ptr[r_cut] = '\0';
                             }
@@ -331,12 +326,12 @@ void c_main(long *sp) {
                                 unsigned long long *st_large = (unsigned long long *)st_tmp;
                                 #if defined(__aarch64__)
                                     step_data.vp = (unsigned long)v_ptr;
-                                    step_data.rp = (r_cut > 0 && r_cut < r_len_full) ? (unsigned long)r_ptr : (unsigned long)"/";
+                                    step_data.rp = (r_cut > 0 && r_cut < r_len) ? (unsigned long)r_ptr : (unsigned long)"/";
                                     step_data.real_dev = st_large[0];
                                     step_data.real_ino = st_large[1];
                                 #else
                                     step_data.vp_lo = (unsigned int)v_ptr;
-                                    step_data.rp_lo = (r_cut > 0 && r_cut < r_len_full) ? (unsigned int)r_ptr : (unsigned int)"/";
+                                    step_data.rp_lo = (r_cut > 0 && r_cut < r_len) ? (unsigned int)r_ptr : (unsigned int)"/";
                                     step_data.real_dev_lo = ((unsigned int*)st_tmp)[0]; 
                                     step_data.real_ino_lo = ((unsigned int*)st_tmp)[3];
                                 #endif
@@ -345,7 +340,7 @@ void c_main(long *sp) {
                             }
 
                             v_ptr[i] = '/';
-                            if (r_cut > 0 && r_cut < r_len_full) {
+                            if (r_cut > 0 && r_cut < r_len) {
                                 r_ptr[r_cut] = r_saved;
                             }
                         }
