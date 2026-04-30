@@ -28,6 +28,29 @@ function showToast(msg) {
     try { toast(msg); } catch (e) { console.log(`[TOAST]: ${msg}`); }
 }
 
+function isValidUid(uid) { return /^\d+$/.test(String(uid)); }
+function shEscape(str) { return "'" + String(str).replace(/'/g, "'\\''") + "'"; }
+
+function isValidModId(modId) {
+    const s = String(modId);
+    if (s.includes('..')) return false;
+    return /^[a-zA-Z0-9._-]+$/.test(s);
+}
+
+function escapeHTML(str) {
+    if (typeof str !== 'string') return str;
+    return str.replace(/[&<>"']/g, function(m) {
+        switch (m) {
+            case '&': return '&amp;';
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            case '"': return '&quot;';
+            case "'": return '&#39;';
+            default: return m;
+        }
+    });
+}
+
 function initNavigation() {
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view-content');
@@ -259,10 +282,10 @@ async function loadModules() {
                 card.innerHTML = `
                     <div class="module-header">
                         <div class="module-info">
-                            <h3>${data.realName}</h3>
-                            <p>${modId} • ${data.status}</p>
+                            <h3>${escapeHTML(data.realName)}</h3>
+                            <p>${escapeHTML(modId)} • ${escapeHTML(data.status)}</p>
                         </div>
-                        <md-switch id="switch-${modId}" ${!data.hasDisable ? 'selected' : ''}></md-switch>
+                        <md-switch id="switch-${escapeHTML(modId)}" ${!data.hasDisable ? 'selected' : ''}></md-switch>
                     </div>
                     <div class="module-divider"></div>
                     <div class="module-extension">
@@ -270,7 +293,7 @@ async function loadModules() {
                             <md-icon style="font-size:16px;">description</md-icon>
                             <span>${data.fileCount} files injected</span>
                         </div>
-                        <button class="btn-hot-action ${data.isLoaded ? 'unload' : ''}" id="btn-hot-${modId}">
+                        <button class="btn-hot-action ${data.isLoaded ? 'unload' : ''}" id="btn-hot-${escapeHTML(modId)}">
                             ${data.isLoaded ? 'Hot Unload' : 'Hot Load'}
                         </button>
                     </div>
@@ -278,15 +301,16 @@ async function loadModules() {
 
                 const toggle = card.querySelector('md-switch');
                 toggle.addEventListener('change', async () => {
+                    if (!isValidModId(modId)) return;
                     const targetState = toggle.selected;
                     toggle.disabled = true;
                     try {
                         if (targetState) {
-                            await exec(`rm ${MOD_DIR}/${modId}/disable`);
+                            await exec(`rm ${shEscape(`${MOD_DIR}/${modId}/disable`)}`);
                             await loadModule(modId);
                         } else {
                             await unloadModule(modId);
-                            await exec(`touch ${MOD_DIR}/${modId}/disable`);
+                            await exec(`touch ${shEscape(`${MOD_DIR}/${modId}/disable`)}`);
                         }
                     } finally {
                         loadModules();
@@ -295,6 +319,7 @@ async function loadModules() {
 
                 const hotBtn = card.querySelector('.btn-hot-action');
                 hotBtn.addEventListener('click', async () => {
+                    if (!isValidModId(modId)) return;
                     hotBtn.disabled = true;
                     try {
                         if (data.isLoaded) await unloadModule(modId);
@@ -323,8 +348,9 @@ async function loadModules() {
 }
 
 async function loadModule(modId) {
+    if (!isValidModId(modId)) return;
     const TARGET_PARTITIONS = ["system", "vendor", "product", "system_ext", "odm", "oem"];
-    const partitionPaths = TARGET_PARTITIONS.map(p => `${MOD_DIR}/${modId}/${p}`).join(' ');
+    const partitionPaths = TARGET_PARTITIONS.map(p => shEscape(`${MOD_DIR}/${modId}/${p}`)).join(' ');
     const findScript = `find ${partitionPaths} -type f 2>/dev/null`;
 
     const res = await exec(findScript);
@@ -334,13 +360,14 @@ async function loadModule(modId) {
 
     const batchScript = files.map(file => {
         const relativePath = file.replace(`${MOD_DIR}/${modId}/`, '');
-        return `${NM_BIN} add "/${relativePath}" "${file}"`;
+        return `${NM_BIN} add ${shEscape("/" + relativePath)} ${shEscape(file)}`;
     }).join('\n');
 
     await exec(batchScript);
 }
 
 async function unloadModule(modId) {
+    if (!isValidModId(modId)) return;
     try {
         const res = await exec(`${NM_BIN} list json`);
         const rules = JSON.parse(res.stdout || "[]");
@@ -355,7 +382,7 @@ async function unloadModule(modId) {
         const chunkSize = 100;
         for (let i = 0; i < targets.length; i += chunkSize) {
             const chunk = targets.slice(i, i + chunkSize);
-            const batch = chunk.map(t => `${NM_BIN} del "${t}"`).join('\n');
+            const batch = chunk.map(t => `${NM_BIN} del ${shEscape(t)}`).join('\n');
             await exec(batch);
         }
     } catch (e) {
@@ -366,6 +393,18 @@ async function unloadModule(modId) {
 
 let allAppsCache = [];
 let showSystemApps = false;
+
+async function ensureAppsCache() {
+    if (allAppsCache.length > 0) return;
+    const packages = await listPackages();
+    const apps = await getPackagesInfo(packages);
+    apps.forEach(app => {
+        app._searchLabel = (app.appLabel || "").toLowerCase();
+        app._searchPackage = (app.packageName || "").toLowerCase();
+    });
+    apps.sort((a, b) => (a.appLabel || a.packageName).localeCompare(b.appLabel || b.packageName));
+    allAppsCache = apps;
+}
 
 // Virtualized App List State
 let currentlyDisplayedApps = [];
@@ -383,9 +422,8 @@ async function loadExclusions() {
             const cat = await exec(`cat ${FILES.exclusions}`);
             const blockedUids = new Set(cat.stdout.split('\n').filter(u => u.trim() !== ''));
 
-            if (allAppsCache.length === 0 && blockedUids.size > 0) {
-                const packages = await listPackages();
-                allAppsCache = await getPackagesInfo(packages);
+            if (blockedUids.size > 0) {
+                await ensureAppsCache();
             }
 
             const appsMap = new Map(allAppsCache.map(app => [String(app.uid), app]));
@@ -411,8 +449,8 @@ async function loadExclusions() {
                             <img src="ksu://icon/${pkg}" style="width: 40px; height: 40px; border-radius: 10px;" 
                                 onerror="this.src='data:image/svg+xml;base64,...'" />
                             <div class="setting-text">
-                                <h3>${label}</h3>
-                                <p>${pkg}</p>
+                                <h3>${escapeHTML(label)}</h3>
+                                <p>${escapeHTML(pkg)}</p>
                             </div>
                         </div>
                         <md-icon-button class="btn-delete"><md-icon>delete</md-icon></md-icon-button>
@@ -470,12 +508,7 @@ async function openAppSelector() {
     }, { root: container, rootMargin: '200px' });
 
     try {
-        if (!allAppsCache || allAppsCache.length === 0) {
-            const packages = await listPackages();
-            allAppsCache = await getPackagesInfo(packages);
-            allAppsCache.sort((a, b) => (a.appLabel || a.packageName).localeCompare(b.appLabel || b.packageName));
-        }
-
+        await ensureAppsCache();
         filterAndRender();
 
         searchInput.oninput = (e) => {
@@ -503,8 +536,8 @@ function filterAndRender(searchTerm = '') {
         const term = searchTerm.toLowerCase();
         
         currentlyDisplayedApps = allAppsCache.filter(app => {
-            return ((app.appLabel || "").toLowerCase().includes(term) || 
-                   (app.packageName || "").toLowerCase().includes(term)) &&
+            return (app._searchLabel.includes(term) || 
+                    app._searchPackage.includes(term)) &&
                    (showSystemApps ? true : !app.isSystem);
         });
 
@@ -541,8 +574,8 @@ function renderNextAppBatch() {
         item.innerHTML = `
             <img src="${iconSrc}" class="app-icon-img" loading="lazy" onerror="this.src='${fallback}'" /> 
             <div class="app-details">
-                <span class="app-name">${app.appLabel || app.packageName}</span>
-                <span class="app-pkg">${app.packageName}</span>
+                <span class="app-name">${escapeHTML(app.appLabel || app.packageName)}</span>
+                <span class="app-pkg">${escapeHTML(app.packageName)}</span>
             </div>
             <div style="text-align:right;">
                 <div style="font-size: 12px; color: var(--md-sys-color-primary);">UID: ${app.uid}</div>
@@ -568,13 +601,16 @@ function renderNextAppBatch() {
 }
 
 async function removeExclusion(uid, name) {
+    if (!isValidUid(uid)) return showToast("Invalid UID");
     showToast(`Unblocking ${name}...`);
     (async () => {
         try {
             const cat = await exec(`cat ${FILES.exclusions}`);
-            const lines = cat.stdout.split('\n').map(l => l.trim()).filter(l => l !== '' && l !== String(uid));
+            const lines = cat.stdout.split('\n')
+                                    .map(l => l.trim())
+                                    .filter(l => l !== '' && l !== String(uid) && isValidUid(l));
             const newContent = lines.join('\n');
-            await exec(`echo "${newContent}" > ${FILES.exclusions}`);
+            await exec(`echo ${shEscape(newContent)} > ${FILES.exclusions}`);
 
             await exec(`${NM_BIN} unblock ${uid}`);
             await loadExclusions();
@@ -583,6 +619,7 @@ async function removeExclusion(uid, name) {
 }
 
 async function addExclusion(uid, name) {
+    if (!isValidUid(uid)) return showToast("Invalid UID");
     (async () => {
         try {
             const cat = await exec(`cat ${FILES.exclusions}`);
@@ -777,17 +814,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     (async () => {
         try {
-            if (allAppsCache.length === 0) {
-                const packages = await listPackages();
-                allAppsCache = await getPackagesInfo(packages);
-                allAppsCache.sort((a, b) => 
-                    (a.appLabel || a.packageName).localeCompare(b.appLabel || b.packageName)
-                );
-            }
+            await ensureAppsCache();
             if (!viewLoadState['view-modules']) loadModules();
             if (!viewLoadState['view-exclusions']) loadExclusions();
         } catch (e) {
             console.error("Background pre-cache failed", e);
         }
-    });
+    })();
 });
