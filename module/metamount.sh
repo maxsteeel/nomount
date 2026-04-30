@@ -43,19 +43,20 @@ for mod_path in "$MODULES_DIR"/*; do
             echo "[INFO] Mounting module: $mod_name (/$partition)" >> "$LOG_FILE"
             (
                 cd "$mod_path" || exit
-                find "$partition" -type f | while read -r relative_path; do
-                    real_path="$mod_path/$relative_path"
-                    virtual_path="/$relative_path"
-                    if $VERBOSE; then
+                if $VERBOSE; then
+                    find "$partition" -type f | while read -r relative_path; do
+                        real_path="$mod_path/$relative_path"
+                        virtual_path="/$relative_path"
                         echo "  -> Inject: $virtual_path" >> "$LOG_FILE"
-                    fi
-                    OUTPUT=$("$LOADER" add "$virtual_path" "$real_path" 2>&1)
-                    RET_CODE=$?
-                    if [ $RET_CODE -ne 0 ]; then
-                        echo "  [ERROR] Failed to inject $virtual_path" >> "$LOG_FILE"
-                        echo "          Reason: $OUTPUT" >> "$LOG_FILE"
-                    fi
-                done
+                        OUTPUT=$("$LOADER" add "$virtual_path" "$real_path" 2>&1)
+                        if [ $? -ne 0 ]; then
+                            echo "  [ERROR] Failed to inject $virtual_path" >> "$LOG_FILE"
+                            echo "          Reason: $OUTPUT" >> "$LOG_FILE"
+                        fi
+                    done
+                else
+                    find "$partition" -type f -exec sh -c 'mod=$1; shift; for f; do printf "/%s\0%s/%s\0" "$f" "$mod" "$f"; done' _ "$mod_path" {} + | xargs -0 -r -n 500 "$LOADER" add > /dev/null 2>&1
+                fi
             )
         fi
     done

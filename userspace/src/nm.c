@@ -260,118 +260,128 @@ void c_main(long *sp) {
     switch (cmd) {
         case 'a':
         case 'd': {
-            if (argc < (cmd == 'a' ? 4 : 3)) goto do_exit;
-            
-            #if defined(__aarch64__)
-                data.vp = (unsigned long)argv[2];
-            #else
-                data.vp_lo = (unsigned int)argv[2];
-            #endif
-            ioctl_arg = &data;
+            int step = (cmd == 'a') ? 2 : 1;
+            if (argc < 2 + step) goto do_exit;
 
-            if (cmd == 'd') {
-                ioctl_code = IOCTL_DEL;
-            } else { 
-                char *v_src = argv[2];
-                char *r_src = argv[3];
-                char *v_ptr;
-                char *r_ptr;
+            char *stack_buf = (char *)sp - 65536;
+            char *cwd_buf = stack_buf;
+            char *v_resolved = cwd_buf + PATH_MAX;
+            char *r_resolved = v_resolved + PATH_MAX;
 
-                char *stack_buf = (char *)sp - 65536;
-                char *cwd_buf = stack_buf;
-                char *v_resolved = cwd_buf + PATH_MAX;
-                char *r_resolved = v_resolved + PATH_MAX;
+            long cwd_len = sys2(SYS_GETCWD, (long)cwd_buf, PATH_MAX);
+            const char *cwd = (cwd_len > 0) ? cwd_buf : "/";
 
-                long cwd_len = sys2(SYS_GETCWD, (long)cwd_buf, PATH_MAX);
-                const char *cwd = (cwd_len > 0) ? cwd_buf : "/";
+            exit_code = 0; // initialize to success for batch operations
 
-                int v_len = resolve_path(v_resolved, cwd, v_src, PATH_MAX);
-                int r_len = resolve_path(r_resolved, cwd, r_src, PATH_MAX);
+            for (int arg_idx = 2; arg_idx + step <= argc; arg_idx += step) {
+                #if defined(__aarch64__)
+                    data.vp = (unsigned long)argv[arg_idx];
+                #else
+                    data.vp_lo = (unsigned int)argv[arg_idx];
+                #endif
+                ioctl_arg = &data;
 
-                if (v_len == 0 || r_len == 0) {
-                    exit_code = 3;
-                    goto do_exit;
-                }
-                
-                v_ptr = v_resolved;
-                r_ptr = r_resolved;
+                if (cmd == 'd') {
+                    ioctl_code = IOCTL_DEL;
+                    long res = sys3(SYS_IOCTL, fd, ioctl_code, (long)ioctl_arg);
+                    if (res < 0) exit_code = -res;
+                } else { 
+                    char *v_src = argv[arg_idx];
+                    char *r_src = argv[arg_idx+1];
+                    char *v_ptr;
+                    char *r_ptr;
 
-                int v_len_full = 0;
-                while (v_ptr[v_len_full]) v_len_full++;
-                int r_len_full = 0;
-                while (r_ptr[r_len_full]) r_len_full++;
+                    int v_len = resolve_path(v_resolved, cwd, v_src, PATH_MAX);
+                    int r_len = resolve_path(r_resolved, cwd, r_src, PATH_MAX);
 
-                int slashes = 0;
-                for (int i = 0; i < v_len_full; i++) {
-                    if (v_ptr[i] == '/') {
-                        slashes++;
-                        if (slashes < 2 || i == 0) continue;
-                        
-                        v_ptr[i] = '\0';
+                    if (v_len == 0 || r_len == 0) {
+                        exit_code = 3;
+                        continue;
+                    }
+                    
+                    v_ptr = v_resolved;
+                    r_ptr = r_resolved;
 
-                        int diff = v_len_full - i;
-                        int r_cut = r_len_full - diff;
-                        char r_saved = 0;
+                    int v_len_full = 0;
+                    while (v_ptr[v_len_full]) v_len_full++;
+                    int r_len_full = 0;
+                    while (r_ptr[r_len_full]) r_len_full++;
 
-                        if (r_cut > 0 && r_cut < r_len_full) {
-                            r_saved = r_ptr[r_cut];
-                            r_ptr[r_cut] = '\0';
-                        }
+                    int slashes = 0;
+                    for (int i = 0; i < v_len_full; i++) {
+                        if (v_ptr[i] == '/') {
+                            slashes++;
+                            if (slashes < 2 || i == 0) continue;
+                            
+                            v_ptr[i] = '\0';
 
-                        unsigned int st_tmp[32];
-                        long stat_res = sys4(SYS_FSTATAT, AT_FDCWD, (long)v_ptr, (long)st_tmp, AT_SYMLINK_NOFOLLOW);
-                        if (stat_res == 0) {
-                            struct ioctl_data step_data = {0};
-                            unsigned long long *st_large = (unsigned long long *)st_tmp;
-                            #if defined(__aarch64__)
-                                step_data.vp = (unsigned long)v_ptr;
-                                step_data.rp = (r_cut > 0 && r_cut < r_len_full) ? (unsigned long)r_ptr : (unsigned long)"/";
-                                step_data.real_dev = st_large[0];
-                                step_data.real_ino = st_large[1];
-                            #else
-                                step_data.vp_lo = (unsigned int)v_ptr;
-                                step_data.rp_lo = (r_cut > 0 && r_cut < r_len_full) ? (unsigned int)r_ptr : (unsigned int)"/";
-                                step_data.real_dev_lo = ((unsigned int*)st_tmp)[0]; 
-                                step_data.real_ino_lo = ((unsigned int*)st_tmp)[3];
-                            #endif
-                            step_data.flags = NM_ACTIVE | NM_DIR;
-                            sys3(SYS_IOCTL, fd, IOCTL_ADD, (long)&step_data);
-                        }
+                            int diff = v_len_full - i;
+                            int r_cut = r_len_full - diff;
+                            char r_saved = 0;
 
-                        v_ptr[i] = '/';
-                        if (r_cut > 0 && r_cut < r_len_full) {
-                            r_ptr[r_cut] = r_saved;
+                            if (r_cut > 0 && r_cut < r_len_full) {
+                                r_saved = r_ptr[r_cut];
+                                r_ptr[r_cut] = '\0';
+                            }
+
+                            unsigned int st_tmp[32];
+                            long stat_res = sys4(SYS_FSTATAT, AT_FDCWD, (long)v_ptr, (long)st_tmp, AT_SYMLINK_NOFOLLOW);
+                            if (stat_res == 0) {
+                                struct ioctl_data step_data = {0};
+                                unsigned long long *st_large = (unsigned long long *)st_tmp;
+                                #if defined(__aarch64__)
+                                    step_data.vp = (unsigned long)v_ptr;
+                                    step_data.rp = (r_cut > 0 && r_cut < r_len_full) ? (unsigned long)r_ptr : (unsigned long)"/";
+                                    step_data.real_dev = st_large[0];
+                                    step_data.real_ino = st_large[1];
+                                #else
+                                    step_data.vp_lo = (unsigned int)v_ptr;
+                                    step_data.rp_lo = (r_cut > 0 && r_cut < r_len_full) ? (unsigned int)r_ptr : (unsigned int)"/";
+                                    step_data.real_dev_lo = ((unsigned int*)st_tmp)[0]; 
+                                    step_data.real_ino_lo = ((unsigned int*)st_tmp)[3];
+                                #endif
+                                step_data.flags = NM_ACTIVE | NM_DIR;
+                                sys3(SYS_IOCTL, fd, IOCTL_ADD, (long)&step_data);
+                            }
+
+                            v_ptr[i] = '/';
+                            if (r_cut > 0 && r_cut < r_len_full) {
+                                r_ptr[r_cut] = r_saved;
+                            }
                         }
                     }
-                }
-
-                #if defined(__aarch64__)
-                    data.vp = (unsigned long)v_ptr;
-                    data.rp = (unsigned long)r_ptr;
-                #else
-                    data.vp_lo = (unsigned int)v_ptr;
-                    data.rp_lo = (unsigned int)r_ptr;
-                #endif
-                
-                data.flags = NM_ACTIVE;
-
-                unsigned int *stat_buf = (unsigned int *)(stack_buf + 32768);
-                if (sys4(SYS_FSTATAT, AT_FDCWD, (long)r_ptr, (long)stat_buf, AT_SYMLINK_NOFOLLOW) == 0) {
-                    unsigned int mode = stat_buf[STAT_MODE_IDX];
-                    if ((mode & 0170000) == 0040000) data.flags |= NM_DIR;
-                    unsigned long long *st_large = (unsigned long long *)stat_buf;
 
                     #if defined(__aarch64__)
-                        data.real_dev = st_large[0]; 
-                        data.real_ino = st_large[1];
+                        data.vp = (unsigned long)v_ptr;
+                        data.rp = (unsigned long)r_ptr;
                     #else
-                        data.real_dev_lo = ((unsigned int*)stat_buf)[0]; 
-                        data.real_ino_lo = ((unsigned int*)stat_buf)[3];
+                        data.vp_lo = (unsigned int)v_ptr;
+                        data.rp_lo = (unsigned int)r_ptr;
                     #endif
-                }
+                    
+                    data.flags = NM_ACTIVE;
 
-                ioctl_code = IOCTL_ADD;
+                    unsigned int *stat_buf = (unsigned int *)(stack_buf + 32768);
+                    if (sys4(SYS_FSTATAT, AT_FDCWD, (long)r_ptr, (long)stat_buf, AT_SYMLINK_NOFOLLOW) == 0) {
+                        unsigned int mode = stat_buf[STAT_MODE_IDX];
+                        if ((mode & 0170000) == 0040000) data.flags |= NM_DIR;
+                        unsigned long long *st_large = (unsigned long long *)stat_buf;
+
+                        #if defined(__aarch64__)
+                            data.real_dev = st_large[0]; 
+                            data.real_ino = st_large[1];
+                        #else
+                            data.real_dev_lo = ((unsigned int*)stat_buf)[0]; 
+                            data.real_ino_lo = ((unsigned int*)stat_buf)[3];
+                        #endif
+                    }
+
+                    ioctl_code = IOCTL_ADD;
+                    long res = sys3(SYS_IOCTL, fd, ioctl_code, (long)ioctl_arg);
+                    if (res < 0) exit_code = -res;
+                }
             }
+            ioctl_code = 0; // prevent dual execution later
             break;
         }
         case 'b':
