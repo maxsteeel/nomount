@@ -43,6 +43,7 @@ diff --git a/fs/Makefile b/fs/Makefile
 *   **Mechanism:**
     *   In `namei.c`, the `nomount_getname_hook` hook is executed immediately after copying the path from the user. If the path matches an active rule, the original string is replaced with the actual path of the redirected file. The rest of the kernel processes the call without knowing that it was tricked.
     *   In `namei.c`, the `nomount_allow_access` hook forces a return of `0` (Success) to prevent native DAC/MAC checks (like SELinux) from blocking access to our injected folders.
+    *   In `open.c`, the `nomount_handle_faccessat` hook intercepts early calls that use Directory File Descriptors (`dfd`) to resolve relative paths (e.g., `openat(dir_fd, "su")`). It reconstructs the absolute path and checks it against active rules. If it matches, it forces an Early Exit returning the correct access rights (spoofing Read-Only for `MAY_WRITE`), thus completely neutralizing evasion techniques that bypass absolute path filters.
     *   In `open.c`, if a process tries to check whether an injected file is writable (`MAY_WRITE`), the hook returns `-EACCES`, perfectly mimicking the behavior of a read-only mounted partition.
 *   **Integration:**
 
@@ -109,12 +110,27 @@ diff --git a/fs/open.c b/fs/open.c
 +#ifdef CONFIG_NOMOUNT
 +extern bool nomount_should_skip(void);
 +extern bool nomount_is_injected_file(struct inode *inode);
++extern bool nomount_handle_faccessat(int dfd, const char __user *filename,
++									 int mode, unsigned int lookup_flags, long *out_res);
 +#endif
 +
  static long do_faccessat(int dfd, const char __user *filename, int mode, int flags)
  {
  	struct path path;
-@@ -xxx,x +xxx,xx @@ static long do_faccessat(int dfd, const char __user *filename, int mode, int fla
+@@ -xxx,6 +xx,xx @@ static long do_faccessat(int dfd, const char __user *filename, int mode, int fla
+ 	unsigned int lookup_flags = LOOKUP_FOLLOW;
+ 	const struct cred *old_cred = NULL;
+ 
++#ifdef CONFIG_NOMOUNT
++	long nm_res;
++	if (nomount_handle_faccessat(dfd, filename, mode, lookup_flags, &nm_res))
++		return nm_res;
++#endif
++
+ 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
+ 		return -EINVAL;
+ 
+@@ -xxx,xx +xxx,xx @@ static long do_faccessat(int dfd, const char __user *filename, int mode, int fla
  
  	inode = d_backing_inode(path.dentry);
  

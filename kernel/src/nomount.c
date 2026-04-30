@@ -2,6 +2,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/fs.h>
+#include <linux/file.h>
 #include <linux/dcache.h>
 #include <linux/path.h>
 #include <linux/namei.h>
@@ -316,6 +317,60 @@ int nomount_allow_access(struct inode *inode, int mask)
 }
 EXPORT_SYMBOL(nomount_allow_access);
 
+/* Helper: Reconstructs the absolute path from a DFD (Directory File Descriptor) */
+char *nomount_build_absolute_path(int dfd, const char *name)
+{
+    char *page_buf, *dir_path, *abs_path;
+    size_t dir_len, name_len;
+    struct fd f;
+
+    if (!name || name[0] == '/' || *name == '\0') return NULL;
+    if (dfd == AT_FDCWD) return NULL;
+    if (nomount_should_skip()) return NULL;
+
+    page_buf = __getname();
+    if (!page_buf)
+        return NULL;
+
+    f = fdget(dfd);
+    if (!f.file) {
+        __putname(page_buf);
+        return NULL;
+    }
+
+    dir_path = d_path(&f.file->f_path, page_buf, PATH_MAX);
+    fdput(f);
+
+    if (IS_ERR(dir_path)) {
+        __putname(page_buf);
+        return NULL;
+    }
+
+    dir_len = strlen(dir_path);
+    name_len = strlen(name);
+
+    if (dir_len > PATH_MAX || name_len > NAME_MAX || dir_len + name_len + 2 > PATH_MAX) {
+        __putname(page_buf);
+        return NULL;
+    }
+
+    abs_path = kmalloc(dir_len + 1 + name_len + 1, GFP_KERNEL);
+    if (abs_path) {
+        memcpy(abs_path, dir_path, dir_len);
+
+        if (dir_len > 1 || dir_path[0] != '/') {
+            abs_path[dir_len] = '/';
+            memcpy(abs_path + dir_len + 1, name, name_len + 1);
+        } else {
+            memcpy(abs_path + dir_len, name, name_len + 1);
+        }
+    }
+
+    __putname(page_buf);
+    return abs_path; /* Caller have to free this with kfree() */
+}
+EXPORT_SYMBOL(nomount_build_absolute_path);
+
 /* search if the pathname matches a nomount file, and return real path */
 char *nomount_resolve_path(const char *pathname) {
     struct nomount_rule *rule;
@@ -342,6 +397,51 @@ char *nomount_resolve_path(const char *pathname) {
     return NULL;
 }
 EXPORT_SYMBOL(nomount_resolve_path);
+
+/* Returns true if NoMount handled the access check, false to fallback to native */
+bool nomount_handle_faccessat(int dfd, const char __user *filename, int mode, unsigned int lookup_flags, long *out_res)
+{
+    struct filename *tmp_name;
+    char *nm_abs, *nm_res;
+    struct path path;
+    int res;
+
+    if (nomount_should_skip() || !filename)
+        return false;
+
+    tmp_name = getname_flags(filename, 0, NULL);
+    if (IS_ERR(tmp_name))
+        return false;
+
+    nm_abs = nomount_build_absolute_path(dfd, tmp_name->name);
+    if (nm_abs) {
+        nm_res = nomount_resolve_path(nm_abs);
+        if (nm_res) {
+            kfree(nm_abs);
+            putname(tmp_name);
+
+            if (mode & MAY_WRITE) {
+                *out_res = -EACCES;
+                return true;
+            }
+
+            nm_enter();
+            res = kern_path(nm_res, lookup_flags, &path);
+            nm_exit();
+
+            if (res == 0) {
+                path_put(&path);
+            }
+            *out_res = res;
+            return true;
+        }
+        kfree(nm_abs);
+    }
+    putname(tmp_name);
+
+    return false; 
+}
+EXPORT_SYMBOL(nomount_handle_faccessat);
 
 /* if the file matches a nomount file, returns the redirected file instead of the real one */
 struct filename *nomount_getname_hook(struct filename *name)
