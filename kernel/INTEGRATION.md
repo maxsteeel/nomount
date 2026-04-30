@@ -8,7 +8,10 @@ This document details the hook architecture used by NoMount within the Linux Vir
 *   **Purpose:** Register NoMount in kernel.
 *   **Mechanism:** Adds the `CONFIG_NOMOUNT` flag to allow enabling/disabling the module during kernel configuration (`menuconfig`) and tells the build system to include `nomount.o` in the final link.
 *   **Integration:**:
-```
+
+#### `fs/Kconfig`:
+
+```diff
 diff --git a/fs/Kconfig b/fs/Kconfig
 index c34b9d4e0..8ec1f2b07 100644
 --- a/fs/Kconfig
@@ -23,6 +26,11 @@ index c34b9d4e0..8ec1f2b07 100644
 +	  without mounting filesystems. Useful for systemless modifications.
 +
  endmenu
+```
+
+#### `fs/Makefile`:
+
+```diff
 diff --git a/fs/Makefile b/fs/Makefile
 --- a/fs/Makefile
 +++ b/fs/Makefile
@@ -47,7 +55,9 @@ diff --git a/fs/Makefile b/fs/Makefile
     *   In `open.c`, if a process tries to check whether an injected file is writable (`MAY_WRITE`), the hook returns `-EACCES`, perfectly mimicking the behavior of a read-only mounted partition.
 *   **Integration:**
 
-```
+#### `fs/namei.c`:
+
+```diff
 diff --git a/fs/namei.c b/fs/namei.c
 --- a/fs/namei.c
 +++ b/fs/namei.c
@@ -100,6 +110,11 @@ diff --git a/fs/namei.c b/fs/namei.c
  	retval = sb_permission(inode->i_sb, inode, mask);
  	if (retval)
  		return retval;
+```
+
+#### `fs/open.c`:
+
+```diff
 diff --git a/fs/open.c b/fs/open.c
 --- a/fs/open.c
 +++ b/fs/open.c
@@ -157,7 +172,10 @@ diff --git a/fs/open.c b/fs/open.c
 *   **Purpose:** Avoid information leaks and falsify real paths through virtual paths.
 *   **Mechanism:** If the kernel tries to resolve the path of a file that was injected by us, `nomount_handle_dpath` intercepts the output and returns the "Virtual Path" instead of the actual physical location (e.g. returning `/system/bin/su` instead of `/data/adb/modules/test/su`).
 *   **Integration:**
-```
+
+#### `fs/d_path.c`:
+
+```diff
 diff --git a/fs/d_path.c b/fs/d_path.c
 --- a/fs/d_path.c
 +++ b/fs/d_path.c
@@ -194,7 +212,10 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 *   **Purpose:** Allow commands like `ls` or listing APIs to see virtual files injected into legitimate system directories.
 *   **Mechanism:** To avoid *Bootloops* or *Deadlocks* when interacting with `iterate_dir` locks, NoMount injects the data in a "Post-Iteration" manner. The `nomount_inject_post_getdents` macro allows the kernel to read the real physical files first and, just before returning the buffer to the user, inject the fake `linux_dirent` structures at the end of the memory buffer.
 *   **Integration:**
-```
+
+#### `fs/readdir.c`:
+
+```diff
 diff --git a/fs/readdir.c b/fs/readdir.c
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
@@ -267,7 +288,10 @@ To be undetectable, the metadata of the files and file systems must match their 
     *   **Hook:** `vfs_statfs`
     *   **Mechanism:** Alter the `kstatfs` structure. If an application requests partition metadata (e.g. to check if the file is on an `ext4` or `erofs` volume), the `nomount_spoof_statfs` hook injects the "Magic Number" (FS type) corresponding to the desired virtual partition.
 *  **Integration:**
-```
+
+#### `fs/proc/task_mmu.c`:
+
+```diff
 diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
 index 839b6d686..bd581901c 100644
 --- a/fs/proc/task_mmu.c
@@ -295,7 +319,12 @@ index 839b6d686..bd581901c 100644
 +#endif
  		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
  	}
- 
+
+```
+
+#### `fs/stat.c`
+
+```diff
 diff --git a/fs/stat.c b/fs/stat.c
 --- a/fs/stat.c
 +++ b/fs/stat.c
@@ -322,6 +351,11 @@ diff --git a/fs/stat.c b/fs/stat.c
  }
  EXPORT_SYMBOL(vfs_getattr);
  
+```
+
+#### `fs/statfs.c`:
+
+```diff
 diff --git a/fs/statfs.c b/fs/statfs.c
 --- a/fs/statfs.c
 +++ b/fs/statfs.c
