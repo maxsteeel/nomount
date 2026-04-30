@@ -104,6 +104,7 @@ struct nomount_dir_node {
 
 struct nomount_child_name {
     struct list_head list;
+    struct list_head cleanup_list;
     char *name;                  
     unsigned char d_type;
     unsigned long fake_ino;      /* deterministic fake inode for injected entries */

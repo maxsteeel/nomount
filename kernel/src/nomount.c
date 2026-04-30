@@ -364,6 +364,22 @@ char *nomount_build_absolute_path(int dfd, const char *name)
 EXPORT_SYMBOL(nomount_build_absolute_path);
 
 /**
+ * nomount_rule_free_rcu - Safely deallocate a rule after RCU grace period
+ * @rp: Pointer to the rcu_head embedded within the nomount_rule
+ *
+ * This callback is invoked by the kernel once all concurrent RCU readers
+ * (e.g., path lookups, permission checks) have finished traversing the
+ * rule that was removed from the active lists. It safely frees the 
+ * associated path strings and the rule structure itself.
+ */
+static void nomount_rule_free_rcu(struct rcu_head *rp) {
+    struct nomount_rule *rule = container_of(rp, struct nomount_rule, rcu);
+    kfree(rule->virtual_path);
+    kfree(rule->real_path);
+    kfree(rule);
+} 
+
+/**
  * nomount_resolve_path - Look up the real physical path for a virtual path
  * @pathname: The requested virtual path
  *
@@ -994,17 +1010,6 @@ static int nomount_ioctl_add_rule(unsigned long arg)
     if (IS_ERR(v_path) || IS_ERR(r_path)) return -ENOMEM;
     hash = full_name_hash(NULL, v_path, strlen(v_path));
 
-    rcu_read_lock();
-    hash_for_each_possible_rcu(nomount_rules_by_vpath, rule, vpath_node, hash) {
-        if (rule->v_hash == hash && strcmp(rule->virtual_path, v_path) == 0) {
-            rcu_read_unlock();
-            kfree(v_path); 
-            if (r_path) kfree(r_path);
-            return -EEXIST;
-        }
-    }
-    rcu_read_unlock();
-
     rule = kzalloc(sizeof(*rule), GFP_KERNEL);
     if (!rule) {
         kfree(v_path); kfree(r_path);
@@ -1057,27 +1062,39 @@ static int nomount_ioctl_add_rule(unsigned long arg)
         kfree(parent_name);
     }
 
-    if (rule) {
-        nomount_bloom_add_path(v_path);
-        if (r_path) nomount_bloom_add_path(r_path);
-        if (rule->real_ino) nomount_bloom_add_ino(rule->real_ino);
-        if (rule->v_ino) nomount_bloom_add_ino(rule->v_ino);
-    }
-
-    mutex_lock(&nomount_write_mutex);
-    hash_add_rcu(nomount_rules_by_vpath, &rule->vpath_node, hash);
-    
-    if (rule->real_ino)
-        hash_add_rcu(nomount_rules_by_real_ino, &rule->real_ino_node, rule->real_ino);
-    
-    if (rule->v_ino)
-        hash_add_rcu(nomount_rules_by_v_ino, &rule->v_ino_node, rule->v_ino);
-    
-    list_add_tail(&rule->list, &nomount_rules_list);
-    mutex_unlock(&nomount_write_mutex);
-
     nomount_collect_parents(r_path);
     nm_exit();
+    
+    mutex_lock(&nomount_write_mutex);
+
+    {
+        struct nomount_rule *existing;
+        hash_for_each_possible(nomount_rules_by_vpath, existing, vpath_node, hash) {
+            if (existing->v_hash == hash && strcmp(existing->virtual_path, v_path) == 0) {
+                mutex_unlock(&nomount_write_mutex);
+                kfree(rule->virtual_path); 
+                kfree(rule->real_path);
+                kfree(rule);
+                return -EEXIST;
+            }
+        }
+    }
+
+    nomount_bloom_add_path(v_path);
+    if (r_path) nomount_bloom_add_path(r_path);
+    if (rule->real_ino) nomount_bloom_add_ino(rule->real_ino);
+    if (rule->v_ino) nomount_bloom_add_ino(rule->v_ino);
+
+    hash_add_rcu(nomount_rules_by_vpath, &rule->vpath_node, hash);
+    if (rule->real_ino)
+        hash_add_rcu(nomount_rules_by_real_ino, &rule->real_ino_node, rule->real_ino);
+
+    if (rule->v_ino)
+        hash_add_rcu(nomount_rules_by_v_ino, &rule->v_ino_node, rule->v_ino);
+
+    list_add_tail_rcu(&rule->list, &nomount_rules_list);
+    mutex_unlock(&nomount_write_mutex);
+
     return 0;
 }
 
@@ -1120,11 +1137,7 @@ static int nomount_ioctl_del_rule(unsigned long arg)
     mutex_unlock(&nomount_write_mutex);
 
     if (victim) {
-        synchronize_rcu();
-        kfree(victim->virtual_path);
-        kfree(victim->real_path);
-        kfree(victim);
-        
+        call_rcu(&victim->rcu, nomount_rule_free_rcu);
         kfree(v_path);
         return 0;
     }
@@ -1143,6 +1156,7 @@ static int nomount_ioctl_clear_rules(void)
     LIST_HEAD(rule_victims);
     LIST_HEAD(uid_victims);
     LIST_HEAD(dir_victims);
+    LIST_HEAD(dir_victims_children);
     int bkt;
     
     if (!capable(CAP_SYS_ADMIN))
@@ -1168,6 +1182,10 @@ static int nomount_ioctl_clear_rules(void)
 
     hash_for_each_safe(nomount_dirs_ht, bkt, hlist_tmp, dir_node, node) {
         hash_del_rcu(&dir_node->node);
+        list_for_each_entry_safe(child, tmp_child, &dir_node->children_names, list) {
+            list_del_rcu(&child->list); 
+            list_add_tail(&child->cleanup_list, &dir_victims_children);
+        }
         list_add_tail(&dir_node->cleanup_list, &dir_victims);
     }
 
@@ -1201,6 +1219,11 @@ static int nomount_ioctl_clear_rules(void)
     list_for_each_entry_safe(uid_node, tmp_uid, &uid_victims, cleanup_list) {
         list_del(&uid_node->cleanup_list);
         kfree(uid_node);
+    }
+
+    list_for_each_entry_safe(child, tmp_child, &dir_victims_children, cleanup_list) {
+        kfree(child->name);
+        kfree(child);
     }
 
     return 0;
@@ -1288,6 +1311,7 @@ static int nomount_ioctl_del_uid(unsigned long arg)
     mutex_unlock(&nomount_write_mutex);
 
     if (found && entry) {
+        synchronize_rcu();
         kfree(entry); 
     }
 
