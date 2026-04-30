@@ -21,6 +21,12 @@
 #include <linux/jhash.h>
 #include "nomount.h"
 
+/*** Bloom Filter Implementation ***/
+
+/**
+ * nomount_bloom_add_path - Add a path to the bloom filter
+ * @name: The string path to hash and add
+ */
 static void nomount_bloom_add_path(const char *name)
 {
     size_t len = strlen(name);
@@ -31,6 +37,12 @@ static void nomount_bloom_add_path(const char *name)
     set_bit(h2, nomount_bloom_paths);
 }
 
+/**
+ * nomount_bloom_test_path - Check if a path might exist in the rules
+ * @name: The string path to test
+ *
+ * Returns true if the path might be tracked, false if it is definitely not.
+ */
 bool nomount_bloom_test_path(const char *name)
 {
     size_t len = strlen(name);
@@ -40,11 +52,20 @@ bool nomount_bloom_test_path(const char *name)
     return test_bit(h1, nomount_bloom_paths) && test_bit(h2, nomount_bloom_paths);
 }
 
+/**
+ * nomount_bloom_add_ino - Add an inode number to the bloom filter
+ * @ino: The inode number to add
+ */
 static inline void nomount_bloom_add_ino(unsigned long ino)
 {
     set_bit(ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom_inos);
 }
 
+/**
+ * nomount_bloom_rebuild - Reconstruct bloom filters from active rules
+ *
+ * Called after a rule is deleted to clear false positives.
+ */
 static void nomount_bloom_rebuild(void)
 {
     struct nomount_rule *rule;
@@ -70,12 +91,17 @@ static void nomount_bloom_rebuild(void)
     }
 }
 
-/* comprobations */
+/*** Verification & Compatibility Checks ***/
 
-/* declaration */
+/* Forward declaration */
 bool nomount_is_uid_blocked(uid_t uid);
 
-/* check when nomount should skip the hooks */
+/**
+ * nomount_should_skip - Determine if the current context should bypass hooks
+ *
+ * Returns true if NoMount is disabled, if running in interrupt context,
+ * if recursion is detected, or if the current UID is in the blocklist.
+ */
 bool nomount_should_skip(void) {
     if (NOMOUNT_DISABLED()) return true;
     if (unlikely(in_interrupt() || in_nmi() || oops_in_progress)) return true;
@@ -90,7 +116,12 @@ bool nomount_should_skip(void) {
 }
 EXPORT_SYMBOL(nomount_should_skip);
 
-/* check if current uid is blocked */
+/**
+ * nomount_is_uid_blocked - Check if a specific UID is excluded from redirection
+ * @uid: The User ID to check
+ *
+ * Returns true if the UID exists in the exclusion hash table.
+ */
 bool nomount_is_uid_blocked(uid_t uid) {
     struct nomount_uid_node *entry;
     if (hash_empty(nomount_uid_ht) || nomount_should_skip()) return false;
@@ -106,7 +137,13 @@ bool nomount_is_uid_blocked(uid_t uid) {
     return false;
 }
 
-/* checks if inode corresponds to a file injected by nomount */
+/**
+ * nomount_is_injected_file - Check if an inode belongs to an active rule
+ * @inode: The inode to evaluate
+ *
+ * Returns true if the inode matches either the virtual or real inode
+ * of a registered NoMount rule.
+ */
 bool nomount_is_injected_file(struct inode *inode) {
     struct nomount_rule *rule;
     bool found = false;
@@ -132,7 +169,14 @@ bool nomount_is_injected_file(struct inode *inode) {
     return found;
 }
 
-/* checks if the path corresponds to a nomount file path */
+/**
+ * nomount_is_traversal_allowed - Check if an inode allows directory traversal
+ * @inode: The directory inode to check
+ * @mask: The requested access mask
+ *
+ * Prevents DAC/MAC modules from blocking access to injected directory structures.
+ * Returns true if the inode is tracked as a parent directory.
+ */
 bool nomount_is_traversal_allowed(struct inode *inode, int mask)
 {
     struct nomount_dir_node *dir;
@@ -158,9 +202,14 @@ bool nomount_is_traversal_allowed(struct inode *inode, int mask)
 }
 EXPORT_SYMBOL(nomount_is_traversal_allowed);
 
-/* helpers */
+/*** Helpers & Path Resolution ***/
 
-/* returns the virtual path of a nomount file if the inode matches that file */
+/**
+ * nomount_get_static_vpath - Get the registered virtual path for an inode
+ * @inode: The inode to query
+ *
+ * Returns a pointer to the virtual path string, or NULL if not found.
+ */
 const char *nomount_get_static_vpath(struct inode *inode) {
     struct nomount_rule *rule;
     unsigned long ino;
@@ -186,12 +235,17 @@ const char *nomount_get_static_vpath(struct inode *inode) {
     }
 
     rcu_read_unlock();
-
     return NULL;
 }
 EXPORT_SYMBOL(nomount_get_static_vpath);
 
-/* recursively register inodes of the parent directories in the directory hash table */
+/**
+ * nomount_collect_parents - Track parent directories of a real path
+ * @real_path: The absolute path of the underlying target file
+ *
+ * Recursively resolves and registers parent directory inodes to ensure
+ * traversal permissions are granted during lookup operations.
+ */
 static void nomount_collect_parents(const char *real_path)
 {
     char *path_tmp, *p;
@@ -245,79 +299,17 @@ static void nomount_collect_parents(const char *real_path)
     kfree(path_tmp);
 }
 
-/* checks if the filename has the specified extension */
-bool nm_has_extension(struct dentry *dentry, const char *ext)
-{
-    size_t name_len, ext_len;
-    const char *name;
-
-    if (!dentry || !ext)
-        return false;
-
-    name_len = dentry->d_name.len;
-    ext_len = strlen(ext);
-
-    if (name_len <= ext_len)
-        return false;
-
-    name = dentry->d_name.name;
-
-    return strncasecmp(name + name_len - ext_len, ext, ext_len) == 0;
-}
-
-/* hooks */
-
-/* d_path hook */
-char *nomount_handle_dpath(const struct path *path, char *buf, int buflen) 
-{
-    const char *v_path;
-    char *res;
-    int len;
-
-    if (unlikely(!path || !path->dentry || !path->dentry->d_inode))
-        return NULL;
-
-    if (!test_bit(path->dentry->d_inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom_inos))
-        return NULL;
-
-    nm_enter();
-    v_path = nomount_get_static_vpath(path->dentry->d_inode);
-
-    if (v_path) {
-        len = strlen(v_path);
-        if (buflen >= len + 1) {
-            res = buf + buflen - 1;
-            *res = '\0';
-            res -= len;
-            memcpy(res, v_path, len);
-            nm_exit();
-            return res;
-        }
-    }
-
-    nm_exit();
-    return NULL;
-}
-EXPORT_SYMBOL(nomount_handle_dpath);
-
-int nomount_allow_access(struct inode *inode, int mask)
-{
-    int allowed = 0;
-
-    if (!test_bit(inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom_inos))
-        return 0;
-
-    if (unlikely(!nomount_should_skip())) {
-        nm_enter();
-        allowed = nomount_is_injected_file(inode) || nomount_is_traversal_allowed(inode, mask);
-        nm_exit();
-    }
-    
-    return allowed;
-}
-EXPORT_SYMBOL(nomount_allow_access);
-
-/* Helper: Reconstructs the absolute path from a DFD (Directory File Descriptor) */
+/**
+ * nomount_build_absolute_path - Reconstruct absolute path from DFD
+ * @dfd: Directory file descriptor (e.g., from openat)
+ * @name: The relative filename
+ *
+ * Prevents evasion by constructing the full absolute path when a 
+ * relative path is requested via a specific directory descriptor.
+ * 
+ * Returns an allocated string containing the absolute path, or NULL.
+ * Caller must free the returned string using kfree().
+ */
 char *nomount_build_absolute_path(int dfd, const char *name)
 {
     char *page_buf, *dir_path, *abs_path;
@@ -367,11 +359,17 @@ char *nomount_build_absolute_path(int dfd, const char *name)
     }
 
     __putname(page_buf);
-    return abs_path; /* Caller have to free this with kfree() */
+    return abs_path; 
 }
 EXPORT_SYMBOL(nomount_build_absolute_path);
 
-/* search if the pathname matches a nomount file, and return real path */
+/**
+ * nomount_resolve_path - Look up the real physical path for a virtual path
+ * @pathname: The requested virtual path
+ *
+ * Performs a fast RCU-protected hash lookup to find redirection rules.
+ * Returns a pointer to the real path string, or NULL if no rule matches.
+ */
 char *nomount_resolve_path(const char *pathname) {
     struct nomount_rule *rule;
     u32 hash;
@@ -398,7 +396,89 @@ char *nomount_resolve_path(const char *pathname) {
 }
 EXPORT_SYMBOL(nomount_resolve_path);
 
-/* Returns true if NoMount handled the access check, false to fallback to native */
+/*** VFS Hooks & Injection Logic ***/
+
+/**
+ * nomount_handle_dpath - Intercept d_path calls to hide real locations
+ * @path: The path struct being resolved
+ * @buf: The buffer to write the result into
+ * @buflen: Length of the buffer
+ *
+ * Replaces the real physical path of an injected file with its intended 
+ * virtual path to prevent information leaks in Userspace.
+ * 
+ * Returns a pointer within the buffer where the virtual path begins.
+ */
+char *nomount_handle_dpath(const struct path *path, char *buf, int buflen) 
+{
+    const char *v_path;
+    char *res;
+    int len;
+
+    if (unlikely(!path || !path->dentry || !path->dentry->d_inode))
+        return NULL;
+
+    if (!test_bit(path->dentry->d_inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom_inos))
+        return NULL;
+
+    nm_enter();
+    v_path = nomount_get_static_vpath(path->dentry->d_inode);
+
+    if (v_path) {
+        len = strlen(v_path);
+        if (buflen >= len + 1) {
+            res = buf + buflen - 1;
+            *res = '\0';
+            res -= len;
+            memcpy(res, v_path, len);
+            nm_exit();
+            return res;
+        }
+    }
+
+    nm_exit();
+    return NULL;
+}
+EXPORT_SYMBOL(nomount_handle_dpath);
+
+/**
+ * nomount_allow_access - Enforce permissions for injected structure
+ * @inode: The inode being accessed
+ * @mask: The requested permission mask
+ *
+ * Returns 1 (true) if NoMount overrides native permission checks to 
+ * allow traversal, or 0 to fallback to standard VFS permissions.
+ */
+int nomount_allow_access(struct inode *inode, int mask)
+{
+    int allowed = 0;
+
+    if (!test_bit(inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom_inos))
+        return 0;
+
+    if (unlikely(!nomount_should_skip())) {
+        nm_enter();
+        allowed = nomount_is_injected_file(inode) || nomount_is_traversal_allowed(inode, mask);
+        nm_exit();
+    }
+    
+    return allowed;
+}
+EXPORT_SYMBOL(nomount_allow_access);
+
+/**
+ * nomount_handle_faccessat - Intercept early access checks for DFDs
+ * @dfd: Directory file descriptor
+ * @filename: User-provided path string
+ * @mode: Access mode requested (e.g., F_OK, W_OK)
+ * @lookup_flags: VFS path lookup flags
+ * @out_res: Pointer to store the actual access result
+ *
+ * Mitigates relative path evasion by reconstructing the absolute path 
+ * and performing access checks before the native VFS logic takes over.
+ * 
+ * Returns true if NoMount handled the request, false otherwise.
+ */
 bool nomount_handle_faccessat(int dfd, const char __user *filename, int mode, unsigned int lookup_flags, long *out_res)
 {
     struct filename *tmp_name;
@@ -443,7 +523,16 @@ bool nomount_handle_faccessat(int dfd, const char __user *filename, int mode, un
 }
 EXPORT_SYMBOL(nomount_handle_faccessat);
 
-/* if the file matches a nomount file, returns the redirected file instead of the real one */
+/**
+ * nomount_getname_hook - Redirect paths during filename struct creation
+ * @name: The original filename struct requested by userspace
+ *
+ * This is the primary entry point for path redirection. If the requested 
+ * path matches a rule, it alters the filename struct to point to the real 
+ * physical location on disk.
+ * 
+ * Returns the modified filename struct, or the original if no match.
+ */
 struct filename *nomount_getname_hook(struct filename *name)
 {
     char *target = NULL, *tmp_buf;
@@ -458,13 +547,11 @@ struct filename *nomount_getname_hook(struct filename *name)
     if (!tmp_buf) return name;
 
     if (name->name[0] == '/') {
-        // Absolute path: we only use it directly
         full_path_ptr = (char *)name->name;
     } else {
-        // relative path, concatenate with CWD
         struct fs_struct *fs = current->fs;
         char *cwd_str;
-        char *t_buf = (char *)__get_free_page(GFP_ATOMIC); // very fast buffer
+        char *t_buf = (char *)__get_free_page(GFP_ATOMIC); 
 
         if (!t_buf) {
             __putname(tmp_buf);
@@ -481,14 +568,12 @@ struct filename *nomount_getname_hook(struct filename *name)
             return name;
         }
 
-        // cwd + / + relative path
         snprintf(tmp_buf, PATH_MAX, "%s/%s", cwd_str, name->name);
         full_path_ptr = tmp_buf;
 
         free_page((unsigned long)t_buf);
     }
 
-    /* RCU lookup */
     rcu_read_lock();
     target = nomount_resolve_path(full_path_ptr);
     if (target) {
@@ -510,7 +595,126 @@ struct filename *nomount_getname_hook(struct filename *name)
     return name;
 }
 
-/* Injects fake directory entries into the userspace buffer during directory listing */
+/**
+ * nomount_getxattr_hook - Spoof SELinux contexts for injected files
+ * @dentry: The dentry being queried
+ * @name: The name of the extended attribute (e.g., "security.selinux")
+ * @value: Buffer to store the attribute value
+ * @size: Size of the buffer
+ *
+ * Prevents SELinux context leaks by returning the context of the native 
+ * parent directory rather than the context of the underlying file in /data.
+ * 
+ * Returns the size of the attribute value or a negative error code.
+ */
+ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *value, size_t size)
+{
+    struct nomount_rule *rule;
+    struct path parent_path;
+    const struct cred *old_cred;
+    ssize_t ret = -EOPNOTSUPP;
+    unsigned long ino;
+    char *vpath_copy, *last_slash;
+
+    if (nomount_should_skip() || !dentry || !dentry->d_inode)
+        return ret;
+
+    ino = dentry->d_inode->i_ino;
+
+    rcu_read_lock();
+    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, ino) {
+        if (rule->real_ino == ino) {
+            vpath_copy = kstrdup(rule->virtual_path, GFP_ATOMIC);
+            rcu_read_unlock();
+
+            if (!vpath_copy) return -ENOMEM;
+
+            last_slash = strrchr(vpath_copy, '/');
+            if (last_slash && last_slash != vpath_copy) {
+                *last_slash = '\0';
+
+                nm_enter();
+                old_cred = override_creds(&init_cred);
+
+                if (kern_path(vpath_copy, LOOKUP_FOLLOW, &parent_path) == 0) {
+                    ret = nm_vfs_getxattr(parent_path.dentry, name, value, size);
+                    path_put(&parent_path);
+                } else {
+                    ret = -ENOENT;
+                }
+
+                revert_creds(old_cred);
+                nm_exit();
+            }
+            kfree(vpath_copy);
+            return ret;
+        }
+    }
+    rcu_read_unlock();
+    return ret;
+}
+EXPORT_SYMBOL(nomount_getxattr_hook);
+
+/**
+ * nomount_setxattr_hook - Allow elevated writing of extended attributes
+ * @dentry: The dentry being modified
+ * @name: Attribute name
+ * @value: Attribute value
+ * @size: Value size
+ * @flags: Modification flags
+ *
+ * Uses elevated capabilities to write xattrs to the underlying file.
+ */
+int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *value, size_t size, int flags)
+{
+    struct nomount_rule *rule;
+    struct path r_path;
+    const struct cred *old_cred;
+    int ret = -EOPNOTSUPP;
+    unsigned long ino;
+
+    if (nomount_should_skip() || !dentry || !dentry->d_inode)
+        return ret;
+
+    ino = dentry->d_inode->i_ino;
+
+    rcu_read_lock();
+    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, ino) {
+        if (rule->real_ino == ino) {
+            nm_enter();
+            old_cred = override_creds(&init_cred);
+            
+            if (kern_path(rule->real_path, LOOKUP_FOLLOW, &r_path) == 0) {
+                ret = nm_vfs_setxattr(r_path.dentry, name, value, size, flags);
+                path_put(&r_path);
+            } else {
+                ret = -ENOENT;
+            }
+            
+            revert_creds(old_cred);
+            nm_exit();
+            break; 
+        }
+    }
+    rcu_read_unlock();
+
+    return ret;
+}
+EXPORT_SYMBOL(nomount_setxattr_hook);
+
+/*** Directory Injection ***/
+
+/**
+ * nomount_inject_dents - Insert fake dirents into userspace buffer
+ * @file: The directory being read
+ * @dirent: Pointer to the userspace dirent buffer
+ * @count: Remaining size in the buffer
+ * @pos: Current directory offset (f_pos)
+ * @compat: Flag indicating 32-bit compat mode
+ *
+ * Safely appends fake entries to the end of a native directory listing 
+ * (readdir/getdents) to ensure injected files are visible to tools like 'ls'.
+ */
 void nomount_inject_dents(struct file *file, void __user **dirent, int *count, loff_t *pos, int compat)
 {
     struct nomount_dir_node *curr_dir;
@@ -584,7 +788,15 @@ void nomount_inject_dents(struct file *file, void __user **dirent, int *count, l
     nm_exit();
 }
 
-/* registers a fake entry node in the parent directory node */
+/**
+ * nomount_auto_inject_parent - Create a fake directory entry node
+ * @parent_ino: Inode of the native parent directory
+ * @name: Name of the child entry to inject
+ * @type: Directory entry type (e.g., DT_REG, DT_DIR)
+ * @full_v_path: The complete virtual path for hashing
+ *
+ * Automatically tracks new entries to be injected during getdents calls.
+ */
 static void nomount_auto_inject_parent(unsigned long parent_ino, const char *name, unsigned char type, const char *full_v_path)
 {
     struct nomount_dir_node *dir_node = NULL, *curr;
@@ -633,96 +845,16 @@ static void nomount_auto_inject_parent(unsigned long parent_ino, const char *nam
     mutex_unlock(&nomount_write_mutex);
 }
 
-/* retrieves extended attributes from the real file by temporarily elevating privileges */
-ssize_t nomount_getxattr_hook(struct dentry *dentry, const char *name, void *value, size_t size)
-{
-    struct nomount_rule *rule;
-    struct path parent_path;
-    const struct cred *old_cred;
-    ssize_t ret = -EOPNOTSUPP;
-    unsigned long ino;
-    char *vpath_copy, *last_slash;
+/*** Metadata Spoofing ***/
 
-    if (nomount_should_skip() || !dentry || !dentry->d_inode)
-        return ret;
-
-    ino = dentry->d_inode->i_ino;
-
-    rcu_read_lock();
-    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, ino) {
-        if (rule->real_ino == ino) {
-            vpath_copy = kstrdup(rule->virtual_path, GFP_ATOMIC);
-            rcu_read_unlock();
-
-            if (!vpath_copy) return -ENOMEM;
-
-            last_slash = strrchr(vpath_copy, '/');
-            if (last_slash && last_slash != vpath_copy) {
-                *last_slash = '\0';
-
-                nm_enter();
-                old_cred = override_creds(&init_cred);
-
-                if (kern_path(vpath_copy, LOOKUP_FOLLOW, &parent_path) == 0) {
-                    ret = nm_vfs_getxattr(parent_path.dentry, name, value, size);
-                    path_put(&parent_path);
-                } else {
-                    ret = -ENOENT;
-                }
-
-                revert_creds(old_cred);
-                nm_exit();
-            }
-            kfree(vpath_copy);
-            return ret;
-        }
-    }
-    rcu_read_unlock();
-    return ret;
-}
-EXPORT_SYMBOL(nomount_getxattr_hook);
-
-/* writes extended attributes directly to the real file using elevated capabilities */
-int nomount_setxattr_hook(struct dentry *dentry, const char *name, const void *value, size_t size, int flags)
-{
-    struct nomount_rule *rule;
-    struct path r_path;
-    const struct cred *old_cred;
-    int ret = -EOPNOTSUPP;
-    unsigned long ino;
-
-    if (nomount_should_skip() || !dentry || !dentry->d_inode)
-        return ret;
-
-    ino = dentry->d_inode->i_ino;
-
-    rcu_read_lock();
-    hash_for_each_possible_rcu(nomount_rules_by_real_ino, rule, real_ino_node, ino) {
-        if (rule->real_ino == ino) {
-            nm_enter();
-            old_cred = override_creds(&init_cred);
-            
-            if (kern_path(rule->real_path, LOOKUP_FOLLOW, &r_path) == 0) {
-                ret = nm_vfs_setxattr(r_path.dentry, name, value, size, flags);
-                path_put(&r_path);
-            } else {
-                ret = -ENOENT;
-            }
-            
-            revert_creds(old_cred);
-            nm_exit();
-            break; 
-        }
-    }
-    rcu_read_unlock();
-
-    return ret;
-}
-EXPORT_SYMBOL(nomount_setxattr_hook);
-
-/* spoof functions */
-
-/* spoof inode and device id */
+/**
+ * nomount_spoof_stat - Forge stat data for injected files
+ * @path: The path being evaluated
+ * @stat: The stat struct to modify
+ *
+ * Alters the returned inode and device ID to match the virtual path's 
+ * expected location, rather than exposing the physical /data identifiers.
+ */
 void nomount_spoof_stat(const struct path *path, struct kstat *stat)
 {
     struct nomount_rule *rule;
@@ -745,7 +877,14 @@ void nomount_spoof_stat(const struct path *path, struct kstat *stat)
     rcu_read_unlock();
 }
 
-/* spoof filesystem type to match the virtual origin instead of real one */
+/**
+ * nomount_spoof_statfs - Forge filesystem type data
+ * @path: The path being evaluated
+ * @buf: The statfs struct to modify
+ *
+ * Injects the correct Magic Number (e.g., ext4, erofs) to match the 
+ * virtual partition, preventing detection via filesystem type checks.
+ */
 void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
 {
     struct nomount_rule *rule;
@@ -776,7 +915,17 @@ void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf)
     rcu_read_unlock();
 }
 
-/* Spoofs device and inode IDs for memory-mapped files */
+/**
+ * nomount_spoof_mmap_metadata - Forge VMA metadata for /proc/self/maps
+ * @inode: The underlying inode of the mapped memory
+ * @dev: Pointer to the device ID variable to overwrite
+ * @ino: Pointer to the inode number variable to overwrite
+ *
+ * Ensures that shared libraries or binaries executed via NoMount show 
+ * the correct virtual device and inode in process memory maps.
+ * 
+ * Returns true if the metadata was spoofed.
+ */
 bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino)
 {
     struct nomount_rule *rule;
@@ -804,6 +953,15 @@ bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long 
 }
 EXPORT_SYMBOL(nomount_spoof_mmap_metadata);
 
+/**
+ * nomount_handle_getattr - Wrapper for vfs_getattr intercept
+ * @ret: The return code from the native vfs_getattr execution
+ * @path: The path being evaluated
+ * @stat: The stat struct populated by the kernel
+ *
+ * Applies the stat spoofing logic only if the original lookup succeeded.
+ * Returns the original return code.
+ */
 int nomount_handle_getattr(int ret, const struct path *path, struct kstat *stat)
 {
     if (likely(ret == 0) && !nomount_should_skip()) {
@@ -815,7 +973,8 @@ int nomount_handle_getattr(int ret, const struct path *path, struct kstat *stat)
 }
 EXPORT_SYMBOL(nomount_handle_getattr);
 
-/* ioctl */
+/*** IOCTL API & Module Management ***/
+
 static int nomount_ioctl_add_rule(unsigned long arg)
 {
     struct nomount_ioctl_data data;
@@ -1062,7 +1221,7 @@ static int nomount_ioctl_list_rules(unsigned long arg)
 
     rcu_read_lock();
     list_for_each_entry_rcu(rule, &nomount_rules_list, list) {
-        size_t entry_len = strlen(rule->virtual_path) + strlen(rule->real_path) + 4; // "->", "\n" and null
+        size_t entry_len = strlen(rule->virtual_path) + strlen(rule->real_path) + 4; 
 
         if (len + entry_len >= max_size - 1)
             break;
@@ -1076,9 +1235,9 @@ static int nomount_ioctl_list_rules(unsigned long arg)
         if (copy_to_user((void __user *)arg, kbuf, len))
             ret = -EFAULT;
         else
-            ret = len; // We return the number of bytes written
+            ret = len; 
     } else {
-        ret = 0; // Empty list
+        ret = 0; 
     }
 
     vfree(kbuf);
