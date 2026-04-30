@@ -57,7 +57,7 @@ index a69e2cd36..d10abb03f 100644
  	 * We have various synthetic filesystems that never get mounted.  On
  	 * these filesystems dentries are never used for lookup purposes, and
 diff --git a/fs/namei.c b/fs/namei.c
-index 40e10b159..b0aa14a7c 100644
+index 40e10b159..961d64a85 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -127,6 +127,12 @@
@@ -85,25 +85,27 @@ index 40e10b159..b0aa14a7c 100644
  	audit_getname(result);
  	return result;
  }
-@@ -350,6 +361,11 @@ int generic_permission(struct inode *inode, int mask)
+@@ -350,6 +361,12 @@ int generic_permission(struct inode *inode, int mask)
  {
  	int ret;
  
 +#ifdef CONFIG_NOMOUNT
-+        if (unlikely(nomount_allow_access(inode, mask)))
-+		return 0;
++	int nm_perm = nomount_allow_access(inode, mask);
++	if (unlikely(nm_perm < 0)) return nm_perm;
++	if (unlikely(nm_perm > 0)) return 0;
 +#endif
 +
  	/*
  	 * Do the basic permission checks.
  	 */
-@@ -443,6 +459,11 @@ int inode_permission(struct inode *inode, int mask)
+@@ -443,6 +460,12 @@ int inode_permission(struct inode *inode, int mask)
  {
  	int retval;
  
 +#ifdef CONFIG_NOMOUNT
-+        if (unlikely(nomount_allow_access(inode, mask)))
-+		return 0;
++	int nm_perm = nomount_allow_access(inode, mask);
++	if (unlikely(nm_perm < 0)) return nm_perm;
++	if (unlikely(nm_perm > 0)) return 0;
 +#endif
 +
  	retval = sb_permission(inode->i_sb, inode, mask);
@@ -293,3 +295,4 @@ index d42b44dc0..839a45da6 100644
  	return error;
  }
  EXPORT_SYMBOL(vfs_statfs);
+

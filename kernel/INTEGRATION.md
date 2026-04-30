@@ -91,8 +91,9 @@ diff --git a/fs/namei.c b/fs/namei.c
  	int ret;
  
 +#ifdef CONFIG_NOMOUNT
-+        if (unlikely(nomount_allow_access(inode, mask)))
-+		return 0;
++	int nm_perm = nomount_allow_access(inode, mask);
++	if (unlikely(nm_perm < 0)) return nm_perm;
++	if (unlikely(nm_perm > 0)) return 0;
 +#endif
 +
  	/*
@@ -103,8 +104,9 @@ diff --git a/fs/namei.c b/fs/namei.c
  	int retval;
  
 +#ifdef CONFIG_NOMOUNT
-+        if (unlikely(nomount_allow_access(inode, mask)))
-+		return 0;
++	int nm_perm = nomount_allow_access(inode, mask);
++	if (unlikely(nm_perm < 0)) return nm_perm;
++	if (unlikely(nm_perm > 0)) return 0;
 +#endif
 +
  	retval = sb_permission(inode->i_sb, inode, mask);

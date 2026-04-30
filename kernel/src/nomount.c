@@ -462,23 +462,32 @@ EXPORT_SYMBOL(nomount_handle_dpath);
  * @inode: The inode being accessed
  * @mask: The requested permission mask
  *
- * Returns 1 (true) if NoMount overrides native permission checks to 
- * allow traversal, or 0 to fallback to standard VFS permissions.
+ * Return: > 0 to bypass native checks (allow read/exec), 
+ *         < 0 to explicitly deny (block writes), 
+ *           0 to fallback to standard VFS permissions.
  */
 int nomount_allow_access(struct inode *inode, int mask)
 {
-    int allowed = 0;
+    bool is_injected, is_dir;
 
     if (!test_bit(inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom_inos))
         return 0;
 
     if (unlikely(!nomount_should_skip())) {
         nm_enter();
-        allowed = nomount_is_injected_file(inode) || nomount_is_traversal_allowed(inode, mask);
+        is_injected = nomount_is_injected_file(inode);
+        is_dir = nomount_is_traversal_allowed(inode, mask);
         nm_exit();
+
+        if (is_injected || is_dir) {
+            if (mask & (MAY_WRITE | MAY_APPEND))
+                return -EACCES;
+
+            return 1; 
+        }
     }
-    
-    return allowed;
+
+    return 0;
 }
 EXPORT_SYMBOL(nomount_allow_access);
 
