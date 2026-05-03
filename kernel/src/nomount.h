@@ -38,17 +38,6 @@
 #define NOMOUNT_BLOOM_BITS 20
 #define NOMOUNT_BLOOM_SIZE (1 << NOMOUNT_BLOOM_BITS)
 
-atomic_t nomount_enabled = ATOMIC_INIT(0);
-EXPORT_SYMBOL(nomount_enabled);
-#define NOMOUNT_DISABLED() (atomic_read(&nomount_enabled) == 0)
-
-struct linux_dirent {
-    unsigned long   d_ino;
-    unsigned long   d_off;
-    unsigned short  d_reclen;
-    char        d_name[];
-};
-
 static DEFINE_HASHTABLE(nomount_dirs_ht, NOMOUNT_HASH_BITS);
 static DEFINE_HASHTABLE(nomount_uid_ht, NOMOUNT_HASH_BITS);
 static DEFINE_HASHTABLE(nomount_rules_by_vpath, NOMOUNT_HASH_BITS);

@@ -52,7 +52,6 @@ diff --git a/fs/Makefile b/fs/Makefile
     *   In `namei.c`, the `nomount_getname_hook` hook is executed immediately after copying the path from the user. If the path matches an active rule, the original string is replaced with the actual path of the redirected file. The rest of the kernel processes the call without knowing that it was tricked.
     *   In `namei.c`, the `nomount_allow_access` hook forces a return of `0` (Success) to prevent native DAC/MAC checks (like SELinux) from blocking access to our injected folders.
     *   In `open.c`, the `nomount_handle_faccessat` hook intercepts early calls that use Directory File Descriptors (`dfd`) to resolve relative paths (e.g., `openat(dir_fd, "su")`). It reconstructs the absolute path and checks it against active rules. If it matches, it forces an Early Exit returning the correct access rights (spoofing Read-Only for `MAY_WRITE`), thus completely neutralizing evasion techniques that bypass absolute path filters.
-    *   In `open.c`, if a process tries to check whether an injected file is writable (`MAY_WRITE`), the hook returns `-EACCES`, perfectly mimicking the behavior of a read-only mounted partition.
 *   **Integration:**
 
 #### `fs/namei.c`:
@@ -125,8 +124,6 @@ diff --git a/fs/open.c b/fs/open.c
  }
  
 +#ifdef CONFIG_NOMOUNT
-+extern bool nomount_should_skip(void);
-+extern bool nomount_is_injected_file(struct inode *inode);
 +extern bool nomount_handle_faccessat(int dfd, const char __user *filename,
 +									 int mode, unsigned int lookup_flags, long *out_res);
 +#endif
@@ -134,36 +131,22 @@ diff --git a/fs/open.c b/fs/open.c
  static long do_faccessat(int dfd, const char __user *filename, int mode, int flags)
  {
  	struct path path;
-@@ -xxx,6 +xx,xx @@ static long do_faccessat(int dfd, const char __user *filename, int mode, int fla
- 	unsigned int lookup_flags = LOOKUP_FOLLOW;
- 	const struct cred *old_cred = NULL;
+@@ -xxx,xx +xxx,xx @@ static long do_faccessat(int dfd, const char __user *filename, int mode, int fla
+ 			return -ENOMEM;
+ 	}
  
 +#ifdef CONFIG_NOMOUNT
 +	long nm_res;
-+	if (nomount_handle_faccessat(dfd, filename, mode, lookup_flags, &nm_res))
++	if (nomount_handle_faccessat(dfd, filename, mode, lookup_flags, &nm_res)) {
++		revert_creds(old_cred);
++		put_cred(override_cred);
 +		return nm_res;
++	}
 +#endif
 +
- 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
- 		return -EINVAL;
- 
-@@ -xxx,xx +xxx,xx @@ static long do_faccessat(int dfd, const char __user *filename, int mode, int fla
- 
- 	inode = d_backing_inode(path.dentry);
- 
-+#ifdef CONFIG_NOMOUNT
-+    /* spoof writable attribute */
-+    if (!nomount_should_skip() && nomount_is_injected_file(inode)) {
-+        if (mode & MAY_WRITE) {
-+            res = -EACCES; // non-writable
-+            goto out_path_release;
-+        }
-+    }
-+#endif
-+
- 	if ((mode & MAY_EXEC) && S_ISREG(inode->i_mode)) {
- 		/*
- 		 * MAY_EXEC on regular files is denied if the fs is mounted
+ retry:
+ 	res = user_path_at(dfd, filename, lookup_flags, &path);
+ 	if (res)
 ```
 
 ---
@@ -210,9 +193,9 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 
 ## 4. Directory Listing
 *   **File:** `fs/readdir.c`
-*   **Hooks:** `sys_getdents`, `ksys_getdents64`, `compat_sys_getdents`
-*   **Purpose:** Allow commands like `ls` or listing APIs to see virtual files injected into legitimate system directories.
-*   **Mechanism:** To avoid *Bootloops* or *Deadlocks* when interacting with `iterate_dir` locks, NoMount injects the data in a "Post-Iteration" manner. The `nomount_inject_post_getdents` macro allows the kernel to read the real physical files first and, just before returning the buffer to the user, inject the fake `linux_dirent` structures at the end of the memory buffer.
+*   **Hooks:** `iterate_dir` (via the `nomount_handle_iterate_dir` macro)
+*   **Purpose:** Allow commands like `ls` or listing APIs to seamlessly see virtual files injected into legitimate system directories.
+*   **Mechanism:** Instead of manually manipulating userspace buffers in the `getdents` syscalls, NoMount now hooks directly into the directory iteration engine (`iterate_dir`). The wrapper macro acts as a smart proxy: it first allows the native filesystem to read the physical disk without interference. By tracking the directory offset (`ctx->pos`), NoMount detects when the native iteration reaches the End of File (EOF) or pauses. Once the physical files are fully processed, it calls `nomount_vfs_inject_dir` to seamlessly inject virtual entries using the kernel's native `dir_emit()` function.
 *   **Integration:**
 
 #### `fs/readdir.c`:
@@ -221,56 +204,53 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 diff --git a/fs/readdir.c b/fs/readdir.c
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
-@@ -xx,xx +xx,xx @@
+@@ -xx,x +36,xx @@
  	unsafe_copy_to_user(dst, src, len, label);		\
  } while (0)
  
 +#ifdef CONFIG_NOMOUNT
-+extern void nomount_inject_dents(struct file *file, void __user **dirent, int *count, loff_t *pos, int compat);
++extern void nomount_vfs_inject_dir(struct file *file, struct dir_context *ctx);
++extern bool nomount_should_skip(void);
++extern bool nomount_is_traversal_allowed(struct inode *inode, int mask);
 +
-+#define nomount_inject_post_getdents(file, buf_ptr, init_count, is_compat, error) \
-+do {                                                                              \
-+    if ((error) >= 0 && !signal_pending(current)) {                               \
-+        nomount_inject_dents((file), (void __user **)&(buf_ptr)->current_dir,     \
-+                             &(buf_ptr)->count, &(file)->f_pos, (is_compat));     \
-+        (error) = (init_count) - (buf_ptr)->count;                                \
-+    }                                                                             \
++#define nomount_handle_iterate_dir(file, ctx, shared, res)          \
++do {                                                                \
++    loff_t _old_pos = (ctx)->pos;                                   \
++    if ((ctx)->pos >= 0x7000000 && !nomount_should_skip() &&        \
++        nomount_is_traversal_allowed(file_inode(file), 0)) {        \
++        (res) = 0;                                                  \
++    } else {                                                        \
++        if (shared)                                                 \
++            (res) = (file)->f_op->iterate_shared((file), (ctx));    \
++        else                                                        \
++            (res) = (file)->f_op->iterate((file), (ctx));           \
++    }                                                               \
++                                                                    \
++    if ((res) >= 0 && !nomount_should_skip()) {                     \
++        if ((ctx)->pos == _old_pos || (ctx)->pos >= 0x7000000) {    \
++            nomount_vfs_inject_dir((file), (ctx));                  \
++        }                                                           \
++    }                                                               \
 +} while (0)
 +#endif
-+
  
  int iterate_dir(struct file *file, struct dir_context *ctx)
  {
-@@ -xxx,xx +xxx,xx @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
- 		else
- 			error = count - buf.count;
- 	}
+@@ -xx,xx +xx,xx @@ int iterate_dir(struct file *file, struct dir_context *ctx)
+ 	res = -ENOENT;
+ 	if (!IS_DEADDIR(inode)) {
+ 		ctx->pos = file->f_pos;
 +#ifdef CONFIG_NOMOUNT
-+	nomount_inject_post_getdents(f.file, &buf, count, 0, error);
-+#endif
- 	fdput_pos(f);
- 	return error;
- }
-@@ -xxx,xx +xxx,xx @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
++		nomount_handle_iterate_dir(file, ctx, shared, res);
++#else
+ 		if (shared)
+ 			res = file->f_op->iterate_shared(file, ctx);
  		else
- 			error = count - buf.count;
- 	}
-+#ifdef CONFIG_NOMOUNT
-+	nomount_inject_post_getdents(f.file, &buf, count, 0, error);
+ 			res = file->f_op->iterate(file, ctx);
 +#endif
- 	fdput_pos(f);
- 	return error;
- }
-@@ -xxx,xx +xxx,xx @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
- 		else
- 			error = count - buf.count;
- 	}
-+#ifdef CONFIG_NOMOUNT
-+	nomount_inject_post_getdents(f.file, &buf, count, 1, error);
-+#endif
- 	fdput_pos(f);
- 	return error;
- }
+ 		file->f_pos = ctx->pos;
+ 		fsnotify_access(file);
+ 		file_accessed(file);
 ```
 
 ---
