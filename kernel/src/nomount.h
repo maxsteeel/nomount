@@ -67,6 +67,7 @@ struct nomount_rule {
     dev_t real_dev;
     char *virtual_path;
     char *real_path;
+    char *parent_vpath;
     size_t vp_len;
     long v_fs_type;
     u32 v_hash;
