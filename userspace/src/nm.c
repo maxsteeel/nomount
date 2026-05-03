@@ -321,19 +321,14 @@ void c_main(long *sp) {
 
                             unsigned int st_tmp[32];
                             long stat_res = sys4(SYS_FSTATAT, AT_FDCWD, (long)v_ptr, (long)st_tmp, AT_SYMLINK_NOFOLLOW);
-                            if (stat_res == 0) {
+                            if (stat_res != 0) {
                                 struct ioctl_data step_data = {0};
-                                unsigned long long *st_large = (unsigned long long *)st_tmp;
                                 #if defined(__aarch64__)
                                     step_data.vp = (unsigned long)v_ptr;
                                     step_data.rp = (r_cut > 0 && r_cut < r_len) ? (unsigned long)r_ptr : (unsigned long)"/";
-                                    step_data.real_dev = st_large[0];
-                                    step_data.real_ino = st_large[1];
                                 #else
                                     step_data.vp_lo = (unsigned int)v_ptr;
                                     step_data.rp_lo = (r_cut > 0 && r_cut < r_len) ? (unsigned int)r_ptr : (unsigned int)"/";
-                                    step_data.real_dev_lo = ((unsigned int*)st_tmp)[0]; 
-                                    step_data.real_ino_lo = ((unsigned int*)st_tmp)[3];
                                 #endif
                                 step_data.flags = NM_ACTIVE | NM_DIR;
                                 sys3(SYS_IOCTL, fd, IOCTL_ADD, (long)&step_data);
