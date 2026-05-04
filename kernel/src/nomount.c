@@ -35,80 +35,84 @@ struct linux_dirent {
     char        d_name[];
 };
 
-/*** Bloom Filter Implementation ***/
+/*** Counting Bloom Filter Implementation ***/
 
 /**
- * nomount_bloom_add_path - Add a path to the bloom filter
- * @name: The string path to hash and add
+ * nomount_bloom_add_path - Add a path to the counting bloom filter
+ * @name: The path to add
  */
 static inline void nomount_bloom_add_path(const char *name)
 {
     size_t len = strlen(name);
     u32 h1 = jhash(name, len, 0) & (NOMOUNT_BLOOM_SIZE - 1);
     u32 h2 = jhash(name, len, 1) & (NOMOUNT_BLOOM_SIZE - 1);
-    
-    set_bit(h1, nomount_bloom_paths);
-    set_bit(h2, nomount_bloom_paths);
+
+    if (nomount_bloom_paths[h1] < 65535) nomount_bloom_paths[h1]++;
+    if (nomount_bloom_paths[h2] < 65535) nomount_bloom_paths[h2]++;
 }
 
 /**
- * nomount_bloom_test_path - Check if a path might exist in the rules
- * @name: The string path to test
- *
- * Returns true if the path might be tracked, false if it is definitely not.
+ * nomount_bloom_del_path - Remove a path from the counting bloom filter
+ * @name: The path to remove
  */
-static inline bool nomount_bloom_test_path(const char *name)
+static inline void nomount_bloom_del_path(const char *name)
 {
     size_t len = strlen(name);
     u32 h1 = jhash(name, len, 0) & (NOMOUNT_BLOOM_SIZE - 1);
     u32 h2 = jhash(name, len, 1) & (NOMOUNT_BLOOM_SIZE - 1);
-    
-    return test_bit(h1, nomount_bloom_paths) && test_bit(h2, nomount_bloom_paths);
+
+    if (nomount_bloom_paths[h1] > 0) nomount_bloom_paths[h1]--;
+    if (nomount_bloom_paths[h2] > 0) nomount_bloom_paths[h2]--;
 }
 
 /**
- * nomount_bloom_add_ino - Add an inode number to the bloom filter
+ * nomount_bloom_test_path - Check if a path is likely in the bloom filter
+ * @name: The path to check
+ *
+ * Returns true if the path is likely present, false if definitely not present.
+ */
+static inline bool nomount_bloom_test_path(const char *name)
+{
+    size_t len = strlen(name);
+    if (unlikely(!nomount_bloom_paths)) return false;
+    u32 h1 = jhash(name, len, 0) & (NOMOUNT_BLOOM_SIZE - 1);
+    u32 h2 = jhash(name, len, 1) & (NOMOUNT_BLOOM_SIZE - 1);
+
+    return (nomount_bloom_paths[h1] > 0) && (nomount_bloom_paths[h2] > 0);
+}
+
+/**
+ * nomount_bloom_add_ino - Add an inode number to the counting bloom filter
  * @ino: The inode number to add
  */
+
 static inline void nomount_bloom_add_ino(unsigned long ino)
 {
-    set_bit(ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom_inos);
+    u32 h = ino & (NOMOUNT_BLOOM_SIZE - 1);
+    if (nomount_bloom_inos[h] < 65535) nomount_bloom_inos[h]++;
 }
 
 /**
- * nomount_bloom_rebuild - Reconstruct bloom filters from active rules
- *
- * Called after a rule is deleted to clear false positives.
+ * nomount_bloom_del_ino - Remove an inode number from the counting bloom filter
+ * @ino: The inode number to remove
  */
-static void nomount_bloom_rebuild(void)
+static inline void nomount_bloom_del_ino(unsigned long ino)
 {
-    struct nomount_rule *rule;
-    struct nomount_dir_node *dir;
-    int bkt;
-    char *slash;
-    
-    bitmap_zero(nomount_bloom_paths, NOMOUNT_BLOOM_SIZE);
-    bitmap_zero(nomount_bloom_inos, NOMOUNT_BLOOM_SIZE);
+    u32 h = ino & (NOMOUNT_BLOOM_SIZE - 1);
+    if (nomount_bloom_inos[h] > 0) nomount_bloom_inos[h]--;
+}
 
-    list_for_each_entry(rule, &nomount_rules_list, list) {
-        nomount_bloom_add_path(rule->virtual_path);
-        if (rule->real_path)
-            nomount_bloom_add_path(rule->real_path);
-
-        slash = strrchr(rule->virtual_path, '/');
-        if (slash && *(slash + 1) != '\0') {
-            nomount_bloom_add_path(slash + 1);
-        }
-            
-        if (rule->real_ino)
-            nomount_bloom_add_ino(rule->real_ino);
-        if (rule->v_ino)
-            nomount_bloom_add_ino(rule->v_ino);
-    }
-
-    hash_for_each(nomount_dirs_ht, bkt, dir, node) {
-        nomount_bloom_add_ino(dir->dir_ino);
-    }
+/**
+ * nomount_bloom_test_ino - Check if an inode number is likely in the bloom filter
+ * @ino: The inode number to check
+ *
+ * Returns true if the inode is likely present, false if definitely not present.
+ */
+static inline bool nomount_bloom_test_ino(unsigned long ino)
+{
+    u32 h = ino & (NOMOUNT_BLOOM_SIZE - 1);
+    if (unlikely(!nomount_bloom_paths)) return false;
+    return nomount_bloom_inos[h] > 0;
 }
 
 /*** Verification & Compatibility Checks ***/
@@ -260,13 +264,16 @@ const char *nomount_get_static_vpath(struct inode *inode) {
 EXPORT_SYMBOL(nomount_get_static_vpath);
 
 /**
- * nomount_collect_parents - Track parent directories of a real path
+ * __nomount_collect_parents - Track parent directories of a real path
  * @real_path: The absolute path of the underlying target file
  *
  * Recursively resolves and registers parent directory inodes to ensure
  * traversal permissions are granted during lookup operations.
+ *
+ * This function assumes the caller holds the nomount_write_mutex 
+ * and is not in a recursive context. 
  */
-static void nomount_collect_parents(const char *real_path)
+static void __nomount_collect_parents(const char *real_path)
 {
     char *path_tmp, *p;
     struct path kp;
@@ -292,7 +299,6 @@ static void nomount_collect_parents(const char *real_path)
             path_put(&kp);
             nm_exit();
 
-            mutex_lock(&nomount_write_mutex);
             {
                 struct nomount_dir_node *curr;
                 bool exists = false;
@@ -315,7 +321,6 @@ static void nomount_collect_parents(const char *real_path)
                     }
                 }
             }
-            mutex_unlock(&nomount_write_mutex);
         } else {
             nm_exit();
         }
@@ -431,23 +436,6 @@ static char *nomount_build_path_from_pwd(const char *rel_name)
 }
 
 /**
- * nomount_rule_free_rcu - Safely deallocate a rule after RCU grace period
- * @rp: Pointer to the rcu_head embedded within the nomount_rule
- *
- * This callback is invoked by the kernel once all concurrent RCU readers
- * (e.g., path lookups, permission checks) have finished traversing the
- * rule that was removed from the active lists. It safely frees the 
- * associated path strings and the rule structure itself.
- */
-static void nomount_rule_free_rcu(struct rcu_head *rp) {
-    struct nomount_rule *rule = container_of(rp, struct nomount_rule, rcu);
-    kfree(rule->virtual_path);
-    kfree(rule->real_path);
-    kfree(rule->parent_vpath);
-    kfree(rule);
-} 
-
-/**
  * nomount_resolve_path - Look up the real physical path for a virtual path
  * @pathname: The requested virtual path
  *
@@ -502,7 +490,8 @@ char *nomount_handle_dpath(const struct path *path, char *buf, int buflen)
     int len;
 
     if (unlikely(!path || !path->dentry || !path->dentry->d_inode)) return NULL;
-    if (unlikely(!test_bit(path->dentry->d_inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom_inos)))
+    if (unlikely(nomount_num_rules() == 0)) return NULL;
+    if (unlikely(!nomount_bloom_test_ino(path->dentry->d_inode->i_ino)))
         return NULL;
 
     nm_enter();
@@ -539,7 +528,8 @@ int nomount_allow_access(struct inode *inode, int mask)
     bool is_injected, is_dir;
 
     if (!inode || IS_ERR_OR_NULL(inode)) return 0;
-    if (unlikely(!test_bit(inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom_inos)))
+    if (unlikely(nomount_num_rules() == 0)) return 0;
+    if (unlikely(!nomount_bloom_test_ino(inode->i_ino)))
         return 0;
 
     if (unlikely(!nomount_should_skip())) {
@@ -855,22 +845,23 @@ void nomount_vfs_inject_dir(struct file *file, struct dir_context *ctx)
 EXPORT_SYMBOL(nomount_vfs_inject_dir);
 
 /**
- * nomount_auto_inject_parent - Create a fake directory entry node
+ * __nomount_auto_inject_parent - Create a fake directory entry node
  * @parent_ino: Inode of the native parent directory
  * @name: Name of the child entry to inject
  * @type: Directory entry type (e.g., DT_REG, DT_DIR)
  * @full_v_path: The complete virtual path for hashing
  *
  * Automatically tracks new entries to be injected during getdents calls.
+ * This function assumes the caller holds the nomount_write_mutex
+ * and is not in a recursive context.
  */
-static void nomount_auto_inject_parent(unsigned long parent_ino, const char *name, unsigned char type, const char *full_v_path)
+static void __nomount_auto_inject_parent(unsigned long parent_ino, const char *name, unsigned char type, const char *full_v_path)
 {
     struct nomount_dir_node *dir_node = NULL, *curr;
     struct nomount_child_name *child;
 
     if (unlikely(nomount_num_dirs() == 0)) return;
 
-    mutex_lock(&nomount_write_mutex);
     hash_for_each_possible(nomount_dirs_ht, curr, node, parent_ino) {
         if (curr->dir_ino == parent_ino) {
             dir_node = curr;
@@ -911,7 +902,6 @@ static void nomount_auto_inject_parent(unsigned long parent_ino, const char *nam
             }
         }
     }
-    mutex_unlock(&nomount_write_mutex);
 }
 
 /*** Metadata Spoofing ***/
@@ -1004,7 +994,9 @@ bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long 
     if (unlikely(!inode || !dev || !ino || nomount_should_skip()))
         return false;
 
-    if (!test_bit(inode->i_ino & (NOMOUNT_BLOOM_SIZE - 1), nomount_bloom_inos))
+    if (unlikely(nomount_num_rules() == 0)) return false;
+
+    if (unlikely(!nomount_bloom_test_ino(inode->i_ino)))
         return false;
 
     rcu_read_lock();
@@ -1047,7 +1039,7 @@ EXPORT_SYMBOL(nomount_handle_getattr);
 static int nomount_ioctl_add_rule(unsigned long arg)
 {
     struct nomount_ioctl_data data;
-    struct nomount_rule *rule;
+    struct nomount_rule *rule, *existing;
     char *v_path, *r_path, *parent_name, *slash;
     struct path path, p_path;
     struct kstatfs tmp_stfs;
@@ -1063,8 +1055,19 @@ static int nomount_ioctl_add_rule(unsigned long arg)
     if (IS_ERR(v_path) || IS_ERR(r_path)) return -ENOMEM;
     hash = full_name_hash(NULL, v_path, strlen(v_path));
 
+    mutex_lock(&nomount_write_mutex);
+    hash_for_each_possible(nomount_rules_by_vpath, existing, vpath_node, hash) {
+        if (existing->v_hash == hash && strcmp(existing->virtual_path, v_path) == 0) {
+            mutex_unlock(&nomount_write_mutex);
+            kfree(v_path); 
+            kfree(r_path);
+            return -EEXIST;
+        }
+    }
+
     rule = kzalloc(sizeof(*rule), GFP_KERNEL);
     if (!rule) {
+        mutex_unlock(&nomount_write_mutex);
         kfree(v_path); kfree(r_path);
         return -ENOMEM;
     }
@@ -1079,6 +1082,7 @@ static int nomount_ioctl_add_rule(unsigned long arg)
         else if (p_slash == rule->parent_vpath) 
             rule->parent_vpath[1] = '\0';
     }
+
     rule->vp_len = strlen(v_path);
     rule->v_hash = hash;
     rule->real_ino = data.real_ino;
@@ -1115,7 +1119,7 @@ static int nomount_ioctl_add_rule(unsigned long arg)
                 }
 
                 p_ino = d_backing_inode(p_path.dentry)->i_ino;
-                nomount_auto_inject_parent(p_ino, slash + 1, 
+                __nomount_auto_inject_parent(p_ino, slash + 1, 
                     (data.flags & NM_FLAG_IS_DIR) ? DT_DIR : DT_REG, v_path);
                 path_put(&p_path);
             }
@@ -1123,30 +1127,14 @@ static int nomount_ioctl_add_rule(unsigned long arg)
         kfree(parent_name);
     }
 
-    nomount_collect_parents(r_path);
+    __nomount_collect_parents(r_path);
     nm_exit();
-    
-    mutex_lock(&nomount_write_mutex);
-
-    {
-        struct nomount_rule *existing;
-        hash_for_each_possible(nomount_rules_by_vpath, existing, vpath_node, hash) {
-            if (existing->v_hash == hash && strcmp(existing->virtual_path, v_path) == 0) {
-                mutex_unlock(&nomount_write_mutex);
-                kfree(rule->virtual_path); 
-                kfree(rule->real_path);
-                kfree(rule);
-                return -EEXIST;
-            }
-        }
-    }
 
     nomount_bloom_add_path(v_path);
     if (r_path) nomount_bloom_add_path(r_path);
     if (rule->real_ino) nomount_bloom_add_ino(rule->real_ino);
     if (rule->v_ino) nomount_bloom_add_ino(rule->v_ino);
 
-    /* Add basename to bloom filter to support fast relative path lookups */
     slash = strrchr(v_path, '/');
     if (slash && *(slash + 1) != '\0') {
         nomount_bloom_add_path(slash + 1);
@@ -1155,7 +1143,6 @@ static int nomount_ioctl_add_rule(unsigned long arg)
     hash_add_rcu(nomount_rules_by_vpath, &rule->vpath_node, hash);
     if (rule->real_ino)
         hash_add_rcu(nomount_rules_by_real_ino, &rule->real_ino_node, rule->real_ino);
-
     if (rule->v_ino)
         hash_add_rcu(nomount_rules_by_v_ino, &rule->v_ino_node, rule->v_ino);
 
@@ -1170,9 +1157,12 @@ static int nomount_ioctl_del_rule(unsigned long arg)
 {
     struct nomount_ioctl_data data;
     struct nomount_rule *rule, *victim = NULL;
+    struct nomount_dir_node *dir;
+    struct nomount_child_name *child, *tmp_child, *victim_child = NULL;
     struct hlist_node *tmp;
     char *v_path;
     u32 hash;
+    int bkt;
 
     if (copy_from_user(&data, (void __user *)arg, sizeof(data)))
         return -EFAULT;
@@ -1187,26 +1177,60 @@ static int nomount_ioctl_del_rule(unsigned long arg)
     hash = full_name_hash(NULL, v_path, strlen(v_path));
 
     mutex_lock(&nomount_write_mutex);
-    hash_for_each_possible_safe(nomount_rules_by_vpath,
-                                rule, tmp, vpath_node, hash) {
+    hash_for_each_possible_safe(nomount_rules_by_vpath, rule, tmp, vpath_node, hash) {
         if (strcmp(rule->virtual_path, v_path) == 0) {
             rule->flags &= ~NM_FLAG_ACTIVE;
             hash_del_rcu(&rule->vpath_node);
-            if (rule->real_ino)
+            
+            nomount_bloom_del_path(rule->virtual_path);
+            if (rule->real_path) nomount_bloom_del_path(rule->real_path);
+            
+            char *slash = strrchr(rule->virtual_path, '/');
+            if (slash && *(slash + 1) != '\0') {
+                nomount_bloom_del_path(slash + 1);
+            }
+
+            if (rule->real_ino) {
                 hash_del_rcu(&rule->real_ino_node);
-            if (rule->v_ino)
+                nomount_bloom_del_ino(rule->real_ino);
+            }
+            if (rule->v_ino) {
                 hash_del_rcu(&rule->v_ino_node);
+                nomount_bloom_del_ino(rule->v_ino);
+            }
+
             list_del_rcu(&rule->list);
             victim = rule;
-            nomount_bloom_rebuild();
             atomic_dec(&nm_active_rules);
+
+            hash_for_each(nomount_dirs_ht, bkt, dir, node) {
+                list_for_each_entry_safe(child, tmp_child, &dir->children_names, list) {
+                    if (child->fake_ino == hash) {
+                        list_del_rcu(&child->list);
+                        victim_child = child;
+                        goto ghost_found;
+                    }
+                }
+            }
+ghost_found:
             break;
         }
     }
     mutex_unlock(&nomount_write_mutex);
 
     if (victim) {
-        call_rcu(&victim->rcu, nomount_rule_free_rcu);
+        synchronize_rcu();
+
+        if (victim_child) {
+            kfree(victim_child->name);
+            kfree(victim_child);
+        }
+
+        kfree(victim->parent_vpath);
+        kfree(victim->virtual_path);
+        kfree(victim->real_path);
+        kfree(victim);
+        
         kfree(v_path);
         return 0;
     }
@@ -1258,8 +1282,8 @@ static int nomount_ioctl_clear_rules(void)
         list_add_tail(&dir_node->cleanup_list, &dir_victims);
     }
 
-    bitmap_zero(nomount_bloom_paths, NOMOUNT_BLOOM_SIZE);
-    bitmap_zero(nomount_bloom_inos, NOMOUNT_BLOOM_SIZE);
+    memset(nomount_bloom_paths, 0, NOMOUNT_BLOOM_SIZE * sizeof(unsigned short));
+    memset(nomount_bloom_inos, 0, NOMOUNT_BLOOM_SIZE * sizeof(unsigned short));
 
     atomic_set(&nm_active_rules, 0);
     atomic_set(&nm_active_dirs, 0);
@@ -1270,19 +1294,18 @@ static int nomount_ioctl_clear_rules(void)
 
     list_for_each_entry_safe(dir_node, tmp_dir, &dir_victims, cleanup_list) {
         list_del(&dir_node->cleanup_list);
-
-        list_for_each_entry_safe(child, tmp_child, &dir_node->children_names, list) {
-            list_del(&child->list);
-            kfree(child->name);
-            kfree(child);
-        }
-
         kfree(dir_node);
+    }
+
+    list_for_each_entry_safe(child, tmp_child, &dir_victims_children, cleanup_list) {
+        list_del(&child->cleanup_list);
+        kfree(child->name);
+        kfree(child);
     }
 
     list_for_each_entry_safe(rule, tmp_rule, &rule_victims, cleanup_list) {
         list_del(&rule->cleanup_list);
-        
+        kfree(rule->parent_vpath);
         kfree(rule->virtual_path);
         kfree(rule->real_path);
         kfree(rule);
@@ -1291,11 +1314,6 @@ static int nomount_ioctl_clear_rules(void)
     list_for_each_entry_safe(uid_node, tmp_uid, &uid_victims, cleanup_list) {
         list_del(&uid_node->cleanup_list);
         kfree(uid_node);
-    }
-
-    list_for_each_entry_safe(child, tmp_child, &dir_victims_children, cleanup_list) {
-        kfree(child->name);
-        kfree(child);
     }
 
     return 0;
@@ -1432,6 +1450,17 @@ static int __init nomount_init(void) {
     hash_init(nomount_dirs_ht);
     hash_init(nomount_uid_ht);
 
+    /* Initialize bloom filters */
+    nomount_bloom_paths = vzalloc(NOMOUNT_BLOOM_SIZE * sizeof(unsigned short));
+    nomount_bloom_inos = vzalloc(NOMOUNT_BLOOM_SIZE * sizeof(unsigned short));
+
+    if (!nomount_bloom_paths || !nomount_bloom_inos) {
+        pr_err("NoMount: Error allocating memory for bloom filters\n");
+        if (nomount_bloom_paths) vfree(nomount_bloom_paths);
+        if (nomount_bloom_inos) vfree(nomount_bloom_inos);
+        return -ENOMEM;
+    }
+
     ret = misc_register(&nomount_device);
     if (ret) return ret;
     atomic_set(&nomount_enabled, 1);
@@ -1440,4 +1469,3 @@ static int __init nomount_init(void) {
 }
 
 fs_initcall(nomount_init);
-

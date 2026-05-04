@@ -49,8 +49,8 @@ extern struct cred init_cred;
 struct kstatfs;
 
 /* filter bloom logic */
-static DECLARE_BITMAP(nomount_bloom_paths, NOMOUNT_BLOOM_SIZE);
-static DECLARE_BITMAP(nomount_bloom_inos, NOMOUNT_BLOOM_SIZE);
+static unsigned short *nomount_bloom_paths = NULL;
+static unsigned short *nomount_bloom_inos = NULL;
 
 struct nomount_ioctl_data {
     char __user *virtual_path;
@@ -163,4 +163,3 @@ static inline bool nm_is_recursive(void) {
 }
 
 #endif /* _LINUX_NOMOUNT_H */
-
