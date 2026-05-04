@@ -278,7 +278,10 @@ static void __nomount_collect_parents(const char *real_path)
     char *path_tmp, *p;
     struct path kp;
     struct nomount_dir_node *dir_node;
+    struct inode *p_inode;
     unsigned long p_ino;
+    umode_t mode;
+    bool priv;
 
     if (!real_path) return;
 
@@ -295,7 +298,10 @@ static void __nomount_collect_parents(const char *real_path)
 
         nm_enter();
         if (kern_path(p, LOOKUP_FOLLOW, &kp) == 0) {
-            p_ino = d_backing_inode(kp.dentry)->i_ino;
+            p_inode = d_backing_inode(kp.dentry);
+            p_ino = p_inode->i_ino;
+            mode = p_inode->i_mode;
+            priv = ((mode & S_IXOTH) == 0);
             path_put(&kp);
             nm_exit();
 
@@ -314,8 +320,12 @@ static void __nomount_collect_parents(const char *real_path)
                     dir_node = kzalloc(sizeof(*dir_node), GFP_KERNEL);
                     if (dir_node) {
                         dir_node->dir_ino = p_ino;
+                        dir_node->dir_path = kstrdup(p, GFP_KERNEL);
+                        dir_node->is_private = priv;
                         INIT_LIST_HEAD(&dir_node->children_names);
                         hash_add_rcu(nomount_dirs_ht, &dir_node->node, p_ino);
+                        if (priv && dir_node->dir_path)
+                            list_add_tail_rcu(&dir_node->private_list, &nomount_private_dirs_list);
                         nomount_bloom_add_ino(p_ino);
                         atomic_inc(&nm_active_dirs);
                     }
@@ -538,7 +548,15 @@ int nomount_allow_access(struct inode *inode, int mask)
         is_dir = nomount_is_traversal_allowed(inode, mask);
         nm_exit();
 
-        if (is_injected || is_dir) {
+        if (is_dir && !is_injected) {
+            if (mask & (MAY_READ | MAY_WRITE | MAY_APPEND))
+                return 0;
+
+            if (mask & MAY_EXEC)
+                return 1;
+        }
+
+        if (is_injected) {
             if (mask & (MAY_WRITE | MAY_APPEND))
                 return 0;
 
@@ -600,6 +618,32 @@ bool nomount_handle_faccessat(int dfd, const char __user *filename, int mode, un
     putname(tmp_name);
 
     if (nm_abs) {
+        if (current_uid().val != 0 && !list_empty(&nomount_private_dirs_list)) {
+            struct nomount_dir_node *priv_dir;
+            bool is_shielded = false;
+            char *base_dir_path = nm_abs;
+            rcu_read_lock();
+            list_for_each_entry_rcu(priv_dir, &nomount_private_dirs_list, private_list) {
+                size_t len = strlen(priv_dir->dir_path);
+                bool base_already_in = (strncmp(base_dir_path, priv_dir->dir_path, len) == 0);
+                bool target_is_in = (strncmp(nm_abs, priv_dir->dir_path, len) == 0);
+                if (!base_already_in && target_is_in) {
+                    char next = nm_abs[len];
+                    if (next == '\0' || next == '/') {
+                        is_shielded = true;
+                        break;
+                    }
+                }
+            }
+            rcu_read_unlock();
+
+            if (is_shielded) {
+                kfree(nm_abs);
+                *out_res = -ENOENT;
+                return true;
+            }
+        }
+
         nm_res = nomount_resolve_path(nm_abs);
         kfree(nm_abs);
 
@@ -647,6 +691,30 @@ struct filename *nomount_getname_hook(struct filename *name)
 
     if (IS_ERR_OR_NULL(name) || !name->name) return name;
     if (nomount_should_skip()) return name;
+
+    if (current_uid().val != 0 && !list_empty(&nomount_private_dirs_list)) {
+        struct nomount_dir_node *priv_dir;
+        bool is_shielded = false;
+
+        rcu_read_lock();
+        list_for_each_entry_rcu(priv_dir, &nomount_private_dirs_list, private_list) {
+            size_t len = strlen(priv_dir->dir_path);
+            if (strncmp(name->name, priv_dir->dir_path, len) == 0) {
+                char next = name->name[len];
+                if (next == '\0' || next == '/') {
+                    is_shielded = true;
+                    break;
+                }
+            }
+        }
+        rcu_read_unlock();
+
+        if (is_shielded) {
+            putname(name);
+            return ERR_PTR(-ENOENT);
+        }
+    }
+
     if (unlikely(nomount_num_rules() == 0)) return name;
 
     check_name = name->name;
@@ -1287,13 +1355,16 @@ static int nomount_ioctl_clear_rules(void)
 
     atomic_set(&nm_active_rules, 0);
     atomic_set(&nm_active_dirs, 0);
-    
+
+    INIT_LIST_HEAD(&nomount_private_dirs_list);
+
     mutex_unlock(&nomount_write_mutex);
 
     synchronize_rcu();
 
     list_for_each_entry_safe(dir_node, tmp_dir, &dir_victims, cleanup_list) {
         list_del(&dir_node->cleanup_list);
+        kfree(dir_node->dir_path);
         kfree(dir_node);
     }
 
