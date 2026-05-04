@@ -1,12 +1,37 @@
-import { exec, toast, listPackages, getPackagesInfo } from 'kernelsu-alt';
-import '@material/web/button/filled-button.js';
-import '@material/web/button/outlined-button.js';
-import '@material/web/iconbutton/outlined-icon-button.js';
-import '@material/web/icon/icon.js';
-import '@material/web/iconbutton/icon-button.js';
-import '@material/web/switch/switch.js';
-import '@material/web/fab/fab.js';
- 
+// ── KernelSU exec wrapper ──────────
+let _cbId = 0;
+function exec(cmd) {
+  return new Promise((resolve) => {
+    const key = `_ksu_cb_${Date.now()}_${_cbId++}`;
+    window[key] = (errno, stdout, stderr) => {
+      delete window[key];
+      resolve({ errno, stdout: stdout || '', stderr: stderr || '' });
+    };
+    if (typeof ksu !== 'undefined' && ksu.exec) {
+      ksu.exec(cmd, '{}', key);
+    } else {
+      resolve({ errno: 1, stdout: '', stderr: 'ksu not defined' });
+    }
+  });
+}
+
+function showToast(msg) {
+  if (typeof ksu !== 'undefined' && ksu.toast) { 
+      ksu.toast(msg); 
+      return; 
+  }
+  console.log(`[TOAST]: ${msg}`);
+  // Fallback
+  const el = document.getElementById('toast');
+  if (el) {
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(el._t);
+      el._t = setTimeout(() => el.classList.remove('show'), 2800);
+  }
+}
+
+// ── Variables ──────────
 const ADB_DIR = "/data/adb";
 const MOD_DIR = `${ADB_DIR}/modules`;
 const NM_DATA = `${ADB_DIR}/nomount`;
@@ -24,10 +49,7 @@ const viewLoadState = {
     'view-options': false,
 };
 
-function showToast(msg) {
-    try { toast(msg); } catch (e) { console.log(`[TOAST]: ${msg}`); }
-}
-
+// ── Helpers ──────────
 function isValidUid(uid) { return /^\d+$/.test(String(uid)); }
 function shEscape(str) { return "'" + String(str).replace(/'/g, "'\\''") + "'"; }
 
@@ -51,6 +73,7 @@ function escapeHTML(str) {
     });
 }
 
+// ── Navegation ──────────
 function initNavigation() {
     const navItems = document.querySelectorAll('.nav-item');
     const views = document.querySelectorAll('.view-content');
@@ -74,26 +97,19 @@ function initNavigation() {
             }
 
             if (viewLoadState[targetId] === false) {
-                viewLoadState[targetId] = true; // Set true immediately to prevent re-triggering
+                viewLoadState[targetId] = true;
                 switch (targetId) {
-                    case 'view-home':
-                        loadHome();
-                        break;
-                    case 'view-modules':
-                        loadModules();
-                        break;
-                    case 'view-exclusions':
-                        loadExclusions();
-                        break;
-                    case 'view-options':
-                        loadOptions();
-                        break;
+                    case 'view-home': loadHome(); break;
+                    case 'view-modules': loadModules(); break;
+                    case 'view-exclusions': loadExclusions(); break;
+                    case 'view-options': loadOptions(); break;
                 }
             }
         });
     });
 }
 
+// ── HOME ──────────
 async function loadHome() {
     const statsDisplay = document.getElementById('injection-stats');
     const kernelDisplay = document.getElementById('kernel-version');
@@ -116,15 +132,7 @@ async function loadHome() {
                 indicator.textContent = "Active";
                 indicator.style.color = "var(--md-sys-color-primary)";
             } else {
-                indicator.textContent = "Inactive";
-                indicator.style.color = "var(--md-sys-color-on-error)";
-                indicator_box.style.backgroundColor = "var(--md-sys-color-error-container)"
-                indicator_icon.style.backgroundColor = "var(--md-sys-color-error)"
-                const nuevoSvgHtml = `
-                    <svg xmlns="http://www.w3.org/2000/svg" height="32" viewBox="0 -960 960 960" width="32" fill="var(--md-sys-color-on-error)">
-                        <path d="M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240Zm40 360q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/>
-                    </svg>`;
-                indicator_icon.innerHTML = nuevoSvgHtml;
+                setInactiveUI(indicator, indicator_box, indicator_icon);
             }
         } catch (e) {}
     }
@@ -144,7 +152,7 @@ async function loadHome() {
             const result = await exec(script);
             const parts = result.stdout.split('|||').map(s => s.trim());
             
-            const jsonRaw = parts[6];
+            let jsonRaw = parts[6];
             if (!jsonRaw) jsonRaw = "[]";
             let activeModulesCount = 0;
             let dVer = "Unknown";
@@ -154,8 +162,8 @@ async function loadHome() {
                 const uniqueMods = new Set();
                 rules.forEach(r => {
                     if (r.real.includes(MOD_DIR)) {
-                        const parts = r.real.split('/');
-                        const modName = parts[4];
+                        const rParts = r.real.split('/');
+                        const modName = rParts[4];
                         if (modName && modName !== 'nomount') uniqueMods.add(modName);
                     }
                 });
@@ -180,15 +188,7 @@ async function loadHome() {
                     indicator.textContent = "Active";
                     indicator.style.color = "var(--md-sys-color-primary)";
                 } else {
-                    indicator.textContent = "Inactive";
-                    indicator.style.color = "var(--md-sys-color-on-error)";
-                    indicator_box.style.backgroundColor = "var(--md-sys-color-error-container)"
-                    indicator_icon.style.backgroundColor = "var(--md-sys-color-error)"
-                    const nuevoSvgHtml = `
-                        <svg xmlns="http://www.w3.org/2000/svg" height="32" viewBox="0 -960 960 960" width="32" fill="var(--md-sys-color-on-error)">
-                            <path d="M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240Zm40 360q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/>
-                        </svg>`;
-                    indicator_icon.innerHTML = nuevoSvgHtml;
+                    setInactiveUI(indicator, indicator_box, indicator_icon);
                 }
 
                 localStorage.setItem('nm_home_cache', JSON.stringify({
@@ -205,6 +205,20 @@ async function loadHome() {
     })();
 }
 
+function setInactiveUI(indicator, box, icon) {
+    indicator.textContent = "Inactive";
+    indicator.style.color = "var(--md-sys-color-on-error)";
+    if(box) box.style.backgroundColor = "var(--md-sys-color-error-container)";
+    if(icon) {
+        icon.style.backgroundColor = "var(--md-sys-color-error)";
+        icon.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" height="32" viewBox="0 -960 960 960" width="32" fill="var(--md-sys-color-on-error)">
+                <path d="M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240Zm40 360q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/>
+            </svg>`;
+    }
+}
+
+// ── MODULES ──────────
 let currentRenderId = 0;
 async function loadModules() {
     const listContainer = document.getElementById('modules-list');
@@ -230,7 +244,6 @@ async function loadModules() {
                 name=$(grep "^name=" "$mod/module.prop" | head -n1 | cut -d= -f2-)
                 [ -f "$mod/disable" ] && disable="true" || disable="false"
                 [ -f "$mod/skip_mount" ] && skip_mount="true" || skip_mount="false"
-
                 echo "$mod|$name|$disable|$skip_mount"
             done
         `;
@@ -241,7 +254,7 @@ async function loadModules() {
         listContainer.innerHTML = ''; 
 
         if (lines.length === 0) {
-            emptyBanner?.classList.add('active');
+            if(emptyBanner) emptyBanner.classList.add('active');
             return;
         }
 
@@ -266,7 +279,7 @@ async function loadModules() {
                 hasDisable,
                 hasSkipMount,
                 isLoaded,
-                status, // "Active", "Loaded", "Disabled", "Skipped" or "Inactive"
+                status,
                 fileCount: moduleRules.length,
             }];
         });
@@ -391,18 +404,35 @@ async function unloadModule(modId) {
     }
 }
 
+// ── APPS & EXCLUSIONS ──────────
 let allAppsCache = [];
 let showSystemApps = false;
 
 async function ensureAppsCache() {
     if (allAppsCache.length > 0) return;
-    const packages = await listPackages();
-    const apps = await getPackagesInfo(packages);
-    apps.forEach(app => {
-        app._searchLabel = (app.appLabel || "").toLowerCase();
-        app._searchPackage = (app.packageName || "").toLowerCase();
-    });
-    apps.sort((a, b) => (a.appLabel || a.packageName).localeCompare(b.appLabel || b.packageName));
+
+    const res3 = await exec('pm list packages -U -3');
+    const resS = await exec('pm list packages -U -s');
+    
+    const parseOutput = (out, isSys) => {
+        return out.split('\n').map(l => l.trim()).filter(l => l !== '').map(line => {
+            const match = line.match(/package:(.+?)\s+uid:(\d+)/);
+            if (match) {
+                return {
+                    packageName: match[1],
+                    appLabel: match[1], // Fallback label since getting actual names via shell is slow
+                    uid: match[2],
+                    isSystem: isSys,
+                    _searchLabel: match[1].toLowerCase(),
+                    _searchPackage: match[1].toLowerCase()
+                };
+            }
+            return null;
+        }).filter(Boolean);
+    };
+
+    let apps = parseOutput(res3.stdout, false).concat(parseOutput(resS.stdout, true));
+    apps.sort((a, b) => a.packageName.localeCompare(b.packageName));
     allAppsCache = apps;
 }
 
@@ -419,7 +449,7 @@ async function loadExclusions() {
     (async () => {
         try {
             listContainer.innerHTML = '';
-            const cat = await exec(`cat ${FILES.exclusions}`);
+            const cat = await exec(`cat ${FILES.exclusions} 2>/dev/null || echo ""`);
             const blockedUids = new Set(cat.stdout.split('\n').filter(u => u.trim() !== ''));
 
             if (blockedUids.size > 0) {
@@ -444,13 +474,14 @@ async function loadExclusions() {
                     const item = document.createElement('div');
                     item.className = 'card setting-item';
                     item.dataset.uid = uid;
+                    
                     item.innerHTML = `
                         <div style="display:flex; align-items:center; gap:16px;">
                             <img src="ksu://icon/${pkg}" style="width: 40px; height: 40px; border-radius: 10px;" 
-                                onerror="this.src='data:image/svg+xml;base64,...'" />
+                                onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg=='" />
                             <div class="setting-text">
-                                <h3>${escapeHTML(label)}</h3>
-                                <p>${escapeHTML(pkg)}</p>
+                                <h3 style="margin:0; font-size:16px;">${escapeHTML(label)}</h3>
+                                <p style="margin:0; opacity:0.7; font-size:14px;">${escapeHTML(pkg)}</p>
                             </div>
                         </div>
                         <md-icon-button class="btn-delete"><md-icon>delete</md-icon></md-icon-button>
@@ -467,7 +498,7 @@ async function loadExclusions() {
                 listContainer.appendChild(fragment);
                 
                 if (blockedUids.size === 0) {
-                    listContainer.innerHTML = '<div style="padding:20px; opacity:0.5;" class="empty-list-placeholder">No exclusions yet</div>';
+                    listContainer.innerHTML = '<div style="padding:20px; opacity:0.5; text-align:center;" class="empty-list-placeholder">No exclusions yet</div>';
                 }
             });
 
@@ -486,11 +517,11 @@ async function openAppSelector() {
 
     modal.classList.add('active');
 
-    // Cleanup previous state
     if (listObserver) listObserver.disconnect();
     filterMenu.classList.remove('active'); 
     searchInput.value = '';
-    sysSwitch.selected = showSystemApps;
+    
+    if(sysSwitch) sysSwitch.checked = showSystemApps;
 
     const closeModal = () => {
         modal.classList.remove('active');
@@ -566,16 +597,21 @@ function renderNextAppBatch() {
 
     batch.forEach(app => {
         const item = document.createElement('div');
-        item.className = 'app-item';
+        item.className = 'app-item card';
+        item.style.display = 'flex';
+        item.style.alignItems = 'center';
+        item.style.padding = '12px';
+        item.style.gap = '16px';
+        item.style.cursor = 'pointer';
         
         const iconSrc = `ksu://icon/${app.packageName}`;
         const fallback = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
 
         item.innerHTML = `
-            <img src="${iconSrc}" class="app-icon-img" loading="lazy" onerror="this.src='${fallback}'" /> 
-            <div class="app-details">
-                <span class="app-name">${escapeHTML(app.appLabel || app.packageName)}</span>
-                <span class="app-pkg">${escapeHTML(app.packageName)}</span>
+            <img src="${iconSrc}" class="app-icon-img" style="width: 40px; height: 40px; border-radius: 10px;" loading="lazy" onerror="this.src='${fallback}'" /> 
+            <div class="app-details" style="flex:1;">
+                <div class="app-name" style="font-weight:bold; font-size:16px;">${escapeHTML(app.appLabel)}</div>
+                <div class="app-pkg" style="font-size:12px; opacity:0.7;">${escapeHTML(app.packageName)}</div>
             </div>
             <div style="text-align:right;">
                 <div style="font-size: 12px; color: var(--md-sys-color-primary);">UID: ${app.uid}</div>
@@ -603,90 +639,91 @@ function renderNextAppBatch() {
 async function removeExclusion(uid, name) {
     if (!isValidUid(uid)) return showToast("Invalid UID");
     showToast(`Unblocking ${name}...`);
-    (async () => {
-        try {
-            const cat = await exec(`cat ${FILES.exclusions}`);
-            const lines = cat.stdout.split('\n')
-                                    .map(l => l.trim())
-                                    .filter(l => l !== '' && l !== String(uid) && isValidUid(l));
-            const newContent = lines.join('\n');
-            await exec(`echo ${shEscape(newContent)} > ${FILES.exclusions}`);
+    try {
+        const cat = await exec(`cat ${FILES.exclusions}`);
+        const lines = cat.stdout.split('\n')
+                                .map(l => l.trim())
+                                .filter(l => l !== '' && l !== String(uid) && isValidUid(l));
+        const newContent = lines.join('\n');
+        await exec(`echo ${shEscape(newContent)} > ${FILES.exclusions}`);
 
-            await exec(`${NM_BIN} unblock ${uid}`);
-            await loadExclusions();
-        } catch (e) { showToast("Error unblocking"); }
-    })();
+        await exec(`${NM_BIN} unblock ${uid}`);
+        await loadExclusions();
+    } catch (e) { showToast("Error unblocking"); }
 }
 
 async function addExclusion(uid, name) {
     if (!isValidUid(uid)) return showToast("Invalid UID");
-    (async () => {
-        try {
-            const cat = await exec(`cat ${FILES.exclusions}`);
-            if (cat.stdout.includes(String(uid))) return showToast("Already blocked");
+    try {
+        const cat = await exec(`cat ${FILES.exclusions} 2>/dev/null || echo ""`);
+        if (cat.stdout.includes(String(uid))) return showToast("Already blocked");
 
-            await exec(`echo "${uid}" >> ${FILES.exclusions}`);
-            await exec(`${NM_BIN} block ${uid}`);
-            showToast(`Blocked: ${name}`);
-            await loadExclusions();
-        } catch (e) { showToast("Error blocking"); }
-    })();
+        await exec(`echo "${uid}" >> ${FILES.exclusions}`);
+        await exec(`${NM_BIN} block ${uid}`);
+        showToast(`Blocked: ${name}`);
+        await loadExclusions();
+    } catch (e) { showToast("Error blocking"); }
 }
 
+// ── OPTIONS ──────────
 async function loadOptions() {
     const swVerbose = document.getElementById('setting-verbose');
     const swSafe = document.getElementById('setting-safemode');
     const btnClear = document.getElementById('btn-clear-rules');
 
-    (async () => {
-        const v = await exec(`[ -f ${FILES.verbose} ] && echo yes`);
-        const s = await exec(`[ -f ${FILES.disable} ] && echo yes`);
-        swVerbose.selected = v.stdout.includes('yes');
-        swSafe.selected = s.stdout.includes('yes');
-    })();
+    const v = await exec(`[ -f ${FILES.verbose} ] && echo yes`);
+    const s = await exec(`[ -f ${FILES.disable} ] && echo yes`);
+    
+    if(swVerbose) swVerbose.checked = v.stdout.includes('yes');
+    if(swSafe) swSafe.checked = s.stdout.includes('yes');
 
-    swVerbose.onchange = () => {
-        exec(swVerbose.selected ? `touch ${FILES.verbose}` : `rm ${FILES.verbose}`);
-    };
+    if(swVerbose) {
+        swVerbose.onchange = (e) => {
+            exec(e.target.checked ? `touch ${FILES.verbose}` : `rm ${FILES.verbose}`);
+        };
+    }
 
-    swSafe.onchange = () => {
-        exec(swSafe.selected ? `touch ${FILES.disable}` : `rm ${FILES.disable}`);
-    };
+    if(swSafe) {
+        swSafe.onchange = (e) => {
+            exec(e.target.checked ? `touch ${FILES.disable}` : `rm ${FILES.disable}`);
+        };
+    }
 
-    btnClear.onclick = () => {
-        showToast("Clearing all rules...");
-        (async () => {
-            try {
-                await exec(`${NM_BIN} clear`);
-                showToast("All rules cleared!");
-                loadModules();
-                loadExclusions();
-            } catch (e) {
-                showToast("Clear failed");
-            }
-        })();
-    };
+    if(btnClear) {
+        btnClear.onclick = () => {
+            showToast("Clearing all rules...");
+            (async () => {
+                try {
+                    await exec(`${NM_BIN} clear`);
+                    showToast("All rules cleared!");
+                    loadModules();
+                    loadExclusions();
+                } catch (e) {
+                    showToast("Clear failed");
+                }
+            })();
+        };
+    }
 }
 
+// ── PULL TO REFRESH ──────────
 let isGlobalLoading = false;
 function initPullToRefresh() {
     const container = document.querySelector('.page-container');
     const indicator = document.querySelector('.pull-to-refresh-indicator');
-    const indicatorIcon = indicator.querySelector('md-icon');
+    if(!container || !indicator) return;
+    
+    const indicatorIcon = indicator.querySelector('.icon');
 
     let startY = 0;
     let pullDistance = 0;
     const pullThreshold = 90; 
 
-    const isRefreshableView = () => {
-        const activeView = document.querySelector('.view-content.active');
-        return activeView !== null; 
-    };
+    const isRefreshableView = () => document.querySelector('.view-content.active') !== null;
 
     container.addEventListener('touchstart', (e) => {
         if (isGlobalLoading || container.scrollTop !== 0 || !isRefreshableView()) {
-            startY = 0;
-            return;
+            startY = 0; return;
         }
         startY = e.touches[0].pageY;
         indicator.style.transition = 'none';
@@ -694,25 +731,22 @@ function initPullToRefresh() {
 
     container.addEventListener('touchmove', (e) => {
         if (startY === 0 || isGlobalLoading) return;
-
         const currentY = e.touches[0].pageY;
         pullDistance = (currentY - startY) * 0.4;
 
         if (pullDistance > 0 && container.scrollTop === 0) {
             if (e.cancelable) e.preventDefault(); 
-            
             const rotation = Math.min(180, (pullDistance / pullThreshold) * 180);
             const opacity = Math.min(1, pullDistance / pullThreshold);
             
             indicator.style.top = `${Math.min(pullDistance, pullThreshold) - 60}px`;
             indicator.style.opacity = opacity;
-            indicatorIcon.style.transform = `rotate(${rotation}deg)`;
+            if(indicatorIcon) indicatorIcon.style.transform = `rotate(${rotation}deg)`;
         }
     }, { passive: false });
 
     container.addEventListener('touchend', async () => {
         if (startY === 0 || isGlobalLoading) return;
-
         indicator.style.transition = 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
 
         if (pullDistance >= pullThreshold) {
@@ -732,9 +766,7 @@ function initPullToRefresh() {
         } else {
             resetIndicator();
         }
-
-        startY = 0;
-        pullDistance = 0;
+        startY = 0; pullDistance = 0;
     });
 
     function resetIndicator() {
@@ -742,9 +774,7 @@ function initPullToRefresh() {
         indicator.classList.remove('refreshing');
         indicator.style.top = '-60px';
         indicator.style.opacity = '0';
-        setTimeout(() => {
-            indicatorIcon.style.transform = 'rotate(0deg)';
-        }, 300);
+        setTimeout(() => { if(indicatorIcon) indicatorIcon.style.transform = 'rotate(0deg)'; }, 300);
     }
 }
 
@@ -752,30 +782,21 @@ async function refreshCurrentView() {
     const activeView = document.querySelector('.view-content.active');
     if (!activeView) return;
 
-    const viewId = activeView.id;
-    console.log(`Refreshing view: ${viewId}`);
-
-    // Bypass the 'viewLoadState' check for a forced refresh
-    switch (viewId) {
-        case 'view-home':
-            await loadHome();
-            break;
-        case 'view-modules':
-            await loadModules();
-            break;
-        case 'view-exclusions':
-            await loadExclusions();
-            break;
-        case 'view-options':
-            await loadOptions();
-            break;
+    switch (activeView.id) {
+        case 'view-home': await loadHome(); break;
+        case 'view-modules': await loadModules(); break;
+        case 'view-exclusions': await loadExclusions(); break;
+        case 'view-options': await loadOptions(); break;
     }
 }
 
+// ── INIT ──────────
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
     initPullToRefresh();
-    document.getElementById('fab-add-exclusion').addEventListener('click', openAppSelector);
+    
+    const fab = document.getElementById('fab-add-exclusion');
+    if(fab) fab.addEventListener('click', openAppSelector);
 
     const cache = localStorage.getItem('nm_home_cache');
     if (cache) {
@@ -786,23 +807,15 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('android-ver').textContent = data.androidInfo;
             document.getElementById('nomount-version').textContent = data.versionFull;
             
+            const indicator = document.getElementById('status-indicator');
             if (data.active) {
-                const indicator = document.getElementById('status-indicator');
                 indicator.textContent = "Active";
                 indicator.style.color = "var(--md-sys-color-primary)";
             } else {
-                const indicator = document.getElementById('status-indicator');
-                const indicator_box = document.querySelector('.card.status-card-compact');
-                const indicator_icon = document.querySelector('.status-icon-box');
-                indicator.textContent = "Inactive";
-                indicator.style.color = "var(--md-sys-color-on-error)";
-                indicator_box.style.backgroundColor = "var(--md-sys-color-error-container)"
-                indicator_icon.style.backgroundColor = "var(--md-sys-color-error)"
-                const nuevoSvgHtml = `
-                    <svg xmlns="http://www.w3.org/2000/svg" height="32" viewBox="0 -960 960 960" width="32" fill="var(--md-sys-color-on-error)">
-                        <path d="M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240Zm40 360q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z"/>
-                    </svg>`;
-                indicator_icon.innerHTML = nuevoSvgHtml;
+                setInactiveUI(indicator, 
+                    document.querySelector('.card.status-card-compact'), 
+                    document.querySelector('.status-icon-box')
+                );
             }
         } catch (e) {
             console.error("Error parsing Home cache", e);
@@ -812,6 +825,7 @@ document.addEventListener('DOMContentLoaded', () => {
     viewLoadState['view-home'] = true;
     loadHome(); 
 
+    // Pre-cache
     (async () => {
         try {
             await ensureAppsCache();

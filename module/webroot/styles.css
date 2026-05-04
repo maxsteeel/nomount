@@ -479,6 +479,6 @@ md-fab {
 }
 
 .btn-hot-action.unload {
-    background-color: var(--md-sys-color-error-container);
-    color: var(--md-sys-color-on-error-container);
+    background-color: var(--md-sys-color-secondary-error);
+    color: var(--md-sys-color-secondary-error);
 }

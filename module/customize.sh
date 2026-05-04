@@ -6,13 +6,13 @@ ui_print "======================================="
 ui_print " "
 
 ui_print "- Device Architecture: $ARCH"
-if [ ! -f "$MODPATH/nm-$ARCH" ]; then
+
+if [ ! -f "$MODPATH/bin/nm-$ARCH" ]; then
   abort "! Unsupported architecture: $ARCH"
 fi
-mkdir -p "$MODPATH/bin"
-cp -f "$MODPATH/nm-$ARCH" "$MODPATH/bin/nm"
+mv "$MODPATH/bin/nm-$ARCH" "$MODPATH/bin/nm"
 set_perm "$MODPATH/bin/nm" 0 0 0755
-rm -rf $MODPATH/nm*
+rm -rf $MODPATH/bin/nm-*
 
 ui_print "- Checking Kernel support..."
 if [ -e "/dev/nomount" ]; then
@@ -33,8 +33,9 @@ else
   touch "$MODPATH/disable"
 fi
 
-if [ -f "/data/adb/nomount.log" ]; then
-    rm -f "/data/adb/nomount.log"
+if [ -f "/data/adb/nomount" ]; then
+    rm -rf "/data/adb/nomount"
 fi
 
 ui_print "- Installation complete."
+
