@@ -69,6 +69,7 @@ struct nomount_rule {
     char *real_path;
     char *parent_vpath;
     size_t vp_len;
+    size_t rp_len;
     long v_fs_type;
     u32 v_hash;
     u32 flags;
@@ -85,6 +86,7 @@ struct nomount_rule {
 struct nomount_dir_node {
     struct hlist_node node;      
     char *dir_path;              
+    size_t dir_path_len;
     unsigned long dir_ino;
     bool is_private;
     struct list_head private_list;
