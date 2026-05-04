@@ -1185,19 +1185,44 @@ static int nomount_ioctl_add_rule(unsigned long arg)
         rule->v_ino = (unsigned long)hash;
 
         parent_name = kstrdup(v_path, GFP_KERNEL);
-        slash = parent_name ? strrchr(parent_name, '/') : NULL;
-        if (slash) {
-            *slash = '\0';
-            if (kern_path(parent_name, LOOKUP_FOLLOW, &p_path) == 0) {
-                rule->v_dev = p_path.dentry->d_sb->s_dev;
+        char *climb = parent_name;
+        while (climb) {
+            slash = strrchr(climb, '/');
+            if (!slash) break;
+            if (slash == climb) {
+                if (kern_path("/", LOOKUP_FOLLOW, &p_path) == 0) {
+                    rule->v_dev = p_path.dentry->d_sb->s_dev;
+                    if (p_path.dentry->d_sb->s_op->statfs) {
+                        p_path.dentry->d_sb->s_op->statfs(p_path.dentry, &tmp_stfs);
+                        rule->v_fs_type = tmp_stfs.f_type;
+                    } else {
+                        rule->v_fs_type = p_path.dentry->d_sb->s_magic;
+                    }
+                    path_put(&p_path);
+                }
+                break;
+            }
 
+            *slash = '\0';
+            if (kern_path(climb, LOOKUP_FOLLOW, &p_path) == 0) {
+                rule->v_dev = p_path.dentry->d_sb->s_dev;
                 if (p_path.dentry->d_sb->s_op->statfs) {
                     p_path.dentry->d_sb->s_op->statfs(p_path.dentry, &tmp_stfs);
                     rule->v_fs_type = tmp_stfs.f_type;
                 } else {
                     rule->v_fs_type = p_path.dentry->d_sb->s_magic;
                 }
+                path_put(&p_path);
+                break;
+            }
+        }
+        kfree(parent_name);
 
+        parent_name = kstrdup(v_path, GFP_KERNEL);
+        slash = parent_name ? strrchr(parent_name, '/') : NULL;
+        if (slash) {
+            *slash = '\0';
+            if (kern_path(parent_name, LOOKUP_FOLLOW, &p_path) == 0) {
                 p_ino = d_backing_inode(p_path.dentry)->i_ino;
                 __nomount_auto_inject_parent(p_ino, slash + 1, 
                     (data.flags & NM_FLAG_IS_DIR) ? DT_DIR : DT_REG, v_path);
@@ -1409,31 +1434,47 @@ static int nomount_ioctl_list_rules(unsigned long arg)
 {
     struct nomount_rule *rule;
     char *kbuf;
-    size_t len = 0;
+    unsigned short *p_len;
+    size_t pos = 0;
     const size_t max_size = MAX_LIST_BUFFER_SIZE;
     int ret = 0;
 
     kbuf = vmalloc(max_size);
-    if (!kbuf) return -ENOMEM;
-    kbuf[0] = '\0';
 
     rcu_read_lock();
     list_for_each_entry_rcu(rule, &nomount_rules_list, list) {
-        size_t entry_len = strlen(rule->virtual_path) + strlen(rule->real_path) + 4; 
+        size_t v_len = rule->vp_len + 1; // +1 for \0
+        size_t r_len = rule->rp_len + 1;
+        size_t total_len = sizeof(unsigned short) * 2 + v_len + r_len;
 
-        if (len + entry_len >= max_size - 1)
-            break;
+        if (pos + total_len > max_size) break;
 
-        len += scnprintf(kbuf + len, max_size - len, "%s->%s\n", 
-                         rule->virtual_path, rule->real_path);
+        p_len = (unsigned short *)(kbuf + pos);
+        *p_len = total_len;
+        pos += sizeof(unsigned short);
+
+        p_len = (unsigned short *)(kbuf + pos);
+        *p_len = v_len;
+        pos += sizeof(unsigned short);
+
+        memcpy(kbuf + pos, rule->virtual_path, v_len);
+        pos += v_len;
+
+        if (rule->real_path) {
+            memcpy(kbuf + pos, rule->real_path, r_len);
+            pos += r_len;
+        } else {
+            kbuf[pos] = '\0';
+            pos += 1;
+        }
     }
     rcu_read_unlock();
 
-    if (len > 0) {
-        if (copy_to_user((void __user *)arg, kbuf, len))
+    if (pos > 0) {
+        if (copy_to_user((void __user *)arg, kbuf, pos))
             ret = -EFAULT;
         else
-            ret = len; 
+            ret = pos; 
     } else {
         ret = 0; 
     }
@@ -1554,4 +1595,3 @@ static int __init nomount_init(void) {
 }
 
 fs_initcall(nomount_init);
-

@@ -274,10 +274,17 @@ void c_main(long *sp) {
             exit_code = 0; // initialize to success for batch operations
 
             for (int arg_idx = 2; arg_idx + step <= argc; arg_idx += step) {
+                char *v_src = argv[arg_idx];
+                int v_len = resolve_path(v_resolved, cwd, v_src, PATH_MAX);
+                if (v_len == 0) {
+                    exit_code = 3;
+                    continue;
+                }
+
                 #if defined(__aarch64__)
-                    data.vp = (unsigned long)argv[arg_idx];
+                    data.vp = (unsigned long)v_resolved;
                 #else
-                    data.vp_lo = (unsigned int)argv[arg_idx];
+                    data.vp_lo = (unsigned int)v_resolved;
                 #endif
                 ioctl_arg = &data;
 
@@ -286,15 +293,13 @@ void c_main(long *sp) {
                     long res = sys3(SYS_IOCTL, fd, ioctl_code, (long)ioctl_arg);
                     if (res < 0) exit_code = -res;
                 } else { 
-                    char *v_src = argv[arg_idx];
                     char *r_src = argv[arg_idx+1];
                     char *v_ptr;
                     char *r_ptr;
 
-                    int v_len = resolve_path(v_resolved, cwd, v_src, PATH_MAX);
                     int r_len = resolve_path(r_resolved, cwd, r_src, PATH_MAX);
 
-                    if (v_len == 0 || r_len == 0) {
+                    if (r_len == 0) {
                         exit_code = 3;
                         continue;
                     }
@@ -323,14 +328,27 @@ void c_main(long *sp) {
                             long stat_res = sys4(SYS_FSTATAT, AT_FDCWD, (long)v_ptr, (long)st_tmp, AT_SYMLINK_NOFOLLOW);
                             if (stat_res != 0) {
                                 struct ioctl_data step_data = {0};
+                                char *rp_to_send = (r_cut > 0 && r_cut < r_len) ? r_ptr : "/";
                                 #if defined(__aarch64__)
                                     step_data.vp = (unsigned long)v_ptr;
-                                    step_data.rp = (r_cut > 0 && r_cut < r_len) ? (unsigned long)r_ptr : (unsigned long)"/";
+                                    step_data.rp = (unsigned long)rp_to_send;
                                 #else
                                     step_data.vp_lo = (unsigned int)v_ptr;
-                                    step_data.rp_lo = (r_cut > 0 && r_cut < r_len) ? (unsigned int)r_ptr : (unsigned int)"/";
+                                    step_data.rp_lo = (unsigned int)rp_to_send;
                                 #endif
                                 step_data.flags = NM_ACTIVE | NM_DIR;
+
+                                unsigned int st_real[32];
+                                if (sys4(SYS_FSTATAT, AT_FDCWD, (long)rp_to_send, (long)st_real, AT_SYMLINK_NOFOLLOW) == 0) {
+                                    unsigned long long *st_large = (unsigned long long *)st_real;
+                                    #if defined(__aarch64__)
+                                        step_data.real_dev = st_large[0]; 
+                                        step_data.real_ino = st_large[1];
+                                    #else
+                                        step_data.real_dev_lo = st_real[0]; 
+                                        step_data.real_ino_lo = st_real[3];
+                                    #endif
+                                }
                                 sys3(SYS_IOCTL, fd, IOCTL_ADD, (long)&step_data);
                             }
 
@@ -409,9 +427,9 @@ void c_main(long *sp) {
             sys3(SYS_WRITE, 1, (long)v_buf, 2);
         }
         else if (cmd == 'l' && res > 0) {
+            char *curr = (char *)ioctl_arg;
+            char *end = curr + res;
             if (json) {
-                char *curr = (char *)ioctl_arg;
-                char *end = curr + res;
                 char *json_out_buf = end;
                 int json_out_pos = 0;
 
@@ -426,42 +444,57 @@ void c_main(long *sp) {
 
                 append_const("[\n");
 
-                while (curr < end && *curr) {
-                    char *line_start = curr;
-                    char *arrow = 0;
-                    char *line_end = curr;
+                int is_first = 1;
+                while (curr < end) {
+                    unsigned short total_len = *(unsigned short *)curr;
+                    unsigned short v_len = *(unsigned short *)(curr + 2);
+                    
+                    if (total_len == 0) break;
 
-                    while (line_end < end && *line_end != '\n') {
-                        if (*line_end == '-' && *(line_end + 1) == '>') arrow = line_end;
-                        line_end++;
-                    }
+                    char *v_path = curr + 4;
+                    char *r_path = curr + 4 + v_len;
+                    int r_len = total_len - 4 - v_len;
 
-                    if (arrow) {
-                        append_const("  {\n    \"virtual\": \"");
-                        append_str(line_start, arrow - line_start);
-                        
-                        append_const("\",\n    \"real\": \"");
-                        char *r_start = arrow + 2;
-                        append_str(r_start, line_end - r_start);
-                        
-                        append_const("\"\n  }");
-                    }
+                    if (!is_first) append_const(",\n");
+                    is_first = 0;
 
-                    curr = line_end + 1;
-                    if (curr < end && *curr != '\0' && *curr != '\n') {
-                        append_const(",\n");
-                    } else {
-                        append_const("\n");
+                    append_const("  {\n    \"virtual\": \"");
+                    append_str(v_path, v_len - 1);
+                    
+                    append_const("\",\n    \"real\": \"");
+                    if (r_len > 1) {
+                        append_str(r_path, r_len - 1);
                     }
+                    append_const("\"\n  }");
+
+                    curr += total_len;
                 }
-                append_const("]\n");
+                append_const("\n]\n");
 
                 sys3(SYS_WRITE, 1, (long)json_out_buf, json_out_pos);
 
                 #undef append_const
                 #undef append_str
             } else {
-                sys3(SYS_WRITE, 1, (long)ioctl_arg, res);
+                while (curr < end) {
+                    unsigned short total_len = *(unsigned short *)curr;
+                    unsigned short v_len = *(unsigned short *)(curr + 2);
+                    
+                    if (total_len == 0) break;
+
+                    char *v_path = curr + 4;
+                    char *r_path = curr + 4 + v_len;
+                    int r_len = total_len - 4 - v_len;
+
+                    sys3(SYS_WRITE, 1, (long)v_path, v_len - 1);
+                    if (r_len > 1) {
+                        sys3(SYS_WRITE, 1, (long)" -> ", 4);
+                        sys3(SYS_WRITE, 1, (long)r_path, r_len - 1);
+                    }
+                    sys3(SYS_WRITE, 1, (long)"\n", 1);
+
+                    curr += total_len;
+                }
             }
         }
         
