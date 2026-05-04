@@ -587,7 +587,7 @@ bool nomount_handle_faccessat(int dfd, const char __user *filename, int mode, un
 {
     struct nomount_rule *rule;
     struct filename *tmp_name;
-    char *nm_abs, *slash;
+    char *nm_abs, *slash, *rp_copy = NULL;
     const char *check_name;
     struct path path;
     int res;
@@ -601,11 +601,6 @@ bool nomount_handle_faccessat(int dfd, const char __user *filename, int mode, un
     if (IS_ERR(tmp_name))
         return false;
 
-    if (tmp_name->name[0] == '/') {
-        putname(tmp_name);
-        return false; 
-    }
-
     check_name = tmp_name->name;
     slash = strrchr(check_name, '/');
     if (slash && *(slash + 1) != '\0') {
@@ -617,21 +612,21 @@ bool nomount_handle_faccessat(int dfd, const char __user *filename, int mode, un
         return false;
     }
 
+    bool is_absolute = (tmp_name->name[0] == '/');
     nm_abs = nomount_build_absolute_path(dfd, tmp_name->name);
     putname(tmp_name);
 
     if (nm_abs) {
-        if (current_uid().val != 0 && !list_empty(&nomount_private_dirs_list)) {
+        if (current_uid().val != 0 && (is_absolute || dfd == AT_FDCWD) &&
+             !list_empty(&nomount_private_dirs_list)) {
             struct nomount_dir_node *priv_dir;
             bool is_shielded = false;
-            char *base_dir_path = nm_abs;
+            
             rcu_read_lock();
             list_for_each_entry_rcu(priv_dir, &nomount_private_dirs_list, private_list) {
                 if (nm_abs[1] != priv_dir->dir_path[1]) continue;
                 size_t len = priv_dir->dir_path_len;
-                bool base_already_in = (strncmp(base_dir_path, priv_dir->dir_path, len) == 0);
-                bool target_is_in = (strncmp(nm_abs, priv_dir->dir_path, len) == 0);
-                if (!base_already_in && target_is_in) {
+                if (strncmp(nm_abs, priv_dir->dir_path, len) == 0) {
                     char next = nm_abs[len];
                     if (next == '\0' || next == '/') {
                         is_shielded = true;
@@ -650,19 +645,24 @@ bool nomount_handle_faccessat(int dfd, const char __user *filename, int mode, un
 
         rcu_read_lock();
         rule = nomount_get_rule_by_path(nm_abs);
+        if (rule && rule->real_path) {
+            rp_copy = kstrdup(rule->real_path, GFP_ATOMIC);
+        }
+        rcu_read_unlock();
+        
         __putname(nm_abs);
 
-        if (rule && rule->real_path) {
+        if (rp_copy) {
             if (mode & MAY_WRITE) {
-                rcu_read_unlock();
+                kfree(rp_copy);
                 *out_res = -EACCES;
                 return true;
             }
 
             nm_enter();
-            res = kern_path(rule->real_path, lookup_flags, &path);
+            res = kern_path(rp_copy, lookup_flags, &path);
             nm_exit();
-            rcu_read_unlock();
+            kfree(rp_copy);
 
             if (res == 0) {
                 path_put(&path);
@@ -672,8 +672,6 @@ bool nomount_handle_faccessat(int dfd, const char __user *filename, int mode, un
             }
             return true;
         }
-    } else {
-        rcu_read_unlock();
     }
 
     return false; 
@@ -693,7 +691,7 @@ EXPORT_SYMBOL(nomount_handle_faccessat);
 struct filename *nomount_getname_hook(struct filename *name)
 {
     struct nomount_rule *rule;
-    char *abs_path = NULL, *slash;
+    char *abs_path = NULL, *slash, *rp_copy = NULL;
     const char *check_name;
     struct filename *new_name;
 
@@ -707,7 +705,7 @@ struct filename *nomount_getname_hook(struct filename *name)
         rcu_read_lock();
         list_for_each_entry_rcu(priv_dir, &nomount_private_dirs_list, private_list) {
             if (name->name[1] != priv_dir->dir_path[1]) continue;
-            size_t len = strlen(priv_dir->dir_path);
+            size_t len = priv_dir->dir_path_len;
             if (strncmp(name->name, priv_dir->dir_path, len) == 0) {
                 char next = name->name[len];
                 if (next == '\0' || next == '/') {
@@ -744,11 +742,16 @@ struct filename *nomount_getname_hook(struct filename *name)
 
     rcu_read_lock();
     rule = nomount_get_rule_by_path(check_name);
+    if (rule && rule->real_path) {
+        rp_copy = kstrdup(rule->real_path, GFP_ATOMIC);
+    }
+    rcu_read_unlock();
+
     if (abs_path) __putname(abs_path);
 
-    if (rule && rule->real_path) {
-        new_name = getname_kernel(rule->real_path);
-        rcu_read_unlock();
+    if (rp_copy) {
+        new_name = getname_kernel(rp_copy);
+        kfree(rp_copy);
 
         if (!IS_ERR(new_name)) {
             new_name->uptr = name->uptr;
@@ -756,8 +759,6 @@ struct filename *nomount_getname_hook(struct filename *name)
             putname(name);
             return new_name;
         }
-    } else {
-        rcu_read_unlock();
     }
 
     return name;
@@ -886,7 +887,7 @@ void nomount_vfs_inject_dir(struct file *file, struct dir_context *ctx)
     if (unlikely(nomount_num_dirs() == 0)) return;
 
     nm_enter();
-    rcu_read_lock();
+    mutex_lock(&nomount_write_mutex);
 
     hash_for_each_possible_rcu(nomount_dirs_ht, tmp, node, dir_inode->i_ino) {
         if (tmp->dir_ino == dir_inode->i_ino) {
@@ -897,7 +898,7 @@ void nomount_vfs_inject_dir(struct file *file, struct dir_context *ctx)
     }
 
     if (!dir_found) {
-        rcu_read_unlock();
+        mutex_unlock(&nomount_write_mutex);
         nm_exit();
         return;
     }
@@ -918,7 +919,7 @@ void nomount_vfs_inject_dir(struct file *file, struct dir_context *ctx)
         ctx->pos = NOMOUNT_MAGIC_POS + child->v_index + 1;
     }
 
-    rcu_read_unlock();
+    mutex_unlock(&nomount_write_mutex);
     nm_exit();
 }
 EXPORT_SYMBOL(nomount_vfs_inject_dir);
@@ -1185,12 +1186,27 @@ static int nomount_ioctl_add_rule(unsigned long arg)
         rule->v_ino = (unsigned long)hash;
 
         parent_name = kstrdup(v_path, GFP_KERNEL);
-        char *climb = parent_name;
-        while (climb) {
-            slash = strrchr(climb, '/');
-            if (!slash) break;
-            if (slash == climb) {
-                if (kern_path("/", LOOKUP_FOLLOW, &p_path) == 0) {
+        if (parent_name) {
+            char *climb = parent_name;
+            while (climb) {
+                slash = strrchr(climb, '/');
+                if (!slash) break;
+                if (slash == climb) {
+                    if (kern_path("/", LOOKUP_FOLLOW, &p_path) == 0) {
+                        rule->v_dev = p_path.dentry->d_sb->s_dev;
+                        if (p_path.dentry->d_sb->s_op->statfs) {
+                            p_path.dentry->d_sb->s_op->statfs(p_path.dentry, &tmp_stfs);
+                            rule->v_fs_type = tmp_stfs.f_type;
+                        } else {
+                            rule->v_fs_type = p_path.dentry->d_sb->s_magic;
+                        }
+                        path_put(&p_path);
+                    }
+                    break;
+                }
+
+                *slash = '\0';
+                if (kern_path(climb, LOOKUP_FOLLOW, &p_path) == 0) {
                     rule->v_dev = p_path.dentry->d_sb->s_dev;
                     if (p_path.dentry->d_sb->s_op->statfs) {
                         p_path.dentry->d_sb->s_op->statfs(p_path.dentry, &tmp_stfs);
@@ -1199,37 +1215,23 @@ static int nomount_ioctl_add_rule(unsigned long arg)
                         rule->v_fs_type = p_path.dentry->d_sb->s_magic;
                     }
                     path_put(&p_path);
+                    break;
                 }
-                break;
             }
 
-            *slash = '\0';
-            if (kern_path(climb, LOOKUP_FOLLOW, &p_path) == 0) {
-                rule->v_dev = p_path.dentry->d_sb->s_dev;
-                if (p_path.dentry->d_sb->s_op->statfs) {
-                    p_path.dentry->d_sb->s_op->statfs(p_path.dentry, &tmp_stfs);
-                    rule->v_fs_type = tmp_stfs.f_type;
-                } else {
-                    rule->v_fs_type = p_path.dentry->d_sb->s_magic;
+            strcpy(parent_name, v_path);
+            slash = parent_name ? strrchr(parent_name, '/') : NULL;
+            if (slash) {
+                *slash = '\0';
+                if (kern_path(parent_name, LOOKUP_FOLLOW, &p_path) == 0) {
+                    p_ino = d_backing_inode(p_path.dentry)->i_ino;
+                    __nomount_auto_inject_parent(p_ino, slash + 1, 
+                        (data.flags & NM_FLAG_IS_DIR) ? DT_DIR : DT_REG, v_path);
+                    path_put(&p_path);
                 }
-                path_put(&p_path);
-                break;
             }
+            kfree(parent_name);
         }
-        kfree(parent_name);
-
-        parent_name = kstrdup(v_path, GFP_KERNEL);
-        slash = parent_name ? strrchr(parent_name, '/') : NULL;
-        if (slash) {
-            *slash = '\0';
-            if (kern_path(parent_name, LOOKUP_FOLLOW, &p_path) == 0) {
-                p_ino = d_backing_inode(p_path.dentry)->i_ino;
-                __nomount_auto_inject_parent(p_ino, slash + 1, 
-                    (data.flags & NM_FLAG_IS_DIR) ? DT_DIR : DT_REG, v_path);
-                path_put(&p_path);
-            }
-        }
-        kfree(parent_name);
     }
 
     __nomount_collect_parents(r_path);
@@ -1440,6 +1442,7 @@ static int nomount_ioctl_list_rules(unsigned long arg)
     int ret = 0;
 
     kbuf = vmalloc(max_size);
+    if (!kbuf) return -ENOMEM;
 
     rcu_read_lock();
     list_for_each_entry_rcu(rule, &nomount_rules_list, list) {
