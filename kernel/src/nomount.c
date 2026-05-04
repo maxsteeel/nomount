@@ -111,7 +111,7 @@ static inline void nomount_bloom_del_ino(unsigned long ino)
 static inline bool nomount_bloom_test_ino(unsigned long ino)
 {
     u32 h = ino & (NOMOUNT_BLOOM_SIZE - 1);
-    if (unlikely(!nomount_bloom_paths)) return false;
+    if (unlikely(!nomount_bloom_inos)) return false;
     return nomount_bloom_inos[h] > 0;
 }
 

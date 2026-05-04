@@ -12,6 +12,7 @@
 #include <linux/ioctl.h>
 #include <linux/rcupdate.h>
 #include <linux/bitmap.h>
+#include <linux/hash.h>
 #include <linux/xattr.h>
 #include <linux/version.h>
 
@@ -33,8 +34,6 @@
 #define NOMOUNT_IOC_GET_LIST _IOR(NOMOUNT_IOC_MAGIC, 7, int)
 #define MAX_LIST_BUFFER_SIZE (1024 * 1024)
 #define NM_MAX_PARENTS 16
-#define NM_RECURSION_SHIFT 29
-#define NM_RECURSION_MASK  (0x7UL << NM_RECURSION_SHIFT)
 #define NOMOUNT_BLOOM_BITS 20
 #define NOMOUNT_BLOOM_SIZE (1 << NOMOUNT_BLOOM_BITS)
 
@@ -137,29 +136,30 @@ static inline int nm_vfs_setxattr(struct dentry *dentry, const char *name, const
 #endif
 }
 
-static inline void nm_enter(void) {
-    unsigned long flags = current->flags;
-    unsigned long level = (flags & NM_RECURSION_MASK) >> NM_RECURSION_SHIFT;
+/*
+ * Recursion tracking for nomount operations. 
+ * We use a lockless, fixed-size array of atomic counters.
+ * To minimize collisions in heavily threaded environments,
+ * we hash the memory address of the task_struct (current) instead of the PID.
+ */
 
-    if (level < 7) {
-        level++;
-        current->flags = (flags & ~NM_RECURSION_MASK) | (level << NM_RECURSION_SHIFT);
-    }
+#define NM_RECURSION_BINS 4096
+static atomic_t nm_rec_counters[NM_RECURSION_BINS];
+
+static inline int nm_get_bin(void) {
+    return (hash_ptr(current, ilog2(NM_RECURSION_BINS))) & (NM_RECURSION_BINS - 1);
+}
+
+static inline void nm_enter(void) {
+    atomic_inc(&nm_rec_counters[nm_get_bin()]);
 }
 
 static inline void nm_exit(void) {
-    unsigned long flags = current->flags;
-    unsigned long level = (flags & NM_RECURSION_MASK) >> NM_RECURSION_SHIFT;
-
-    if (level > 0) {
-        level--;
-        current->flags = (flags & ~NM_RECURSION_MASK) | (level << NM_RECURSION_SHIFT);
-    }
+    atomic_dec(&nm_rec_counters[nm_get_bin()]);
 }
 
 static inline bool nm_is_recursive(void) {
-    unsigned long level = (current->flags & NM_RECURSION_MASK) >> NM_RECURSION_SHIFT;
-    return (level > 5);
+    return atomic_read(&nm_rec_counters[nm_get_bin()]) > 5; // Threshold to detect recursion, can be tuned
 }
 
 #endif /* _LINUX_NOMOUNT_H */
