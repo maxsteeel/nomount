@@ -143,6 +143,13 @@ static __always_inline bool __nomount_should_skip(void) {
     return false;
 }
 
+/* Exported */
+bool nomount_should_skip(void) {
+    if (unlikely(nomount_num_dirs() == 0)) return true;
+    return __nomount_should_skip();
+}
+EXPORT_SYMBOL(nomount_should_skip);
+
 /**
  * nomount_is_uid_blocked - Check if a specific UID is excluded from redirection
  * @uid: The User ID to check
@@ -898,6 +905,7 @@ void nomount_vfs_inject_dir(struct file *file, struct dir_context *ctx)
     if (unlikely(nomount_num_dirs() == 0)) return;
 
     nm_enter();
+restart:
     rcu_read_lock();
     
     hash_for_each_possible_rcu(nomount_dirs_ht, curr_dir, node, dir_inode->i_ino) {
@@ -937,7 +945,7 @@ found:
         }
 
         ctx->pos = NOMOUNT_MAGIC_POS + child->v_index + 1;
-        rcu_read_lock(); 
+        goto restart;
     }
 
     rcu_read_unlock();

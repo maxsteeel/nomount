@@ -169,39 +169,43 @@ index 839b6d686..c5354fc53 100644
  	}
  
 diff --git a/fs/readdir.c b/fs/readdir.c
-index 09e8ed7d4..2acb9fef4 100644
+index 09e8ed7d4..388f095dd 100644
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
-@@ -36,6 +36,28 @@
+@@ -36,6 +36,32 @@
  	unsafe_copy_to_user(dst, src, len, label);		\
  } while (0)
  
 +#ifdef CONFIG_NOMOUNT
 +extern void nomount_vfs_inject_dir(struct file *file, struct dir_context *ctx);
++extern bool nomount_should_skip(void);
++#define NOMOUNT_MAGIC_POS 0x7000000000000000ULL
 +
-+#define nomount_handle_iterate_dir(file, ctx, shared, res)          \
-+do {                                                                \
-+    loff_t _old_pos = (ctx)->pos;                                   \
-+    if ((ctx)->pos >= 0x7000000) {                                  \
-+        (res) = 0;                                                  \
-+    } else {                                                        \
-+        if (shared)                                                 \
-+            (res) = (file)->f_op->iterate_shared((file), (ctx));    \
-+        else                                                        \
-+            (res) = (file)->f_op->iterate((file), (ctx));           \
-+    }                                                               \
-+                                                                    \
-+    if ((res) >= 0) {                     \
-+        if ((ctx)->pos == _old_pos || (ctx)->pos >= 0x7000000) {    \
-+            nomount_vfs_inject_dir((file), (ctx));                  \
-+        }                                                           \
-+    }                                                               \
++#define nomount_handle_iterate_dir(file, ctx, shared, res)               \
++do {                                                                     \
++    loff_t _old_pos = (ctx)->pos;                                        \
++    bool _nm_skip = nomount_should_skip();                               \
++                                                                         \
++    if ((ctx)->pos >= NOMOUNT_MAGIC_POS && !_nm_skip) {                  \
++        (res) = 0;                                                       \
++    } else {                                                             \
++        if (shared)                                                      \
++            (res) = (file)->f_op->iterate_shared((file), (ctx));         \
++        else                                                             \
++            (res) = (file)->f_op->iterate((file), (ctx));                \
++    }                                                                    \
++                                                                         \
++    if ((res) >= 0 && !_nm_skip) {                                       \
++        if ((ctx)->pos == _old_pos || (ctx)->pos >= NOMOUNT_MAGIC_POS) { \
++            nomount_vfs_inject_dir((file), (ctx));                       \
++        }                                                                \
++    }                                                                    \
 +} while (0)
 +#endif
  
  int iterate_dir(struct file *file, struct dir_context *ctx)
  {
-@@ -61,10 +86,14 @@ int iterate_dir(struct file *file, struct dir_context *ctx)
+@@ -61,10 +87,14 @@ int iterate_dir(struct file *file, struct dir_context *ctx)
  	res = -ENOENT;
  	if (!IS_DEADDIR(inode)) {
  		ctx->pos = file->f_pos;
