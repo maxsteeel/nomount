@@ -32,16 +32,16 @@ static LIST_HEAD(nomount_private_dirs_list);
 static DEFINE_MUTEX(nomount_write_mutex);
 
 struct nomount_ioctl_data {
-    char __user *virtual_path;
-    char __user *real_path;
-    unsigned int flags;
-    unsigned long real_ino;
+    u64 virtual_path;
+    u64 real_path;
+    u32 flags;
 };
 
 struct nomount_rule {
     unsigned long v_ino;
-    unsigned long real_ino;
     dev_t v_dev;
+    unsigned long real_ino;
+    dev_t real_dev;
     char *virtual_path;
     char *real_path;
     const char *basename;
