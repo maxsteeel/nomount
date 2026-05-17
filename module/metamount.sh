@@ -24,11 +24,12 @@ else
     echo "[CONFIG] Verbose Mode: OFF (Summary only)" >> "$LOG_FILE"
 fi
 
-if [ ! -e "/dev/nomount" ]; then
-    echo "[FATAL] /dev/nomount missing. Is the kernel patched?" >> "$LOG_FILE"
+if ! "$LOADER" v > /dev/null 2>&1; then
+    echo "[FATAL] NoMount Netlink interface missing/unresponsive. Is the kernel patched?" >> "$LOG_FILE"
     touch "$MODDIR/disable"
     exit 1
 fi
+echo "[OK] Netlink socket responding properly." >> "$LOG_FILE"
 
 for mod_path in "$MODULES_DIR"/*; do
     [ -d "$mod_path" ] || continue
