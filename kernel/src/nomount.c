@@ -1471,42 +1471,49 @@ static const struct genl_ops nomount_genl_ops[] = {
         .flags = GENL_ADMIN_PERM,
         .doit = nomount_genl_add_rule,
         .dumpit = NULL,
+        NM_OPS_POLICY(nomount_genl_policy)
     },
     {
         .cmd = NOMOUNT_CMD_DEL_RULE,
         .flags = GENL_ADMIN_PERM,
         .doit = nomount_genl_del_rule,
         .dumpit = NULL,
+        NM_OPS_POLICY(nomount_genl_policy)
     },
     {
         .cmd = NOMOUNT_CMD_CLEAR_ALL,
         .flags = GENL_ADMIN_PERM,
         .doit = nomount_genl_clear_rules,
         .dumpit = NULL,
+        NM_OPS_POLICY(nomount_genl_policy)
     },
     {
         .cmd = NOMOUNT_CMD_ADD_UID,
         .flags = GENL_ADMIN_PERM,
         .doit = nomount_genl_add_uid,
         .dumpit = NULL,
+        NM_OPS_POLICY(nomount_genl_policy)
     },
     {
         .cmd = NOMOUNT_CMD_DEL_UID,
         .flags = GENL_ADMIN_PERM,
         .doit = nomount_genl_del_uid,
         .dumpit = NULL,
+        NM_OPS_POLICY(nomount_genl_policy)
     },
     {
         .cmd = NOMOUNT_CMD_GET_LIST,
         .flags = GENL_ADMIN_PERM,
         .doit = NULL,
         .dumpit = nomount_genl_dump_rules,
+        NM_OPS_POLICY(nomount_genl_policy)
     },
     {
         .cmd = NOMOUNT_CMD_GET_VERSION,
         .flags = GENL_ADMIN_PERM,
         .doit = nomount_genl_get_version,
         .dumpit = NULL,
+        NM_OPS_POLICY(nomount_genl_policy)
     },
 };
 
@@ -1514,7 +1521,7 @@ static struct genl_family nomount_genl_family = {
     .name = NOMOUNT_GENL_NAME,
     .version = NOMOUNT_GENL_VERSION,
     .maxattr = NOMOUNT_ATTR_MAX,
-    .policy = nomount_genl_policy,
+    NM_FAMILY_POLICY(nomount_genl_policy)
     .netnsok = true,
     .module = THIS_MODULE,
     .ops = nomount_genl_ops,

@@ -8,6 +8,7 @@
 #include <linux/rwsem.h>
 #include <net/sock.h>
 #include <net/genetlink.h>
+#include <linux/version.h>
 
 #define NOMOUNT_VERSION    2
 #define NOMOUNT_HASH_BITS  12
@@ -106,6 +107,17 @@ enum {
 };
 
 #define NOMOUNT_ATTR_MAX (__NOMOUNT_ATTR_MAX - 1)
+
+/* * Compat macros for Generic Netlink Policy API changes.
+ * Linux 4.20 moved the policy pointer from genl_ops to genl_family.
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0)
+#define NM_OPS_POLICY(p)    .policy = (p),
+#define NM_FAMILY_POLICY(p)
+#else
+#define NM_OPS_POLICY(p)
+#define NM_FAMILY_POLICY(p) .policy = (p),
+#endif
 
 /*
  * Recursion tracking for nomount operations. 
