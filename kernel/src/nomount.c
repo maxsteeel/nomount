@@ -465,7 +465,8 @@ static struct nomount_dir_node* __nomount_get_or_create_dir(unsigned long ino)
 
 
 /* __nomount_collect_parents - Walks the dentry tree to register directory hierarchy
- * @start_dentry: A valid referenced dentry to start the walk from
+ * @rule: The rule containing the absolute real_path string
+ * @d: A valid referenced dentry resolved from kern_path
  *
  * This function recursively climbs the dentry tree starting from the provided 
  * dentry. It registers every parent inode encountered and handles the extraction 
@@ -473,44 +474,41 @@ static struct nomount_dir_node* __nomount_get_or_create_dir(unsigned long ino)
  *
  * This function relies on the caller to provide a valid reference (dget).
  */
-static void __nomount_collect_parents(struct dentry *d)
+static void __nomount_collect_parents(struct nomount_rule *rule, struct dentry *d)
 {
-    while (d && !IS_ROOT(d)) {
-        struct dentry *parent = dget_parent(d);
+    struct dentry *parent;
+    char *r_tmp = rule->real_path, *slash, *slashes[32];
+    int p_count = 0;
+
+    while (d && !IS_ROOT(d) && p_count < 32) {
         struct inode *inode = d_backing_inode(d);
-
-        if (likely(inode)) {
-            unsigned long p_ino = inode->i_ino;
-            struct nomount_dir_node *dir_node = __nomount_get_or_create_dir(p_ino);
-
-            if (likely(dir_node)) {
-                bool priv = !(inode->i_mode & S_IXOTH);
-                dir_node->is_private = priv;
-
-                if (unlikely(priv && !dir_node->dir_path)) {
-                    char *buf = __getname();
-                    if (likely(buf)) {
-                        char *path = dentry_path_raw(d, buf, PATH_MAX);
-                        if (!IS_ERR(path)) {
-                            nm_debug("Registered private dir: %s (ino: %lu)\n", path, p_ino);
-                            dir_node->dir_path = kstrdup(path, GFP_KERNEL);
-                            dir_node->dir_path_len = strlen(path);
-                            if (dir_node->dir_path) {
-                                u32 hash = full_name_hash(NULL, path, dir_node->dir_path_len);
-                                dir_node->dir_hash = hash;
-                                hash_add_rcu(nomount_private_dirs_ht, &dir_node->private_hash_node, hash);
-                            }
-                        }
-                        __putname(buf);
-                    }
+        if (likely(inode && S_ISDIR(inode->i_mode))) {
+            struct nomount_dir_node *dir_node = __nomount_get_or_create_dir(inode->i_ino);
+            if (likely(dir_node) && unlikely(!(inode->i_mode & S_IXOTH) && !dir_node->dir_path)) {
+                dir_node->is_private = true;
+                nm_debug("Registered private dir: %s (ino: %lu)\n", r_tmp, inode->i_ino);
+                dir_node->dir_path_len = strlen(r_tmp);
+                dir_node->dir_path = kmemdup_nul(r_tmp, dir_node->dir_path_len, GFP_KERNEL);
+                if (likely(dir_node->dir_path)) {
+                    u32 hash = full_name_hash(NULL, r_tmp, dir_node->dir_path_len);
+                    dir_node->dir_hash = hash;
+                    hash_add_rcu(nomount_private_dirs_ht, &dir_node->private_hash_node, hash);
                 }
             }
         }
 
+        slash = strrchr(r_tmp, '/');
+        if (!slash || slash == r_tmp) break;
+        *slash = '\0';
+        slashes[p_count++] = slash;
+
+        parent = dget_parent(d);
         dput(d);
         d = parent;
     }
-    dput(d);
+
+    if (d) dput(d);
+    while (p_count > 0) *slashes[--p_count] = '/';
 }
 
 /**
@@ -975,7 +973,7 @@ static int __nomount_add_rule(const char *v_path, const char *r_path, u16 v_len,
     }
     
     if (r_path_dentry)
-        __nomount_collect_parents(r_path_dentry);
+        __nomount_collect_parents(rule, r_path_dentry);
 
     b_hash = full_name_hash(NULL, rule->basename, rule->b_len);
     hash_add_rcu(nomount_basenames_ht, &rule->basename_node, b_hash);
