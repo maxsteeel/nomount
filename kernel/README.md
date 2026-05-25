@@ -13,15 +13,14 @@ The NoMount integration is divided into two main components:
 
 1. Integrate NoMount Hooks:
 
-If your source code corresponds to a modern kernel (>= 5.4), you can apply the provided patch:
+Apply the patch corresponding to your kernel version, e.g, for kernels 5.10:
 
 ```bash
 cd <your_kernel_source>
-patch -p1 --fuzz=3 < path/to/nomount/kernel/nomount_kernel_integration.patch
+patch -p1 < path/to/nomount/kernel/nomount_5.10_kernel_integration.patch
 ```
-* Note: The --fuzz=3 parameter here is completely safe and ensures correct integration in 5.4-6.12.
 
- If the patch fails or you prefer to apply the hooks manually, see [INTEGRATION.md](INTEGRATION.md).
+If the patch fails or you prefer to integrate NoMount manually in your kernel, see [INTEGRATION.md](INTEGRATION.md).
 
 2. Copy the necessary files:
 
