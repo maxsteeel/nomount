@@ -86,7 +86,7 @@ size_t strlen(const char *s) {
     return len;
 }
 
-#define printc(str) sys3(SYS_WRITE, 1, (long)str, sizeof(str) - 1)
+#define print_str(s) sys3(SYS_WRITE, 1, (long)s, strlen(s))
 
 /* --- NETLINK DEFS --- */
 #define AF_NETLINK 16
@@ -175,8 +175,12 @@ struct nlattr {
 
 /* --- NETLINK ENGINE --- */
 static int nl_seq = 0;
-static char tx_buf[65536];
-static char rx_buf[65536];
+#define RX_BUF_SIZE (1024 * 512)
+static char tx_buf[8192]; 
+static char rx_buf[RX_BUF_SIZE];
+static char v_resolved[PATH_MAX];
+static char r_resolved[PATH_MAX];
+static char cwd_buf[PATH_MAX];
 #define MAX_PAYLOAD (sizeof(tx_buf) - NLMSG_HDRLEN - NLMSG_ALIGN(sizeof(struct genlmsghdr)) - NLA_HDRLEN - 64)
 
 /* Initialize a new Netlink message */
@@ -186,12 +190,9 @@ static struct nlmsghdr *init_msg(int type, int cmd, int flags) {
     nlh->nlmsg_type = type;
     nlh->nlmsg_flags = flags;
     nlh->nlmsg_seq = ++nl_seq;
-    nlh->nlmsg_pid = 0; /* Auto-assign */
-
     struct genlmsghdr *gnlh = (struct genlmsghdr *)(tx_buf + NLMSG_HDRLEN);
     gnlh->cmd = cmd;
     gnlh->version = 1;
-
     nlh->nlmsg_len = NLMSG_HDRLEN + NLMSG_ALIGN(sizeof(struct genlmsghdr));
     return nlh;
 }
@@ -210,9 +211,8 @@ static void add_attr(struct nlmsghdr *nlh, int type, const void *data, int len) 
 static void parse_attrs(struct nlattr **tb, int max, struct nlattr *attr, int len) {
     memset(tb, 0, sizeof(struct nlattr *) * (max + 1));
     while (len >= NLA_HDRLEN) {
-        if (attr->nla_len >= NLA_HDRLEN && attr->nla_type <= max) {
+        if (attr->nla_len >= NLA_HDRLEN && attr->nla_type <= max)
             tb[attr->nla_type] = attr;
-        }
         int aligned_len = NLA_ALIGN(attr->nla_len);
         if (aligned_len == 0 || aligned_len > len) break;
         attr = (struct nlattr *)((char *)attr + aligned_len);
@@ -226,7 +226,7 @@ static int send_and_recv(int fd, struct nlmsghdr *nlh) {
     long res = sys6(SYS_SENDTO, fd, (long)nlh, nlh->nlmsg_len, 0, (long)&dest, sizeof(dest));
     if (res < 0) return res;
 
-    res = sys6(SYS_RECVFROM, fd, (long)rx_buf, sizeof(rx_buf), 0, 0, 0);
+    res = sys6(SYS_RECVFROM, fd, (long)rx_buf, RX_BUF_SIZE, 0, 0, 0);
     if (res < 0) return res;
 
     struct nlmsghdr *rep = (struct nlmsghdr *)rx_buf;
@@ -240,53 +240,33 @@ static int send_and_recv(int fd, struct nlmsghdr *nlh) {
 /* Get the dynamic Family ID of NoMount */
 static int get_nomount_family_id(int fd) {
     struct nlmsghdr *nlh = init_msg(GENL_ID_CTRL, CTRL_CMD_GETFAMILY, NLM_F_REQUEST);
-    const char *name = "nomount";
-    add_attr(nlh, CTRL_ATTR_FAMILY_NAME, name, strlen(name) + 1);
+    add_attr(nlh, CTRL_ATTR_FAMILY_NAME, "nomount", 8);
 
     if (send_and_recv(fd, nlh) > 0) {
         struct nlmsghdr *rep = (struct nlmsghdr *)rx_buf;
         if (rep->nlmsg_type != NLMSG_ERROR) {
-            struct nlattr *tb[3]; // Max attr is CTRL_ATTR_FAMILY_NAME(2)
-            struct nlattr *attrs = (struct nlattr *)((char *)rep + NLMSG_HDRLEN + NLMSG_ALIGN(sizeof(struct genlmsghdr)));
-            int attr_len = rep->nlmsg_len - NLMSG_HDRLEN - NLMSG_ALIGN(sizeof(struct genlmsghdr));
-            
-            parse_attrs(tb, 2, attrs, attr_len);
-            if (tb[CTRL_ATTR_FAMILY_ID]) {
+            struct nlattr *tb[3];
+            parse_attrs(tb, 2, (struct nlattr *)((char *)rep + NLMSG_HDRLEN + NLMSG_ALIGN(sizeof(struct genlmsghdr))), 
+                        rep->nlmsg_len - NLMSG_HDRLEN - NLMSG_ALIGN(sizeof(struct genlmsghdr)));
+            if (tb[CTRL_ATTR_FAMILY_ID])
                 return *(unsigned short *)((char *)tb[CTRL_ATTR_FAMILY_ID] + NLA_HDRLEN);
-            }
         }
     }
     return -1;
 }
 
-static char v_resolved[PATH_MAX];
-static char r_resolved[PATH_MAX];
-static char cwd_buf[PATH_MAX];
-
 /* complete path resolution */
 __attribute__((noinline))
 static int resolve_path(char *result, const char *cwd, const char *rel_path, int max_len) {
-    int r_pos = 0;
-    int c_len = 0;
-
+    int r_pos = 0, c_len = 0, p_pos = 0;
     if (rel_path[0] == '/') {
-        while (rel_path[r_pos] && r_pos < max_len - 1) {
-            result[r_pos] = rel_path[r_pos];
-            r_pos++;
-        }
+        while (rel_path[r_pos] && r_pos < max_len - 1) { result[r_pos] = rel_path[r_pos]; r_pos++; }
     } else {
         if (cwd) {
-            while (cwd[c_len] && r_pos < max_len - 1) {
-                result[r_pos++] = cwd[c_len++];
-            }
-            if (r_pos > 0 && result[r_pos-1] != '/' && r_pos < max_len - 1) {
-                result[r_pos++] = '/';
-            }
+            while (cwd[c_len] && r_pos < max_len - 1) result[r_pos++] = cwd[c_len++];
+            if (r_pos > 0 && result[r_pos-1] != '/' && r_pos < max_len - 1) result[r_pos++] = '/';
         }
-        int p_pos = 0;
-        while (rel_path[p_pos] && r_pos < max_len - 1) {
-            result[r_pos++] = rel_path[p_pos++];
-        }
+        while (rel_path[p_pos] && r_pos < max_len - 1) result[r_pos++] = rel_path[p_pos++];
     }
     result[r_pos] = '\0';
     return r_pos;
