@@ -153,18 +153,23 @@ static const char *nomount_build_path_from_pwd(const char *rel_name, size_t name
 }
 
 /**
- * nomount_drop_vpath_cache - Force VFS to drop dcache for a specific path
- * @path_str: The native absolute path to flush
- * @is_dir: True if we should aggressively invalidate a directory
+ * nomount_invalidate_dentry - Force VFS to drop dcache for a specific dentry
+ * @dentry: The dentry to invalidate
  */
-static void nomount_drop_vpath_cache(const char *path_str, bool is_dir)
+static void nomount_invalidate_dentry(struct dentry *dentry)
+{
+    if (!dentry || !d_backing_inode(dentry)) return;
+    if (S_ISDIR(d_backing_inode(dentry)->i_mode))
+        d_invalidate(dentry);
+    else
+        d_drop(dentry);
+}
+
+static void nomount_drop_vpath_cache(const char *path_str)
 {
     struct path path;
     if (kern_path(path_str, 0, &path) == 0) {
-        if (is_dir)
-            d_invalidate(path.dentry);
-        else
-            d_drop(path.dentry);
+        nomount_invalidate_dentry(path.dentry);
         path_put(&path);
     }
 }
@@ -997,6 +1002,7 @@ static int __nomount_add_rule(const char *v_path, const char *r_path, u16 v_len,
         } else {
             rule->v_fs_type = path_main.dentry->d_sb->s_magic;
         }
+        nomount_invalidate_dentry(path_main.dentry);
         path_put(&path_main);
         v_path_exists = true;
         nm_debug("Resolved physical backing for %s (ino: %lu)\n", rule->virtual_path, rule->v_ino);
@@ -1046,7 +1052,6 @@ static int __nomount_add_rule(const char *v_path, const char *r_path, u16 v_len,
     list_add_tail_rcu(&rule->list, &nomount_rules_list);
     atomic_inc(&nm_active_rules);
     if (atomic_read(&nm_active_rules) == 1) static_branch_enable(&nomount_active_rules);
-    nomount_drop_vpath_cache(rule->virtual_path, (rule->flags & NM_FLAG_IS_DIR));
     mutex_unlock(&nomount_write_mutex);
 
     if (unlikely(victim)) {
@@ -1109,7 +1114,7 @@ static void __nomount_clear_all(void)
         hash_del_rcu(&rule->basename_node);
         if (rule->real_ino) hash_del_rcu(&rule->real_ino_node);
         if (rule->v_ino) hash_del_rcu(&rule->v_ino_node);
-        nomount_drop_vpath_cache(rule->virtual_path, (rule->flags & NM_FLAG_IS_DIR));
+        nomount_drop_vpath_cache(rule->virtual_path);
         list_move_tail(&rule->list, &rule_victims);
     }
 
@@ -1240,7 +1245,7 @@ static int nomount_genl_del_rule(struct sk_buff *skb, struct genl_info *info)
     if (list_empty(&r_victims)) return -ENOENT;
 
     list_for_each_entry_safe(rule, tmp_r, &r_victims, list) {
-        nomount_drop_vpath_cache(rule->virtual_path, (rule->flags & NM_FLAG_IS_DIR));
+        nomount_drop_vpath_cache(rule->virtual_path);
     }
 
     synchronize_rcu();
