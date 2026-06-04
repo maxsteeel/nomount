@@ -135,6 +135,10 @@ static const char *nomount_build_path_from_pwd(const char *rel_name, size_t name
     dir_len = strlen(cwd_str);
     if (likely(dir_len + name_len + 2 <= PATH_MAX)) {
         if (cwd_str != page_buf) {
+            if (dir_len >= PATH_MAX) {
+                __putname(page_buf);
+                return NULL;
+            }
             memmove((char *)page_buf, cwd_str, dir_len);
             cwd_str = (char *)page_buf;
         }
