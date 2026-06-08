@@ -31,7 +31,7 @@
                     <div class="home-segment-row info-row">
                         <div class="segment-icon"><md-icon>account_tree</md-icon></div>
                         <div class="info-data">
-                            <span class="info-label">Injection Stats</span>
+                            <span class="info-label">Status</span>
                             <span class="info-value" id="injection-stats">Calculating...</span>
                         </div>
                     </div>
@@ -46,7 +46,7 @@
                             </svg>
                         </div>
                         <div class="info-data">
-                            <span class="info-label">Device</span>
+                            <span class="info-label">Model</span>
                             <span class="info-value" id="device-model">Loading...</span>
                         </div>
                     </div>
@@ -64,7 +64,7 @@
                             <md-icon>memory</md-icon>
                         </div>
                         <div class="info-data">
-                            <span class="info-label">Kernel Version</span>
+                            <span class="info-label">Kernel</span>
                             <span class="info-value" id="kernel-version">Loading...</span>
                         </div>
                     </div>
@@ -74,7 +74,10 @@
             <div id="view-modules" class="view-content">
                 <div class="header-title">Modules</div>
                 <div id="modules-list" class="list">
-                    <div class="inactive-banner active" id="modules-empty">No injecting modules found</div>
+                    <div class="inactive-banner empty-state active" id="modules-empty">
+                        <div class="empty-face">(つ﹏⊂)</div>
+                        <div class="empty-text">No modules found</div>
+                    </div>
                 </div>
             </div>
 

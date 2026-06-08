@@ -549,7 +549,12 @@ async function loadExclusions() {
                 listContainer.appendChild(fragment);
                 
                 if (blockedUids.size === 0) {
-                    listContainer.innerHTML = '<div class="empty-list-placeholder">No exclusions yet</div>';
+                    listContainer.innerHTML = `
+                        <div class="empty-list-placeholder empty-state">
+                            <div class="empty-face">(｡•̀ᴗ-)✧</div>
+                            <div class="empty-text">No exclusions yet</div>
+                        </div>
+                    `;
                 }
             });
 
