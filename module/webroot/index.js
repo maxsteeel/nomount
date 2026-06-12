@@ -8,7 +8,12 @@ function exec(cmd) {
             resolve({ errno, stdout: stdout || '', stderr: stderr || '' });
         };
         if (typeof ksu !== 'undefined' && ksu.exec) {
-            ksu.exec(cmd, '{}', key);
+            try {
+                ksu.exec(cmd, '{}', key);
+            } catch (e) {
+                delete window[key];
+                resolve({ errno: 1, stdout: '', stderr: e?.message || 'ksu exec failed' });
+            }
         } else {
             resolve({ errno: 1, stdout: '', stderr: 'ksu not defined' });
         }
@@ -17,7 +22,11 @@ function exec(cmd) {
 
 function showToast(msg) {
     if (typeof ksu !== 'undefined' && ksu.toast) {
-        ksu.toast(msg);
+        try {
+            ksu.toast(msg);
+        } catch (e) {
+            console.warn("Toast failed:", e);
+        }
     }
 }
 
@@ -50,9 +59,14 @@ function getIconVariant(icon) {
     return icon.closest('.nav-item.active') ? 'filled' : 'outline';
 }
 
+function getIconPath(name, variant = 'outline') {
+    return variant === 'filled' ? FILLED_ICON_PATHS[name] || ICON_PATHS[name] : ICON_PATHS[name];
+}
+
 function setIcon(icon, name, variant = getIconVariant(icon)) {
-    const pathData = variant === 'filled' ? FILLED_ICON_PATHS[name] || ICON_PATHS[name] : ICON_PATHS[name];
-    if (!icon || !pathData) return;
+    if (!icon) return;
+    const pathData = getIconPath(name, variant);
+    if (!pathData) return;
     if (
         icon.dataset.icon === name
         && icon.dataset.iconVariant === variant
@@ -73,22 +87,42 @@ function setIcon(icon, name, variant = getIconVariant(icon)) {
     icon.replaceChildren(svg);
 }
 
+function createIconElement(name, variant = 'outline') {
+    const icon = document.createElement('md-icon');
+    icon.dataset.icon = name;
+    icon.dataset.iconVariant = variant;
+    icon.setAttribute('aria-hidden', 'true');
+    setIcon(icon, name, variant);
+    return icon;
+}
+
 function applyOfflineIcons(root = document) {
     root.querySelectorAll?.('md-icon').forEach(icon => {
         const name = icon.dataset.icon || icon.textContent.trim();
+        if (!name) return;
         setIcon(icon, name);
     });
 }
 
+let offlineIconsInitialized = false;
 function initOfflineIcons() {
+    if (offlineIconsInitialized) return;
+    offlineIconsInitialized = true;
+
     applyOfflineIcons();
     new MutationObserver(() => requestAnimationFrame(() => applyOfflineIcons()))
-        .observe(document.body, {
+        .observe(document.body || document.documentElement, {
             attributeFilter: ['class'],
             attributes: true,
             childList: true,
             subtree: true
         });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initOfflineIcons, { once: true });
+} else {
+    initOfflineIcons();
 }
 
 // Variables
@@ -126,6 +160,10 @@ function buildWriteUidListCommand(uids) {
     return `printf '%s\\n' ${safeUids.join(' ')} > ${FILES.exclusions}`;
 }
 
+function shellQuote(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'";
+}
+
 function isValidModId(modId) {
     const s = String(modId);
     if (s.includes('..')) return false;
@@ -143,6 +181,36 @@ function escapeHtml(value) {
 
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function renderTextState(container, className, text) {
+    const message = document.createElement('div');
+    message.className = className;
+    message.textContent = text;
+    container.replaceChildren(message);
+}
+
+function renderEmptyState(container, face, text) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'empty-list-placeholder empty-state';
+
+    const faceEl = document.createElement('div');
+    faceEl.className = 'empty-face';
+    faceEl.textContent = face;
+
+    const textEl = document.createElement('div');
+    textEl.className = 'empty-text';
+    textEl.textContent = text;
+
+    wrapper.append(faceEl, textEl);
+    container.replaceChildren(wrapper);
+}
+
+function applyAppIconFallback(img) {
+    img.onerror = () => {
+        img.onerror = null;
+        img.src = APP_ICON_FALLBACK;
+    };
 }
 
 function syncSystemBarTheme() {
@@ -412,15 +480,10 @@ async function loadModules() {
         const result = await exec(script);
         const lines = result.stdout.split('\n').filter(l => l.trim() !== '');
 
-        listContainer.innerHTML = '';
+        listContainer.replaceChildren();
 
         if (lines.length === 0) {
-            listContainer.innerHTML = `
-                <div class="empty-list-placeholder empty-state">
-                    <div class="empty-face">(つ﹏⊂)</div>
-                    <div class="empty-text">No modules found</div>
-                </div>
-            `;
+            renderEmptyState(listContainer, '(._.)', 'No modules found');
             return;
         }
 
@@ -532,12 +595,7 @@ async function loadModules() {
                     setTimeout(processEntries, 8);
                 } else {
                     if (listContainer.children.length === 0) {
-                        listContainer.innerHTML = `
-                            <div class="empty-list-placeholder empty-state">
-                                <div class="empty-face">(つ﹏⊂)</div>
-                                <div class="empty-text">No modules found</div>
-                            </div>
-                        `;
+                        renderEmptyState(listContainer, '(._.)', 'No modules found');
                     }
                 }
             });
@@ -547,7 +605,7 @@ async function loadModules() {
 
     } catch (e) {
         console.error("Error loading modules:", e);
-        listContainer.innerHTML = `<div class="error-message">Error loading modules: ${e.message}</div>`;
+        renderTextState(listContainer, 'error-message', `Error loading modules: ${e.message}`);
     }
 }
 
@@ -555,15 +613,17 @@ async function loadModule(modId) {
     if (!isValidModId(modId)) return;
     const TARGET_PARTITIONS = ["system", "vendor", "product", "system_ext", "odm", "oem"];
     const modPath = `${MOD_DIR}/${modId}`;
-    const partitionsStr = TARGET_PARTITIONS.join(' ');
+    const partitionsStr = TARGET_PARTITIONS.map(shellQuote).join(' ');
+    const quotedModPath = shellQuote(modPath);
+    const quotedNmBin = shellQuote(NM_BIN);
     const loadScript = `
-        cd ${modPath} || exit 0
+        cd ${quotedModPath} || exit 0
         find -L ${partitionsStr} \\( -type f -o -type l \\) -exec sh -c '
             mod="$1"; shift
             for f do
                 printf "/%s\\0%s/%s\\0" "$f" "$mod" "$f"
             done
-        ' _ ${modPath} {} + 2>/dev/null | xargs -0 -r -n 500 ${NM_BIN} add
+        ' _ ${quotedModPath} {} + 2>/dev/null | xargs -0 -r -n 500 ${quotedNmBin} add
     `;
 
     try {
@@ -588,8 +648,8 @@ async function unloadModule(modId) {
         const chunkSize = 500;
         for (let i = 0; i < targets.length; i += chunkSize) {
             const chunk = targets.slice(i, i + chunkSize);
-            const escapedTargets = chunk.map(t => t).join(' ');
-            const batchScript = `printf "%s\\0" ${escapedTargets} | xargs -0 -r -n 500 ${NM_BIN} del`;
+            const escapedTargets = chunk.map(shellQuote).join(' ');
+            const batchScript = `printf '%s\\0' ${escapedTargets} | xargs -0 -r -n 500 ${shellQuote(NM_BIN)} del`;
             await exec(batchScript);
         }
     } catch (e) {
@@ -602,6 +662,7 @@ async function unloadModule(modId) {
 let allAppsCache = [];
 let showSystemApps = false;
 let appLoadingPromise = null;
+const APP_ICON_FALLBACK = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
 
 async function ensureAppsCache() {
     if (allAppsCache.length > 0) return;
@@ -649,17 +710,23 @@ let appListRenderIndex = 0;
 const APP_RENDER_BATCH_SIZE = 50;
 let listObserver = null;
 let filterTimeout;
+let exclusionsLoadId = 0;
 
 async function loadExclusions() {
     const listContainer = document.getElementById('exclusions-list');
     if (!listContainer) return;
+    const loadId = ++exclusionsLoadId;
 
     try {
         const cat = await exec(`cat ${FILES.exclusions} 2>/dev/null || echo ""`);
         const blockedUids = parseUidList(cat.stdout);
 
         if (blockedUids.length > 0) {
-            await ensureAppsCache();
+            try {
+                await ensureAppsCache();
+            } catch (e) {
+                console.warn("App cache unavailable, showing UID fallback:", e);
+            }
         }
 
         const appsMap = new Map(allAppsCache.map(app => [String(app.uid), app]));
@@ -674,37 +741,48 @@ async function loadExclusions() {
             item.className = 'card setting-item';
             item.dataset.uid = uid;
 
-            item.innerHTML = `
-                <div class="exclusion-app">
-                    <img src="ksu://icon/${escapeHtml(pkg)}" class="app-icon-img"
-                        onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg=='" />
-                    <div class="setting-text">
-                        <h3>${escapeHtml(label)}</h3>
-                        <p>${escapeHtml(pkg)}</p>
-                    </div>
-                </div>
-                <md-icon-button class="btn-delete" aria-label="Remove exclusion"><md-icon>delete</md-icon></md-icon-button>
-            `;
+            const appInfo = document.createElement('div');
+            appInfo.className = 'exclusion-app';
 
-            item.querySelector('.btn-delete').onclick = () => removeExclusion(uid, label);
+            const icon = document.createElement('img');
+            icon.src = `ksu://icon/${pkg}`;
+            icon.className = 'app-icon-img';
+            applyAppIconFallback(icon);
+
+            const text = document.createElement('div');
+            text.className = 'setting-text';
+
+            const title = document.createElement('h3');
+            title.textContent = label;
+
+            const subtitle = document.createElement('p');
+            subtitle.textContent = pkg;
+
+            text.append(title, subtitle);
+            appInfo.append(icon, text);
+
+            const deleteButton = document.createElement('md-icon-button');
+            deleteButton.className = 'btn-delete';
+            deleteButton.setAttribute('aria-label', 'Remove exclusion');
+            deleteButton.appendChild(createIconElement('delete'));
+            deleteButton.onclick = () => removeExclusion(uid, label);
+
+            item.append(appInfo, deleteButton);
             fragment.appendChild(item);
         });
 
         requestAnimationFrame(() => {
-            listContainer.innerHTML = '';
-            listContainer.appendChild(fragment);
-
+            if (loadId !== exclusionsLoadId) return;
             if (blockedUids.length === 0) {
-                listContainer.innerHTML = `
-                    <div class="empty-list-placeholder empty-state">
-                        <div class="empty-face">(｡•̀ᴗ-)✧</div>
-                        <div class="empty-text">No exclusions yet</div>
-                    </div>
-                `;
+                renderEmptyState(listContainer, '(._.)', 'No exclusions yet');
+                return;
             }
+
+            listContainer.replaceChildren(fragment);
         });
     } catch (e) {
         console.error(e);
+        renderTextState(listContainer, 'error-message', 'Error loading exclusions');
         showToast("Error loading exclusions");
     }
 }
@@ -717,6 +795,7 @@ async function openAppSelector() {
     const filterBtn = document.getElementById('btn-filter-toggle');
     const sysSwitch = document.getElementById('switch-system-apps');
     const closeModalBtn = document.getElementById('btn-close-modal');
+    if (!modal || !container || !searchInput || !filterMenu || !filterBtn || !sysSwitch || !closeModalBtn) return;
 
     modal.classList.add('active');
 
@@ -729,9 +808,8 @@ async function openAppSelector() {
     const closeModal = () => {
         modal.classList.remove('active');
         if (listObserver) listObserver.disconnect();
-        closeModalBtn.removeEventListener('click', closeModal);
     };
-    closeModalBtn.addEventListener('click', closeModal);
+    closeModalBtn.onclick = closeModal;
 
     container.innerHTML = '<div class="loading-spinner">Loading apps...</div>';
     
@@ -759,7 +837,7 @@ async function openAppSelector() {
         };
 
     } catch (e) {
-        container.innerHTML = `<div class="error-message">Error: ${e.message}</div>`;
+        renderTextState(container, 'error-message', `Error: ${e.message}`);
         console.error(e);
     }
 }
@@ -776,7 +854,7 @@ function filterAndRender(searchTerm = '') {
         });
 
         const container = document.getElementById('app-list-container');
-        container.innerHTML = '';
+        container.replaceChildren();
         appListRenderIndex = 0;
         
         renderNextAppBatch();
@@ -793,6 +871,9 @@ function renderNextAppBatch() {
 
     if (batch.length === 0) {
         if (listObserver) listObserver.disconnect();
+        if (appListRenderIndex === 0) {
+            renderEmptyState(container, '(._.)', 'No apps found');
+        }
         return;
     }
 
@@ -801,25 +882,48 @@ function renderNextAppBatch() {
     batch.forEach(app => {
         const item = document.createElement('div');
         item.className = 'app-item segment-card';
-        
-        const iconSrc = `ksu://icon/${app.packageName}`;
-        const fallback = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
 
-        item.innerHTML = `
-            <img src="${iconSrc}" class="app-icon-img" loading="lazy" onerror="this.src='${fallback}'" />
-            <div class="app-details">
-                <div class="app-name">${app.appLabel}</div>
-                <div class="app-pkg">${app.packageName}</div>
-            </div>
-            <div class="app-meta">
-                <div class="uid-label">UID: ${app.uid}</div>
-                ${app.isSystem ? '<span class="system-chip">SYS</span>' : ''}
-            </div>
-        `;
+        const icon = document.createElement('img');
+        icon.src = `ksu://icon/${app.packageName}`;
+        icon.className = 'app-icon-img';
+        icon.loading = 'lazy';
+        applyAppIconFallback(icon);
+
+        const details = document.createElement('div');
+        details.className = 'app-details';
+
+        const name = document.createElement('div');
+        name.className = 'app-name';
+        name.textContent = app.appLabel;
+
+        const pkg = document.createElement('div');
+        pkg.className = 'app-pkg';
+        pkg.textContent = app.packageName;
+
+        const meta = document.createElement('div');
+        meta.className = 'app-meta';
+
+        const uid = document.createElement('div');
+        uid.className = 'uid-label';
+        uid.textContent = `UID: ${app.uid}`;
+
+        meta.appendChild(uid);
+        if (app.isSystem) {
+            const chip = document.createElement('span');
+            chip.className = 'system-chip';
+            chip.textContent = 'SYS';
+            meta.appendChild(chip);
+        }
+
+        details.append(name, pkg);
+        item.append(icon, details, meta);
 
         item.addEventListener('click', async () => {
+            if (item.dataset.busy === 'true') return;
+            item.dataset.busy = 'true';
             await addExclusion(app.uid, app.appLabel || app.packageName);
-            document.getElementById('app-selector-modal').classList.remove('active');
+            if (listObserver) listObserver.disconnect();
+            document.getElementById('app-selector-modal')?.classList.remove('active');
         });
 
         fragment.appendChild(item);
@@ -841,31 +945,50 @@ async function removeExclusion(uid, name) {
         const cat = await exec(`cat ${FILES.exclusions} 2>/dev/null || echo ""`);
         const remainingUids = parseUidList(cat.stdout).filter(line => line !== String(uid));
 
-        const unblockRes = await exec(`${NM_BIN} unblock ${uid}`);
-        if (unblockRes.errno !== 0) throw new Error(unblockRes.stderr || "Failed to unblock UID");
-
         const writeRes = await exec(buildWriteUidListCommand(remainingUids));
         if (writeRes.errno !== 0) throw new Error(writeRes.stderr || "Failed to update exclusion list");
 
+        const unblockRes = await exec(`${NM_BIN} unblock ${uid}`);
+        if (unblockRes.errno !== 0) {
+            console.warn("Runtime unblock failed:", unblockRes.stderr);
+            showToast("Removed; runtime unblock failed");
+        }
+
         await loadExclusions();
-    } catch (e) { showToast("Error unblocking"); }
+    } catch (e) {
+        console.error("Error unblocking:", e);
+        showToast("Error unblocking");
+        await loadExclusions();
+    }
 }
 
 async function addExclusion(uid, name) {
     if (!isValidUid(uid)) return showToast("Invalid UID");
+    const uidString = String(uid);
     try {
         const cat = await exec(`cat ${FILES.exclusions} 2>/dev/null || echo ""`);
-        if (parseUidList(cat.stdout).includes(String(uid))) return showToast("Already blocked");
+        const currentUids = parseUidList(cat.stdout);
+        const alreadyBlocked = currentUids.includes(uidString);
 
-        const writeRes = await exec(`printf '%s\\n' ${uid} >> ${FILES.exclusions}`);
-        if (writeRes.errno !== 0) throw new Error(writeRes.stderr || "Failed to update exclusion list");
+        if (!alreadyBlocked) {
+            const writeRes = await exec(buildWriteUidListCommand([...currentUids, uidString]));
+            if (writeRes.errno !== 0) throw new Error(writeRes.stderr || "Failed to update exclusion list");
+        }
 
-        const blockRes = await exec(`${NM_BIN} block ${uid}`);
-        if (blockRes.errno !== 0) throw new Error(blockRes.stderr || "Failed to block UID");
+        const blockRes = await exec(`${NM_BIN} block ${uidString}`);
+        if (blockRes.errno !== 0) {
+            console.warn("Runtime block failed:", blockRes.stderr);
+            showToast("Saved; runtime block failed");
+        } else {
+            showToast(alreadyBlocked ? "Already blocked" : `Blocked: ${name}`);
+        }
 
-        showToast(`Blocked: ${name}`);
         await loadExclusions();
-    } catch (e) { showToast("Error blocking"); }
+    } catch (e) {
+        console.error("Error blocking:", e);
+        showToast("Error blocking");
+        await loadExclusions();
+    }
 }
 
 // Options
@@ -880,15 +1003,15 @@ async function loadOptions() {
     if (swSafe) swSafe.selected = s.stdout.includes('yes');
 
     if (swVerbose) {
-        swVerbose.addEventListener('change', (e) => {
+        swVerbose.onchange = (e) => {
             exec(e.target.selected ? `touch ${FILES.verbose}` : `rm ${FILES.verbose}`);
-        });
+        };
     }
 
     if (swSafe) {
-        swSafe.addEventListener('change', (e) => {
+        swSafe.onchange = (e) => {
             exec(e.target.selected ? `touch ${FILES.disable}` : `rm ${FILES.disable}`);
-        });
+        };
     }
 
     if (btnClear) {
@@ -915,7 +1038,7 @@ function initPullToRefresh() {
     const indicator = document.querySelector('.pull-to-refresh-indicator');
     if (!container || !indicator) return;
     
-    const indicatorIcon = indicator.querySelector('.icon');
+    const indicatorIcon = indicator.querySelector('md-icon');
 
     let startY = 0;
     let pullDistance = 0;

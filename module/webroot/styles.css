@@ -36,6 +36,12 @@ md-icon {
     justify-content: center;
     color: currentColor;
     flex: 0 0 auto;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+md-icon:not([data-icon]) {
+    visibility: hidden;
 }
 
 md-icon svg {
