@@ -76,26 +76,6 @@ typedef unsigned long long u64;
 #define PATH_MAX  4096
 #define NULL ((void *)0)
 
-void *memset(void *dst, int c, size_t n) {
-    char *d = (char *)dst;
-    while (n--) *d++ = (char)c;
-    return dst;
-}
-
-void *memcpy(void *dst, const void *src, size_t n) {
-    char *d = (char *)dst;
-    const char *s = (const char *)src;
-    while (n--) *d++ = *s++;
-    return dst;
-}
-
-size_t strlen(const char *s) {
-    size_t len = 0;
-    while (s[len]) len++;
-    return len;
-}
-
-#define print_str(s) syscall(SYS_WRITE, 1, (long)s, strlen(s))
 
 /* --- NETLINK DEFS --- */
 #define AF_NETLINK 16
@@ -184,99 +164,88 @@ struct nlattr {
 
 /* --- NETLINK ENGINE --- */
 static int nl_seq = 0;
-#define RX_BUF_SIZE (1024 * 512)
-static char tx_buf[8192]; 
+#define RX_BUF_SIZE (PATH_MAX + 4)
+static char tx_buf[RX_BUF_SIZE]; 
 static char rx_buf[RX_BUF_SIZE];
 static char v_resolved[PATH_MAX];
 static char r_resolved[PATH_MAX];
 static char cwd_buf[PATH_MAX];
 #define MAX_PAYLOAD (sizeof(tx_buf) - NLMSG_HDRLEN - NLMSG_ALIGN(sizeof(struct genlmsghdr)) - NLA_HDRLEN - 64)
 
-/* Initialize a new Netlink message */
-static struct nlmsghdr *init_msg(int type, int cmd, int flags) {
-    memset(tx_buf, 0, sizeof(tx_buf));
-    struct nlmsghdr *nlh = (struct nlmsghdr *)tx_buf;
-    nlh->nlmsg_type = type;
-    nlh->nlmsg_flags = flags;
-    nlh->nlmsg_seq = ++nl_seq;
-    struct genlmsghdr *gnlh = (struct genlmsghdr *)(tx_buf + NLMSG_HDRLEN);
-    gnlh->cmd = cmd;
-    gnlh->version = 1;
-    nlh->nlmsg_len = NLMSG_HDRLEN + NLMSG_ALIGN(sizeof(struct genlmsghdr));
-    return nlh;
+__attribute__((noinline))
+static inline void *memcpy(void *dst, const void *src, size_t n) {
+    char *d = dst; const char *s = src;
+    while (n--) *d++ = *s++;
+    return dst;
 }
 
-/* Append an attribute to the message */
-static void add_attr(struct nlmsghdr *nlh, int type, const void *data, int len) {
-    int attr_len = NLA_HDRLEN + len;
-    struct nlattr *nla = (struct nlattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
-    nla->nla_type = type;
-    nla->nla_len = attr_len;
-    memcpy((char *)nla + NLA_HDRLEN, data, len);
-    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + NLA_ALIGN(attr_len);
-}
-
-/* Helper to parse attributes from a packet */
-static void parse_attrs(struct nlattr **tb, int max, struct nlattr *attr, int len) {
-    memset(tb, 0, sizeof(struct nlattr *) * (max + 1));
-    while (len >= NLA_HDRLEN) {
-        if (attr->nla_len >= NLA_HDRLEN && attr->nla_type <= max)
-            tb[attr->nla_type] = attr;
-        int aligned_len = NLA_ALIGN(attr->nla_len);
-        if (aligned_len == 0 || aligned_len > len) break;
-        attr = (struct nlattr *)((char *)attr + aligned_len);
-        len -= aligned_len;
-    }
-}
-
-/* Send packet and wait for ACK or Data */
-static int send_and_recv(int fd, struct nlmsghdr *nlh) {
-    struct sockaddr_nl dest = { .nl_family = AF_NETLINK };
-    long res = syscall(SYS_SENDTO, fd, (long)nlh, nlh->nlmsg_len, 0, (long)&dest, sizeof(dest));
-    if (res < 0) return res;
-
-    res = syscall(SYS_RECVFROM, fd, (long)rx_buf, RX_BUF_SIZE, 0, 0, 0);
-    if (res < 0) return res;
-
-    struct nlmsghdr *rep = (struct nlmsghdr *)rx_buf;
-    if (rep->nlmsg_type == NLMSG_ERROR) {
-        struct nlmsgerr *err = (struct nlmsgerr *)((char *)rep + NLMSG_HDRLEN);
-        return err->error; /* 0 means ACK success, <0 means error */
-    }
-    return res; /* Return bytes read */
-}
-
-/* Get the dynamic Family ID of NoMount */
-static int get_nomount_family_id(int fd) {
-    struct nlmsghdr *nlh = init_msg(GENL_ID_CTRL, CTRL_CMD_GETFAMILY, NLM_F_REQUEST);
-    add_attr(nlh, CTRL_ATTR_FAMILY_NAME, "nomount", 8);
-
-    if (send_and_recv(fd, nlh) > 0) {
-        struct nlmsghdr *rep = (struct nlmsghdr *)rx_buf;
-        if (rep->nlmsg_type != NLMSG_ERROR) {
-            struct nlattr *tb[3];
-            parse_attrs(tb, 2, (struct nlattr *)((char *)rep + NLMSG_HDRLEN + NLMSG_ALIGN(sizeof(struct genlmsghdr))), 
-                        rep->nlmsg_len - NLMSG_HDRLEN - NLMSG_ALIGN(sizeof(struct genlmsghdr)));
-            if (tb[CTRL_ATTR_FAMILY_ID])
-                return *(unsigned short *)((char *)tb[CTRL_ATTR_FAMILY_ID] + NLA_HDRLEN);
-        }
-    }
-    return -1;
+__attribute__((noinline))
+static void print_str(const char *s) {
+    const char *p = s;
+    while (*p) p++;
+    syscall(SYS_WRITE, 1, (long)s, p - s);
 }
 
 /* complete path resolution */
 __attribute__((noinline))
-static int resolve_path(char *result, const char *cwd, const char *rel_path, int max_len) {
-    int r_pos = 0, c_len = 0, p_pos = 0;
-    if (rel_path[0] == '/') {
-        while (rel_path[r_pos] && r_pos < max_len - 1) { result[r_pos] = rel_path[r_pos]; r_pos++; }
+static int resolve_path(char *result, const char *cwd, const char *rel_path) {
+    char *p = result;
+    if (*rel_path == '/') {
+        while (*rel_path) *p++ = *rel_path++;
     } else {
         if (cwd) {
-            while (cwd[c_len] && r_pos < max_len - 1) result[r_pos++] = cwd[c_len++];
-            if (r_pos > 0 && result[r_pos-1] != '/' && r_pos < max_len - 1) result[r_pos++] = '/';
+            while (*cwd) *p++ = *cwd++;
+            if (p > result && p[-1] != '/') *p++ = '/';
         }
-        while (rel_path[p_pos] && r_pos < max_len - 1) result[r_pos++] = rel_path[p_pos++];
+        while (*rel_path) *p++ = *rel_path++;
     }
-    result[r_pos] = '\0';
-    return r_pos;
+    *p = '\0';
+    return p - result;
+}
+
+__attribute__((noinline))
+static void *get_attr(struct nlmsghdr *msg, int type) {
+    int rem = msg->nlmsg_len - NLMSG_HDRLEN - NLMSG_ALIGN(sizeof(struct genlmsghdr));
+    struct nlattr *attr = (struct nlattr *)((char *)msg + NLMSG_HDRLEN + NLMSG_ALIGN(sizeof(struct genlmsghdr)));
+    while (rem >= NLA_HDRLEN) {
+        if (attr->nla_type == type) return (char *)attr + NLA_HDRLEN;
+        int alen = NLA_ALIGN(attr->nla_len);
+        if (!alen || alen > rem) break;
+        attr = (struct nlattr *)((char *)attr + alen);
+        rem -= alen;
+    }
+    return NULL;
+}
+
+/* init_msg + add_attr + send_and_recv unified */
+__attribute__((noinline))
+static long do_nm_cmd(int fd, int fam, int cmd, int atype, const void *data, int len, int flags) {
+    struct nlmsghdr *nlh = (struct nlmsghdr *)tx_buf;
+    struct genlmsghdr *gnlh = (struct genlmsghdr *)(tx_buf + NLMSG_HDRLEN);
+    long *p = (long *)tx_buf, res;
+    p[0] = 0; p[1] = 0; p[2] = 0;
+
+    nlh->nlmsg_type = fam;
+    nlh->nlmsg_flags = flags;
+    nlh->nlmsg_seq = ++nl_seq;
+    gnlh->cmd = cmd;
+    gnlh->version = 1;
+    nlh->nlmsg_len = NLMSG_HDRLEN + NLMSG_ALIGN(sizeof(*gnlh));
+
+    if (data) {
+        struct nlattr *nla = (struct nlattr *)(tx_buf + NLMSG_ALIGN(nlh->nlmsg_len));
+        nla->nla_type = atype;
+        nla->nla_len = NLA_HDRLEN + len;
+        memcpy((char *)nla + NLA_HDRLEN, data, len);
+        nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + NLA_ALIGN(nla->nla_len);
+    }
+
+    struct sockaddr_nl dest = { .nl_family = AF_NETLINK };
+    if (syscall(SYS_SENDTO, fd, (long)nlh, nlh->nlmsg_len, 0, (long)&dest, sizeof(dest)) < 0 ||
+        (res = syscall(SYS_RECVFROM, fd, (long)rx_buf, RX_BUF_SIZE, 0, 0, 0)) < 0) {
+        return -1;
+    }
+
+    struct nlmsghdr *rep = (struct nlmsghdr *)rx_buf;
+    return (rep->nlmsg_type == NLMSG_ERROR) ? ((struct nlmsgerr *)((char *)rep + NLMSG_HDRLEN))->error : res;
 }
