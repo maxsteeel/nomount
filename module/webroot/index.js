@@ -764,10 +764,14 @@ async function loadModule(modId) {
                 printf "/%s\\0%s/%s\\0" "$f" "$mod" "$f"
                 case "$f" in
                     vendor/*|product/*|system_ext/*|odm/*|oem/*)
-                        printf "/system/%s\\0%s/%s\\0" "$f" "$mod" "$f"
+                        if [ ! -e "$mod/system/$f" ] && [ ! -L "$mod/system/$f" ]; then
+                            printf "/system/%s\\0%s/%s\\0" "$f" "$mod" "$f"
+                        fi
                         ;;
                     system/vendor/*|system/product/*|system/system_ext/*|system/odm/*|system/oem/*)
-                        printf "/%s\\0%s/%s\\0" "\${f#system/}" "$mod" "$f"
+                        if [ ! -e "$mod/\${f#system/}" ] && [ ! -L "$mod/\${f#system/}" ]; then
+                            printf "/%s\\0%s/%s\\0" "\${f#system/}" "$mod" "$f"
+                        fi
                         ;;
                 esac
             done
