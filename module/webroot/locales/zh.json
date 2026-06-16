@@ -22,7 +22,7 @@
   "clear_rules": "清除所有规则",
   "language": "语言",
   "language_description": "选择界面语言",
-  "filter_show_system_apps": "现实系统应用",
+  "filter_show_system_apps": "显示系统应用",
   "select_application": "选择应用",
   "search_placeholder": "搜索应用名或包名...",
   "loading_apps": "加载应用列表中...",
