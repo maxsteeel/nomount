@@ -92,7 +92,7 @@ const AVAILABLE_LOCALES = ['en', 'es', 'id'];
 const LOCALE_NAMES = {
     en: 'English',
     es: 'Español',
-    id: 'Bahasa Indonesia'
+    id: 'Bahasa Indonesia',
     zh-CN: '简体中文'
 };
 const TRANSLATION_FILES = {
