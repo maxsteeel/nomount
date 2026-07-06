@@ -4,6 +4,7 @@
 #include <linux/cred.h>
 #include <linux/xattr.h>
 #include <linux/version.h>
+#include <linux/module.h>
 #include "nomount.h"
 
 static struct kmem_cache *nm_dir_cachep __read_mostly, *nm_uid_cachep __read_mostly;
