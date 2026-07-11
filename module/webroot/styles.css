@@ -303,8 +303,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 .modal-overlay.active { display: flex; animation: fadeIn 0.2s forwards; }
 .modal-content {
     background: var(--md-sys-color-surface); width: 100%; max-width: 600px;
-    height: 85vh; border-radius: 24px 24px 0 0; padding: 16px;
-    padding-bottom: calc(16px + var(--insets-bottom));
+    height: 85vh; border-radius: 24px 24px 0 0; padding: 16px 16px 0;
     box-shadow: var(--nm-elevation-2);
     animation: slideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
@@ -326,8 +325,15 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 .filter-menu.active { display: block; animation: fadeIn 0.2s; }
 .filter-option { font-size: 14px; }
 
-.app-list { flex-grow: 1; overflow-y: auto; }
-.app-list-wrapper { position: relative; flex-grow: 1; overflow: hidden; border-radius: 8px; }
+.app-list {
+    flex: 1 1 0; min-height: 0; overflow-y: auto;
+    padding-bottom: calc(16px + var(--insets-bottom));
+    scroll-padding-bottom: calc(16px + var(--insets-bottom));
+}
+.app-list-wrapper {
+    position: relative; flex: 1 1 0; min-height: 0;
+    overflow: hidden; border-radius: 8px 8px 0 0;
+}
 
 .pull-to-refresh-indicator {
     position: absolute; top: -60px; left: 0; right: 0; height: 50px; z-index: 10; pointer-events: none;
