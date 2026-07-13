@@ -59,9 +59,37 @@ jobs:
           echo "MODULE_VERSION=$VERSION" >> $GITHUB_ENV
           echo "COMMIT_HASH=$SHORT_HASH" >> $GITHUB_ENV
 
+      - name: Optimize release module
+        run: |
+          MODULE_BUILD="$RUNNER_TEMP/nomount-module-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          WEBUI_BUILD="$RUNNER_TEMP/nomount-webui-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
+          cp -a module "$MODULE_BUILD"
+          mkdir -p "$WEBUI_BUILD"
+
+          npx --yes esbuild@0.28.1 module/webroot/index.js \
+            --bundle --format=esm --minify \
+            --outfile="$WEBUI_BUILD/index.js"
+          npx --yes esbuild@0.28.1 module/webroot/styles.css \
+            --bundle --minify '--external:/internal/*' \
+            --outfile="$WEBUI_BUILD/styles.css"
+
+          install -m 0644 "$WEBUI_BUILD/index.js" "$MODULE_BUILD/webroot/index.js"
+          install -m 0644 "$WEBUI_BUILD/styles.css" "$MODULE_BUILD/webroot/styles.css"
+          rm "$MODULE_BUILD/webroot/theme.css"
+
+          node --check "$MODULE_BUILD/webroot/index.js"
+          test -s "$MODULE_BUILD/webroot/styles.css"
+          test -s "$MODULE_BUILD/webroot/locales/zh.json"
+          test ! -e "$MODULE_BUILD/webroot/theme.css"
+          grep -Fq '@import"/internal/insets.css"' "$MODULE_BUILD/webroot/styles.css"
+          grep -Fq '@import"/internal/colors.css"' "$MODULE_BUILD/webroot/styles.css"
+
+          du -sb module "$MODULE_BUILD"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.MODULE_NAME }}-${{ env.MODULE_VERSION }}-${{ github.run_number }}-${{ env.COMMIT_HASH }}
-          path: module/
+          path: ${{ runner.temp }}/nomount-module-${{ github.run_id }}-${{ github.run_attempt }}/
 
