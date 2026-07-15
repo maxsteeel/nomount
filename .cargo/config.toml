@@ -1,0 +1,11 @@
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android26-clang"
+
+[target.armv7-linux-androideabi]
+linker = "armv7a-linux-androideabi26-clang"
+
+[target.x86_64-linux-android]
+linker = "x86_64-linux-android26-clang"
+
+[target.i686-linux-android]
+linker = "i686-linux-android26-clang"

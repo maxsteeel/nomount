@@ -1,7 +1,8 @@
-id=nomount
-metamodule=true
+id=meta-nomount
 name=NoMount
-version=v1.1.0
-versionCode=
-author=maxsteeel
-description=A metamodule that replaces OverlayFS/MagicMount with VFS path redirection.\nRequires kernel integration.
+version=v2.0.216-dev
+versionCode=20216
+author=Bouteillepleine
+description=NoMount metamodule — mountless module loading via /dev/nomount VFS redirection. 🫥
+metamodule=1
+updateJson=https://raw.githubusercontent.com/Bouteillepleine/nomount/main/update.json

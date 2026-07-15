@@ -1,0 +1,24 @@
+[package]
+name = "nomount"
+version = "2.0.216-dev"
+edition = "2021"
+
+[dependencies]
+clap = { version = "= 4.5.57", features = ["derive"] }
+anyhow = "= 1.0.101"
+thiserror = "= 2.0.18"
+libc = "= 0.2.180"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.dev]
+strip = false
+debug = 2
+opt-level = 0
+
+[profile.release]
+lto = true
+strip = true
+opt-level = "s"
+codegen-units = 1

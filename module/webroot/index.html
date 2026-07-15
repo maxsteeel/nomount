@@ -1,200 +1,419 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="color-scheme" content="light dark">
-    <meta name="theme-color" content="#fffbff">
-    <title>NoMount</title>
-    <link rel="stylesheet" href="styles.css" type="text/css">
-    <script src="index.js" type="module"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>NoMount</title>
+<style>
+  :root {
+    --bg: #0a0c12;
+    --bg2: #0f131c;
+    --card: rgba(255, 255, 255, 0.045);
+    --card-brd: rgba(255, 255, 255, 0.09);
+    --txt: #e8ecf4;
+    --muted: #8b93a7;
+    --acc: #7c9cff;
+    --acc2: #57e6c3;
+    --ok: #35d29a;
+    --warn: #fbbf24;
+    --bad: #f8717a;
+    --radius: 18px;
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; overflow-x: hidden; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--txt);
+    background:
+      radial-gradient(1200px 700px at 15% -10%, rgba(124, 156, 255, 0.15), transparent 60%),
+      radial-gradient(1000px 600px at 110% 10%, rgba(87, 230, 195, 0.10), transparent 55%),
+      linear-gradient(180deg, var(--bg2), var(--bg));
+    min-height: 100vh;
+    padding: max(18px, env(safe-area-inset-top)) 16px calc(40px + env(safe-area-inset-bottom));
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+
+  header { display: flex; align-items: center; gap: 14px; padding: 8px 4px 22px; }
+  .logo {
+    width: 46px; height: 46px; border-radius: 14px; flex: none;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--acc), var(--acc2));
+    box-shadow: 0 8px 22px rgba(124, 156, 255, 0.35);
+  }
+  .logo svg { width: 26px; height: 26px; }
+  .brand h1 {
+    margin: 0; font-size: 26px; font-weight: 750; letter-spacing: -0.4px;
+    background: linear-gradient(90deg, #fff, #b9c6ff);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .brand p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); }
+  .chip {
+    margin-left: auto; font-size: 12px; color: var(--muted);
+    background: var(--card); border: 1px solid var(--card-brd);
+    padding: 6px 11px; border-radius: 999px; font-variant-numeric: tabular-nums;
+  }
+
+  .card {
+    background: var(--card); border: 1px solid var(--card-brd);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 18px; margin-bottom: 14px; backdrop-filter: blur(8px);
+  }
+  .card-h { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .card-h h2 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: 0.2px; }
+  .card-h .ic { width: 18px; height: 18px; color: var(--acc); flex: none; }
+  .spacer { flex: 1; }
+
+  .status-row { display: flex; align-items: center; gap: 14px; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; font-size: 15px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; box-shadow: 0 0 0 4px rgba(255,255,255,0.05); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 12px var(--ok), 0 0 0 4px rgba(53,210,154,0.15); }
+  .dot.off { background: var(--muted); }
+  .dot.bad { background: var(--bad); box-shadow: 0 0 12px var(--bad), 0 0 0 4px rgba(248,113,122,0.15); }
+  .dot.warn { background: var(--warn); box-shadow: 0 0 12px var(--warn), 0 0 0 4px rgba(251,191,36,0.15); }
+
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+  .metric { background: rgba(255,255,255,0.03); border: 1px solid var(--card-brd); border-radius: 12px; padding: 12px 14px; }
+  .metric .k { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+  .metric .v { font-size: 20px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+  /* toggle */
+  .toggle { position: relative; width: 52px; height: 30px; flex: none; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .track {
+    position: absolute; inset: 0; border-radius: 999px; cursor: pointer;
+    background: rgba(255,255,255,0.12); transition: 0.25s;
+  }
+  .track::before {
+    content: ""; position: absolute; height: 24px; width: 24px; left: 3px; top: 3px;
+    background: #fff; border-radius: 50%; transition: 0.25s; box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  }
+  .toggle input:checked + .track { background: linear-gradient(135deg, var(--acc), var(--acc2)); }
+  .toggle input:checked + .track::before { transform: translateX(22px); }
+  .toggle input:disabled + .track { opacity: 0.5; cursor: default; }
+
+  .btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  button.act {
+    appearance: none; border: 1px solid var(--card-brd); cursor: pointer;
+    color: var(--txt); background: rgba(255,255,255,0.05);
+    padding: 11px 16px; border-radius: 12px; font-size: 14px; font-weight: 600;
+    transition: transform 0.08s, background 0.2s, border-color 0.2s; flex: 1; min-width: 120px;
+  }
+  button.act:active { transform: scale(0.97); }
+  button.act.primary { background: linear-gradient(135deg, var(--acc), var(--acc2)); border-color: transparent; color: #0a0c12; }
+  button.act.danger { border-color: rgba(248,113,122,0.35); color: #ffd7d9; background: rgba(248,113,122,0.10); }
+  button.act:disabled { opacity: 0.45; cursor: default; }
+
+  .list { margin-top: 4px; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-top: 1px solid rgba(255,255,255,0.06); font-size: 13.5px; }
+  .row:first-child { border-top: none; }
+  .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 600; }
+  .tag.on { background: rgba(53,210,154,0.14); color: var(--ok); }
+  .tag.ov { background: rgba(124,156,255,0.16); color: var(--acc); }
+  .tag.off { background: rgba(139,147,167,0.16); color: var(--muted); }
+  .empty { color: var(--muted); font-size: 13px; padding: 8px 2px; }
+  pre.rules {
+    margin: 6px 0 0; max-height: 220px; overflow: auto; font-size: 12px; line-height: 1.6;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; color: #c8d2ea;
+    background: rgba(0,0,0,0.25); border: 1px solid var(--card-brd); border-radius: 12px; padding: 12px;
+  }
+  .uidbar { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+  .uidbar input {
+    flex: 1 1 100%; min-width: 0; width: 100%;
+    background: rgba(0,0,0,0.25); border: 1px solid var(--card-brd); color: var(--txt);
+    border-radius: 12px; padding: 11px 14px; font-size: 14px; outline: none;
+  }
+  .uidbar .act { flex: 1 1 0; min-width: 0; }
+  .uidbar input:focus { border-color: var(--acc); }
+
+  .foot { text-align: center; color: var(--muted); font-size: 11.5px; margin-top: 18px; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom));
+    transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
+    background: #161b26; border: 1px solid var(--card-brd); color: var(--txt);
+    padding: 12px 18px; border-radius: 12px; font-size: 13.5px; font-weight: 600;
+    box-shadow: var(--shadow); transition: 0.28s; max-width: 90vw; z-index: 50;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.ok { border-color: rgba(53,210,154,0.4); }
+  #toast.bad { border-color: rgba(248,113,122,0.4); }
+
+  .banner { background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.3); color: #ffe6a8; padding: 12px 14px; border-radius: 12px; font-size: 13px; margin-bottom: 14px; display: none; }
+  .spin { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+</style>
 </head>
-<body class="loading">
-    <div class="root_layout">
-        <div class="top-app-bar" id="top-app-bar" aria-hidden="true">
-            <div class="top-app-bar-title" id="top-app-bar-title"></div>
-        </div>
-
-        <div class="page-container">
-            <div class="pull-to-refresh-indicator">
-                <md-icon>refresh</md-icon>
-            </div>
-            <div id="view-home" class="view-content active">
-                <div class="header-title">NoMount</div>
-                <div class="home-status-card">
-                    <md-icon id="status-icon" class="status-icon">check_circle</md-icon>
-                    <div class="status-text-col">
-                        <h2 id="status-title">Checking...</h2>
-                        <div id="status-indicator" class="status-label">Checking...</div>
-                    </div>
-                </div>
-
-                <div class="home-segment-group">
-                    <div class="home-segment-row info-row">
-                        <div class="segment-icon"><md-icon>account_tree</md-icon></div>
-                        <div class="info-data">
-                            <span class="info-label" data-i18n="status_label">Status</span>
-                            <span class="info-value" id="injection-stats">Calculating...</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="segment-section-label" data-i18n="device_label">Device</div>
-                <div class="home-segment-group">
-                    <div class="home-segment-row info-row">
-                        <div class="segment-icon"><md-icon>smartphone</md-icon></div>
-                        <div class="info-data">
-                            <span class="info-label" data-i18n="model_label">Model</span>
-                            <span class="info-value" id="device-model">Loading...</span>
-                        </div>
-                    </div>
-
-                    <div class="home-segment-row info-row">
-                        <div class="segment-icon"><md-icon>settings_suggest</md-icon></div>
-                        <div class="info-data">
-                            <span class="info-label" data-i18n="system_label">System</span>
-                            <span class="info-value" id="android-ver">Loading...</span>
-                        </div>
-                    </div>
-
-                    <div class="home-segment-row info-row">
-                        <div class="segment-icon">
-                            <md-icon>memory</md-icon>
-                        </div>
-                        <div class="info-data">
-                            <span class="info-label" data-i18n="kernel_label">Kernel</span>
-                            <span class="info-value" id="kernel-version">Loading...</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="view-modules" class="view-content">
-                <div class="header-title" data-i18n="nav_modules">Modules</div>
-                <div id="modules-list" class="list"></div>
-            </div>
-
-            <div id="view-exclusions" class="view-content">
-                <div class="header-title" data-i18n="nav_exclusions">Exclusions</div>
-                <div id="exclusions-list" class="list"></div>
-            </div>
-
-            <div id="view-options" class="view-content">
-                <div class="header-title" data-i18n="nav_options">Settings</div>
-                
-                <div class="settings-segment-group">
-                    <div class="segment-card setting-item">
-                        <div class="setting-text">
-                            <h3 data-i18n="detailed_logging">Detailed Logging</h3>
-                            <p data-i18n="detailed_logging_desc">Write verbose output to nomount.log</p>
-                        </div>
-                        <label class="custom-switch" id="setting-verbose">
-                            <input type="checkbox" class="switch-input" aria-label="Detailed Logging">
-                            <span class="switch-track">
-                                <span class="switch-thumb"></span>
-                            </span>
-                        </label>
-                    </div>
-
-                    <div class="segment-card setting-item">
-                        <div class="setting-text">
-                            <h3 data-i18n="safe_mode">Safe Mode</h3>
-                            <p data-i18n="safe_mode_desc">Disable injection on next boot</p>
-                        </div>
-                        <label class="custom-switch" id="setting-safemode">
-                            <input type="checkbox" class="switch-input" aria-label="Safe Mode">
-                            <span class="switch-track">
-                                <span class="switch-thumb"></span>
-                            </span>
-                        </label>
-                    </div>
-
-                    <div class="segment-card setting-item" id="lang-setting-card">
-                        <div class="setting-text">
-                            <h3 data-i18n="language">Language</h3>
-                            <p data-i18n="language_description">Select the interface language.</p>
-                        </div>
-                        
-                        <div class="custom-select-wrapper" id="lang-select-wrapper">
-                            <div class="custom-select-trigger" id="lang-select-trigger">
-                                <span id="lang-select-value">English</span>
-                                <md-icon class="dropdown-arrow">arrow_drop_down</md-icon>
-                            </div>
-                            <div class="custom-select-menu" id="lang-select-menu"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <button class="custom-tonal-btn error" id="btn-clear-rules" data-i18n="clear_rules">
-                    Clear all rules
-                </button>
-            </div>
-        </div>
-
-        <div class="bottom-nav">
-            <div class="nav-item active" data-target="view-home">
-                <div class="nav-icon"><md-icon>home</md-icon></div>
-                <span data-i18n="nav_home">Home</span>
-            </div>
-            <div class="nav-item" data-target="view-modules">
-                <div class="nav-icon"><md-icon>extension</md-icon></div>
-                <span data-i18n="nav_modules">Modules</span>
-            </div>
-            <div class="nav-item" data-target="view-exclusions">
-                <div class="nav-icon"><md-icon>shield</md-icon></div>
-                <span data-i18n="nav_exclusions">Exclusions</span>
-            </div>
-            <div class="nav-item" data-target="view-options">
-                <div class="nav-icon"><md-icon>settings</md-icon></div>
-                <span data-i18n="nav_options">Options</span>
-            </div>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#0a0c12" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7l8-4 8 4v6c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/>
+      </svg>
     </div>
-
-    <div id="fab-container">
-        <button class="custom-fab" id="fab-add-exclusion" aria-label="Add exclusion">
-            <md-icon>add</md-icon>
-        </button>
+    <div class="brand">
+      <h1>NoMount</h1>
+      <p>Mountless VFS metamodule</p>
     </div>
+    <div class="chip" id="ver">v…</div>
+  </header>
 
-    <div id="app-selector-modal" class="modal-overlay">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 data-i18n="select_application">Select Application</h3>
-                <md-icon-button id="btn-close-modal">
-                    <md-icon>close</md-icon>
-                </md-icon-button>
-            </div>
+  <div class="banner" id="banner">Open this page from the KernelSU / APatch manager to control the module.</div>
 
-            <div class="search-box">
-                <md-icon>search</md-icon>
-                <input type="text" id="app-search-input" data-i18n="search_placeholder"
-                    data-i18n-attr="placeholder" placeholder="Search app or package...">
-                <md-icon-button id="btn-filter-toggle">
-                    <md-icon>filter_list</md-icon>
-                </md-icon-button>
-            </div>
-
-            <div id="filter-menu" class="filter-menu">
-                <div class="filter-option">
-                    <span data-i18n="filter_show_system_apps">Show System Apps</span>
-                    <label class="custom-switch" id="switch-system-apps">
-                        <input type="checkbox" class="switch-input" aria-label="Show System Apps">
-                        <span class="switch-track">
-                            <span class="switch-thumb"></span>
-                        </span>
-                    </label>
-                </div>
-            </div>
-
-            <div class="app-list-wrapper">
-                <div id="app-modal-refresh-indicator" class="pull-to-refresh-indicator">
-                    <md-icon>refresh</md-icon>
-                </div>
-                <div id="app-list-container" class="app-list">
-                    <div class="loading-spinner" data-i18n="loading_apps">Loading apps...</div>
-                </div>
-            </div>
-        </div>
+  <!-- Engine -->
+  <div class="card">
+    <div class="card-h">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      <h2>Engine</h2>
+      <div class="spacer"></div>
+      <label class="toggle"><input type="checkbox" id="engine" onchange="toggleEngine()"><span class="track"></span></label>
     </div>
+    <div class="status-row">
+      <span class="pill"><span class="dot off" id="dot"></span><span id="state">Checking…</span></span>
+    </div>
+    <div class="metrics">
+      <div class="metric"><div class="k">Active rules</div><div class="v" id="rules">—</div></div>
+      <div class="metric"><div class="k">Driver</div><div class="v" id="drv">—</div></div>
+    </div>
+    <div class="btns">
+      <button class="act primary" onclick="remount(this)">Remount modules</button>
+      <button class="act" onclick="refreshAll(this)">Refresh</button>
+    </div>
+  </div>
+
+  <!-- Bootguard -->
+  <div class="card">
+    <div class="card-h">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 4v5c0 5-3 7.5-7 9-4-1.5-7-4-7-9V7z"/></svg>
+      <h2>Bootloop guard</h2>
+    </div>
+    <div class="status-row">
+      <span class="pill"><span class="dot ok" id="gdot"></span><span id="gstate">Armed</span></span>
+    </div>
+    <div class="metrics">
+      <div class="metric"><div class="k">Boot count</div><div class="v" id="gcount">—</div></div>
+      <div class="metric"><div class="k">Trips at</div><div class="v">3</div></div>
+    </div>
+    <div class="btns">
+      <button class="act danger" id="rearm" onclick="rearm(this)">Re-arm &amp; enable</button>
+    </div>
+  </div>
+
+  <!-- Modules -->
+  <div class="card">
+    <div class="card-h">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      <h2>Modules</h2><div class="spacer"></div><span class="chip" id="modcount">0</span>
+    </div>
+    <div class="list" id="modules"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- Rules -->
+  <div class="card">
+    <div class="card-h">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <h2>Active rules</h2><div class="spacer"></div>
+      <button class="act" style="flex:none;min-width:0;padding:7px 12px" onclick="toggleRules(this)" id="rulesBtn">Show</button>
+    </div>
+    <pre class="rules" id="ruleslist" style="display:none">…</pre>
+  </div>
+
+  <!-- Overlay mounts -->
+  <div class="card">
+    <div class="card-h">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+      <h2>Overlay mounts</h2><div class="spacer"></div><span class="chip" id="ovcount">0</span>
+    </div>
+    <div class="list" id="overlays"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- UID -->
+  <div class="card">
+    <div class="card-h">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+      <h2>UID exclusions</h2>
+    </div>
+    <div class="uidbar">
+      <input id="uid" type="number" inputmode="numeric" placeholder="UID (e.g. 10123)" />
+      <button class="act" onclick="uidOp('block',this)">Block</button>
+      <button class="act" onclick="uidOp('unblock',this)">Unblock</button>
+    </div>
+    <p class="empty" style="margin-top:12px">Blocked UIDs never see injected files (useful for hiding from specific apps).</p>
+  </div>
+
+  <div class="foot">NoMount · driven via <code>/dev/nomount</code></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  let execId = 0;
+  const KSU = window.ksu;
+  document.getElementById('banner').style.display = (KSU && KSU.exec) ? 'none' : 'block';
+
+  function exec(cmd, opts = {}) {
+    return new Promise((resolve) => {
+      if (!KSU || !KSU.exec) { resolve({ errno: -1, stdout: '', stderr: 'no webui env' }); return; }
+      const name = '__nmcb' + (execId++);
+      window[name] = (errno, stdout, stderr) => {
+        delete window[name];
+        resolve({ errno: Number(errno), stdout: stdout || '', stderr: stderr || '' });
+      };
+      try { KSU.exec(cmd, JSON.stringify(opts), name); }
+      catch (e) { delete window[name]; resolve({ errno: -1, stdout: '', stderr: String(e) }); }
+    });
+  }
+
+  let NMBIN = null;
+  async function bin() {
+    if (NMBIN) return NMBIN;
+    const abi = (await exec('getprop ro.product.cpu.abi')).stdout.trim() || 'arm64-v8a';
+    NMBIN = `/data/adb/modules/meta-nomount/bin/${abi}/nomount`;
+    return NMBIN;
+  }
+  async function nm(args) { return exec(`${await bin()} ${args}`); }
+
+  function toast(msg, kind = '') {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'show ' + kind;
+    clearTimeout(t._t); t._t = setTimeout(() => { t.className = ''; }, 2200);
+  }
+  const $ = (id) => document.getElementById(id);
+
+  async function refreshStatus() {
+    const r = await nm('vfs query-status');
+    const dot = $('dot'), engine = $('engine');
+    if (r.errno !== 0) {
+      $('state').textContent = 'Kernel driver not found';
+      dot.className = 'dot bad'; engine.checked = false; engine.disabled = true;
+      $('rules').textContent = '—'; $('drv').textContent = '—';
+      return;
+    }
+    engine.disabled = false;
+    const out = r.stdout;
+    const active = /engine:\s*active/i.test(out);
+    const mRules = out.match(/rules:\s*(\d+)/i);
+    const mVer = out.match(/driver:\s*v(\d+)/i);
+    engine.checked = active;
+    $('state').textContent = active ? 'Active' : 'Inactive';
+    dot.className = 'dot ' + (active ? 'ok' : 'off');
+    $('rules').textContent = mRules ? mRules[1] : '0';
+    $('drv').textContent = mVer ? ('v' + mVer[1]) : '?';
+  }
+
+  async function refreshGuard() {
+    const c = (await exec('cat /data/adb/nomount/bootcount 2>/dev/null')).stdout.trim();
+    const disabled = (await exec('[ -f /data/adb/nomount/disabled ] && echo 1 || echo 0')).stdout.trim() === '1';
+    $('gcount').textContent = c === '' ? '0' : c;
+    if (disabled) {
+      $('gstate').textContent = 'Tripped — disabled'; $('gdot').className = 'dot bad';
+      $('rearm').style.display = '';
+    } else {
+      $('gstate').textContent = 'Armed'; $('gdot').className = 'dot ok';
+      $('rearm').style.display = 'none';
+    }
+  }
+
+  async function refreshModules() {
+    const box = $('modules');
+    const out = (await exec(
+      'for d in /data/adb/modules/*/; do [ -d "$d" ] || continue; ' +
+      'id=$(basename "$d"); ' +
+      'st=on; { [ -f "$d/disable" ] || [ -f "$d/remove" ] || [ -f "$d/skip_mount" ]; } && st=off; ' +
+      '[ -d "$d/system" ] || st=nosys; ' +
+      'mech=""; ' +
+      'if [ "$st" = on ]; then ov=0; vf=0; ' +
+      '[ -n "$(find "$d/system" -path "*/overlay/*.apk" -print -quit 2>/dev/null)" ] && ov=1; ' +
+      '[ -n "$(find "$d/system" -type f ! -path "*/overlay/*" -print -quit 2>/dev/null)" ] && vf=1; ' +
+      'if [ "$ov" = 1 ] && [ "$vf" = 1 ]; then mech="vfs+overlay"; ' +
+      'elif [ "$ov" = 1 ]; then mech="overlay"; elif [ "$vf" = 1 ]; then mech="vfs"; fi; fi; ' +
+      'echo "$id|$st|$mech"; done'
+    )).stdout.trim();
+    if (!out) { box.innerHTML = '<div class="empty">No modules installed.</div>'; $('modcount').textContent = '0'; return; }
+    const rows = out.split('\n').filter(Boolean);
+    $('modcount').textContent = rows.length;
+    box.innerHTML = rows.map((l) => {
+      const [id, st, mech] = l.split('|');
+      const on = st === 'on';
+      let label, cls;
+      if (st === 'nosys') { label = 'no /system'; cls = 'off'; }
+      else if (!on) { label = 'skipped'; cls = 'off'; }
+      else if (mech === 'overlay') { label = 'overlay'; cls = 'ov'; }
+      else if (mech === 'vfs+overlay') { label = 'vfs + overlay'; cls = 'ov'; }
+      else { label = 'vfs'; cls = 'on'; }
+      return `<div class="row"><span class="name">${id.replace(/</g, '&lt;')}</span>` +
+             `<span class="tag ${cls}">${label}</span></div>`;
+    }).join('');
+  }
+
+  async function refreshOverlays() {
+    const box = $('overlays');
+    const out = (await exec("grep '^nomount_ov ' /proc/1/mounts | cut -d' ' -f2")).stdout.trim();
+    const dirs = out ? out.split('\n').filter(Boolean) : [];
+    $('ovcount').textContent = dirs.length;
+    if (!dirs.length) { box.innerHTML = '<div class="empty">No RRO overlay modules mounted.</div>'; return; }
+    box.innerHTML = dirs.map((d) =>
+      `<div class="row"><span class="name">${d.replace(/</g, '&lt;')}</span><span class="tag on">mounted</span></div>`
+    ).join('');
+  }
+
+  async function refreshAll(btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+    $('ver').textContent = ((await nm('version')).stdout.trim().replace(/^nomount\s*/i, '')) || 'v?';
+    await Promise.all([refreshStatus(), refreshGuard(), refreshModules(), refreshOverlays()]);
+    if ($('ruleslist').style.display !== 'none') loadRules();
+    if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
+  }
+
+  async function toggleEngine() {
+    const on = $('engine').checked;
+    const r = await nm(on ? 'vfs enable' : 'vfs disable');
+    if (r.errno === 0) toast(on ? 'Engine enabled' : 'Engine disabled', 'ok');
+    else toast('Failed: ' + (r.stderr || 'error'), 'bad');
+    refreshStatus();
+  }
+
+  async function remount(btn) {
+    btn.disabled = true; const old = btn.textContent; btn.textContent = 'Remounting…';
+    const r = await nm('mount');
+    if (r.errno === 0) toast(r.stdout.replace(/^nomount:\s*/, '') || 'Remounted', 'ok');
+    else toast('Remount failed: ' + (r.stderr || 'error'), 'bad');
+    btn.disabled = false; btn.textContent = old;
+    refreshStatus();
+  }
+
+  async function rearm(btn) {
+    btn.disabled = true;
+    await exec('rm -f /data/adb/nomount/disabled /data/adb/nomount/bootcount');
+    toast('Guard re-armed — reboot to re-enable', 'ok');
+    btn.disabled = false;
+    refreshGuard();
+  }
+
+  let rulesShown = false;
+  async function loadRules() {
+    const r = await nm('vfs list');
+    $('ruleslist').textContent = (r.errno === 0 && r.stdout.trim()) ? r.stdout.trim() : 'no rules';
+  }
+  async function toggleRules(btn) {
+    rulesShown = !rulesShown;
+    $('ruleslist').style.display = rulesShown ? '' : 'none';
+    btn.textContent = rulesShown ? 'Hide' : 'Show';
+    if (rulesShown) { $('ruleslist').textContent = 'Loading…'; loadRules(); }
+  }
+
+  async function uidOp(op, btn) {
+    const v = $('uid').value.trim();
+    if (!/^\d+$/.test(v)) { toast('Enter a numeric UID', 'bad'); return; }
+    btn.disabled = true;
+    const r = await nm(`uid ${op} ${v}`);
+    if (r.errno === 0) toast(`UID ${v} ${op}ed`, 'ok');
+    else toast('Failed: ' + (r.stderr || 'error'), 'bad');
+    btn.disabled = false;
+  }
+
+  refreshAll();
+</script>
 </body>
 </html>
