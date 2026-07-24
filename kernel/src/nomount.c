@@ -8,6 +8,7 @@
 #include "nomount.h"
 
 static struct kmem_cache *nm_dir_cachep __read_mostly, *nm_inode_cachep __read_mostly;
+static struct kmem_cache *nm_iop_cachep __read_mostly, *nm_fop_cachep __read_mostly;
 static const struct cred *nm_root_cred;
 static DEFINE_STATIC_KEY_FALSE(nomount_active_uids);
 
@@ -112,10 +113,8 @@ static inline void nomount_emit_virtual_children(struct dir_context *ctx, struct
     rcu_read_lock();
     idr_for_each_entry_continue(&dir_node->children_idr, child, id) {
         ctx->pos = nm_pack_pos(id);
-        if (!(child->flags & NM_FLAG_WHITEOUT)) {
-            if (!dir_emit(ctx, child->name, child->name_len, child->fake_ino, child->d_type))
-                break;
-        }
+        if (!(child->flags & NM_FLAG_WHITEOUT) && 
+            !dir_emit(ctx, child->name, child->name_len, child->fake_ino, child->d_type)) break;
         ctx->pos = nm_pack_pos(id + 1);
     }
     rcu_read_unlock();
@@ -492,6 +491,41 @@ static int nm_xattr_set(const struct xattr_handler *handler, IDMAP_ARG struct de
     return proxy->orig->set(proxy->orig, IDMAP_CALL dentry, inode, name, buffer, size, flags);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
+static int nm_d_revalidate(struct inode *dir, const struct qstr *name, struct dentry *dentry, unsigned int flags)
+#else
+static int nm_d_revalidate(struct dentry *dentry, unsigned int flags)
+#endif
+{
+    struct inode *parent_dir;
+    struct nm_iop *nm_iop;
+    struct nomount_rule *rule;
+    u32 hash;
+
+    if (flags & LOOKUP_RCU)
+        return -ECHILD;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
+    parent_dir = dir;
+#else
+    parent_dir = d_inode(dentry->d_parent);
+#endif
+    if (!parent_dir) return 1;
+
+    nm_iop = __get_nm(smp_load_acquire(&parent_dir->i_op), struct nm_iop, fake_iop);
+    if (!nm_iop || !nm_iop->dir_node) return 0; 
+
+    hash = full_name_hash(NULL, dentry->d_name.name, dentry->d_name.len);
+    rule = nomount_find_child_rule(nm_iop->dir_node, dentry->d_name.name, dentry->d_name.len, hash);
+    if (!rule) return 0;
+
+    return 1;
+}
+
+static const struct dentry_operations nm_dops = {
+    .d_revalidate = nm_d_revalidate,
+};
+
 /*** i_op / s_op / f_op Hijacking Hooks ***/
 
 static struct inode *nomount_create_new_inode(struct super_block *virtual_sb, struct nomount_rule *rule)
@@ -587,7 +621,8 @@ static struct dentry *nomount_hijacked_lookup(struct inode *dir, struct dentry *
         if ((rule->flags & NM_FLAG_INTERNAL_DIR) || rule->r_path.dentry) {
             struct inode *new_inode = nomount_create_new_inode(dir->i_sb, rule);
             if (likely(new_inode)) {
-                nm_debug("Lookup hijacked! Splicing inode %lu into dentry '%s'\n", new_inode->i_ino, name);
+                dentry->d_op = &nm_dops;
+                nm_debug("Lookup hijacked! Splicing inode %llu into dentry '%s'\n", new_inode->i_ino, name);
                 return d_splice_alias(new_inode, dentry);
             }
         }
@@ -694,7 +729,7 @@ static inline void nomount_hijack_superblock(struct super_block *sb)
     nm_sop = kzalloc(sizeof(*nm_sop), GFP_KERNEL);
     if (unlikely(!nm_sop)) return;
 
-    memcpy(&nm_sop->fake_sop, sb->s_op, sizeof(struct super_operations));
+    nm_sop->fake_sop = *(sb->s_op);
     nm_sop->orig_sop = sb->s_op;
     nm_sop->signature = NOMOUNT_MAGIC_SIG;
     nm_sop->sb = sb;
@@ -736,9 +771,9 @@ static inline void nomount_hijack_virtual_parent(struct nomount_dir_node *dir_no
     struct nm_fop *nm_fop;
     if (unlikely(!inode->i_fop || __get_nm(smp_load_acquire(&inode->i_fop), struct nm_fop, fake_fop))) return;
 
-    nm_fop = kzalloc(sizeof(*nm_fop), GFP_KERNEL);
+    nm_fop = kmem_cache_zalloc(nm_fop_cachep, GFP_KERNEL);
     if (likely(nm_fop)) {
-        memcpy(&nm_fop->fake_fop, inode->i_fop, sizeof(struct file_operations));
+        nm_fop->fake_fop = *(inode->i_fop);
         nm_fop->orig_fop = inode->i_fop;
         nm_fop->signature = NOMOUNT_MAGIC_SIG;
         nm_fop->dir_node = dir_node;
@@ -751,7 +786,7 @@ static inline void nomount_hijack_virtual_parent(struct nomount_dir_node *dir_no
 #endif
 
         smp_store_release(&inode->i_fop, &nm_fop->fake_fop);
-        nm_debug("i_fop successfully hijacked for virtual parent dir (ino: %lu)\n", inode->i_ino);
+        nm_debug("i_fop successfully hijacked for virtual parent dir (ino: %llu)\n", inode->i_ino);
     }
 }
 
@@ -760,9 +795,9 @@ static inline void nomount_hijack_dir_inode(struct nomount_dir_node *dir_node, s
     struct nm_iop *nm_iop;
     if (unlikely(!inode->i_op || __get_nm(smp_load_acquire(&inode->i_op), struct nm_iop, fake_iop))) return;
 
-    nm_iop = kzalloc(sizeof(*nm_iop), GFP_KERNEL);
+    nm_iop = kmem_cache_zalloc(nm_iop_cachep, GFP_KERNEL);
     if (likely(nm_iop)) {
-        memcpy(&nm_iop->fake_iop, inode->i_op, sizeof(struct inode_operations));
+        nm_iop->fake_iop = *(inode->i_op);
         nm_iop->orig_iop = inode->i_op;
         nm_iop->signature = NOMOUNT_MAGIC_SIG;
         nm_iop->dir_node = dir_node;
@@ -771,18 +806,19 @@ static inline void nomount_hijack_dir_inode(struct nomount_dir_node *dir_node, s
         if (nm_iop->orig_iop->lookup) nm_iop->fake_iop.lookup = nomount_hijacked_lookup;
         smp_store_release(&inode->i_op, &nm_iop->fake_iop);
         inode->i_flags |= S_PRIVATE;
-        nm_debug("i_op successfully hijacked for parent dir (ino: %lu)\n", inode->i_ino);
+        nm_debug("i_op successfully hijacked for parent dir (ino: %llu)\n", inode->i_ino);
     }
 }
 
-static void nomount_invalidate_dcache(const char *v_path)
-{
-    struct path target_path;
-    if (kern_path(v_path, 0, &target_path) == 0) {
-        d_drop(target_path.dentry);
-        path_put(&target_path);
-    }
+#define NM_DEFINE_RCU_FREE(_name, _type, _cache)                \
+static void _name(struct rcu_head *head)                        \
+{                                                               \
+    _type *obj = container_of(head, _type, rcu);                \
+    kmem_cache_free(_cache, obj);                               \
 }
+
+NM_DEFINE_RCU_FREE(nm_iop_rcu_free, struct nm_iop, nm_iop_cachep)
+NM_DEFINE_RCU_FREE(nm_fop_rcu_free, struct nm_fop, nm_fop_cachep)
 
 static void nomount_restore_dir_node(struct nomount_dir_node *dir_node)
 {
@@ -797,15 +833,15 @@ static void nomount_restore_dir_node(struct nomount_dir_node *dir_node)
     if (nm_iop && nm_iop->dir_node == dir_node) {
         smp_store_release(&t_inode->i_op, nm_iop->orig_iop);
         if (!nm_iop->had_private_flag) t_inode->i_flags &= ~S_PRIVATE;
-        nm_debug("Successfully cured i_op for dir %lu\n", t_inode->i_ino);
-        kfree_rcu(nm_iop, rcu);
+        nm_debug("Successfully cured i_op for dir %llu\n", t_inode->i_ino);
+        call_rcu(&nm_iop->rcu, nm_iop_rcu_free);
     }
 
     nm_fop = __get_nm(smp_load_acquire(&t_inode->i_fop), struct nm_fop, fake_fop);
     if (nm_fop && nm_fop->dir_node == dir_node) {
         smp_store_release(&t_inode->i_fop, nm_fop->orig_fop);
-        nm_debug("Successfully cured i_fop for dir %lu\n", t_inode->i_ino);
-        kfree_rcu(nm_fop, rcu);
+        nm_debug("Successfully cured i_fop for dir %llu\n", t_inode->i_ino);
+        call_rcu(&nm_fop->rcu, nm_fop_rcu_free);
     }
     spin_unlock(&t_inode->i_lock);
     iput(t_inode);
@@ -1056,7 +1092,6 @@ static void nomount_prune_empty_virtual_dirs(struct nomount_dir_node *dir_node, 
         owner = dir_node->_tag_ptr & 1UL ? (struct nomount_rule *)(dir_node->_tag_ptr & ~1UL) : NULL;
         if (!owner) break;
 
-        nomount_invalidate_dcache(nm_get_vpath(owner));
         hash_del_rcu(&owner->vpath_node);
         if (owner->parent_dir) __nomount_delete_child_locked(owner->parent_dir, owner->v_hash);
         nm_debug("Pruned empty virtual directory: %s\n", nm_get_vpath(owner));
@@ -1156,7 +1191,6 @@ static void __nomount_del_rule(const char *v_path, size_t v_len, struct hlist_he
     hash_for_each_possible(nomount_rules_ht, rule, vpath_node, hash) {
         if (rule->v_hash == hash && rule->v_len == v_len &&
                 memcmp(nm_get_vpath(rule), v_path, v_len) == 0) {
-            nomount_invalidate_dcache(v_path);
             hash_del_rcu(&rule->vpath_node);
             if (rule->parent_dir) {
                 struct nomount_dir_node *p_dir = rule->parent_dir;
@@ -1180,7 +1214,6 @@ static void __nomount_clear_all(bool is_exit)
     idr_destroy(&nomount_uid_idr);
 
     hash_for_each_safe(nomount_rules_ht, bkt, tmp, rule, vpath_node) {
-        nomount_invalidate_dcache(nm_get_vpath(rule));
         hash_del_rcu(&rule->vpath_node);
         if (rule->parent_dir) __nomount_delete_child_locked(rule->parent_dir, rule->v_hash);
         hlist_add_head(&rule->vpath_node, &r_victims);
@@ -1304,7 +1337,7 @@ static int nomount_genl_dump_rules(struct sk_buff *skb, struct netlink_callback 
     struct nomount_rule *rule;
     int current_bkt = cb->args[0];
     int skip_nodes  = cb->args[1];
-    int bkt, node_idx;
+    int bkt, node_idx = 0;
     void *hdr;
 
     rcu_read_lock();
@@ -1460,11 +1493,15 @@ static int __init nomount_init(void)
     hash_init(nomount_rules_ht);
     nm_dir_cachep = kmem_cache_create("nm_dirs", sizeof(struct nomount_dir_node), 0, SLAB_HWCACHE_ALIGN, NULL);
     nm_inode_cachep = kmem_cache_create("nm_inodes", sizeof(struct nm_inode_info), 0, SLAB_HWCACHE_ALIGN, NULL);
+    nm_iop_cachep = kmem_cache_create("nomount_iop_cache", sizeof(struct nm_iop), 0, SLAB_HWCACHE_ALIGN, NULL);
+    nm_fop_cachep = kmem_cache_create("nomount_fop_cache", sizeof(struct nm_fop), 0, SLAB_HWCACHE_ALIGN, NULL);
 
-    if (!nm_dir_cachep || !nm_inode_cachep) {
+    if (!nm_dir_cachep || !nm_inode_cachep || !nm_iop_cachep || !nm_fop_cachep) {
         nm_err("Failed to allocate memory slab caches\n");
         if (nm_dir_cachep) kmem_cache_destroy(nm_dir_cachep);
         if (nm_inode_cachep) kmem_cache_destroy(nm_inode_cachep);
+        if (nm_iop_cachep) kmem_cache_destroy(nm_iop_cachep);
+        if (nm_fop_cachep) kmem_cache_destroy(nm_fop_cachep);
         put_cred(nm_root_cred);
         return -ENOMEM;
     }
@@ -1474,6 +1511,8 @@ static int __init nomount_init(void)
         nm_err("Failed to register Generic Netlink family (err: %d)\n", ret);
         kmem_cache_destroy(nm_dir_cachep);
         kmem_cache_destroy(nm_inode_cachep);
+        kmem_cache_destroy(nm_iop_cachep);
+        kmem_cache_destroy(nm_fop_cachep);
         put_cred(nm_root_cred);
         return ret;
     }
@@ -1492,6 +1531,8 @@ static void __exit nomount_exit(void)
 
     kmem_cache_destroy(nm_dir_cachep);
     kmem_cache_destroy(nm_inode_cachep);
+    kmem_cache_destroy(nm_iop_cachep);
+    kmem_cache_destroy(nm_fop_cachep);
     put_cred(nm_root_cred);
 
     nm_info("Unloaded successfully\n");
