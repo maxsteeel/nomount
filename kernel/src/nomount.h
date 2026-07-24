@@ -6,6 +6,7 @@
 #include <linux/list.h>
 #include <linux/hashtable.h>
 #include <linux/atomic.h>
+#include <linux/file.h>
 #include <net/sock.h>
 #include <net/genetlink.h>
 #include <linux/version.h>
