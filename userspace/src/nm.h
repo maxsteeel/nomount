@@ -76,13 +76,14 @@ struct nlmsghdr {
 #define TX_BUF_SIZE 16384
 #define MAX_PAYLOAD (TX_BUF_SIZE - 88)
 
-static char sys_mem[RX_BUF_SIZE + TX_BUF_SIZE + (PATH_MAX * 3) + MAX_PAYLOAD] __attribute__((aligned(16)));
-#define rx_buf     (&sys_mem[0])
-#define tx_buf     (&sys_mem[RX_BUF_SIZE])
-#define v_resolved (&sys_mem[RX_BUF_SIZE + TX_BUF_SIZE])
-#define r_resolved (&sys_mem[RX_BUF_SIZE + TX_BUF_SIZE + PATH_MAX])
-#define cwd_buf    (&sys_mem[RX_BUF_SIZE + TX_BUF_SIZE + (PATH_MAX * 2)])
-#define payload    (&sys_mem[RX_BUF_SIZE + TX_BUF_SIZE + (PATH_MAX * 3)])
+struct nm_mem {
+    char rx_buf[RX_BUF_SIZE];
+    char tx_buf[TX_BUF_SIZE];
+    char v_resolved[PATH_MAX];
+    char r_resolved[PATH_MAX];
+    char cwd_buf[PATH_MAX];
+    char payload[MAX_PAYLOAD];
+} __attribute__((aligned(16)));
 
 #define noinline __attribute__((noinline))
 #if defined(__x86_64__)
@@ -129,16 +130,16 @@ static noinline void *get_attr(const void *nh, int type) {
 }
 
 /* init_msg + add_attr + send_and_recv unified */
-static noinline int do_nm_cmd(int fd, int fam, int cmd, int atype, const void *data, int len, int flags) {
-    struct nlmsghdr *nlh = (void *)tx_buf;
+static noinline int do_nm_cmd(int fd, int fam, int cmd, int atype, const void *data, int len, int flags, struct nm_mem *mem) {
+    struct nlmsghdr *nlh = (void *)mem->tx_buf;
     nlh->nlmsg_type = fam;
     nlh->nlmsg_flags = flags;
     nlh->nlmsg_len = 20;
-    tx_buf[16] = cmd;
-    tx_buf[17] = 1;
+    mem->tx_buf[16] = cmd;
+    mem->tx_buf[17] = 1;
 
     if (data) {
-        unsigned short *nla = (void *)(tx_buf + 20);
+        unsigned short *nla = (void *)(mem->tx_buf + 20);
         nla[0] = 4 + len; nla[1] = atype;
         memcpy(nla + 2, data, len);
         nlh->nlmsg_len = 20 + nla[0];
@@ -146,8 +147,8 @@ static noinline int do_nm_cmd(int fd, int fam, int cmd, int atype, const void *d
 
     int res = sys3(SYS_WRITE, fd, (long)nlh, nlh->nlmsg_len);
     if (res < 0) return res;
-    res = sys3(SYS_READ, fd, (long)rx_buf, RX_BUF_SIZE);
-    if (res >= 0 && ((struct nlmsghdr *)rx_buf)->nlmsg_type == 2) res = *(int *)(rx_buf + 16);
+    res = sys3(SYS_READ, fd, (long)mem->rx_buf, RX_BUF_SIZE);
+    if (res >= 16 && ((struct nlmsghdr *)mem->rx_buf)->nlmsg_type == 2) res = *(int *)(mem->rx_buf + 16);
 
     return res;
 }
