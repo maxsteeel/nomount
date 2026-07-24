@@ -88,7 +88,7 @@ void c_main(long *sp) {
         goto do_exit;
 
     } else if (cmd == 'v') {
-        if (do_nm_cmd(fd, nm_family, 1, 0, (void *)0, 0, 5) > 0) { 
+        if (do_nm_cmd(fd, nm_family, 1, 0, (void *)0, 0, 1) > 0) {
             unsigned int *ver = get_attr(rx_buf, 5);
             if (ver) {
                 unsigned int v = *ver; char v_str[4] = {0};

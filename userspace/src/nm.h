@@ -117,10 +117,13 @@ static noinline char* resolve_path(char *p, const char *cwd, const char *rel) {
 }
 
 static noinline void *get_attr(const void *nh, int type) {
+    unsigned int max_len = ((struct nlmsghdr *)nh)->nlmsg_len;
     char *attr = (char *)nh + 20;
-    while (*(unsigned short *)attr) {
+    while ((attr - (char *)nh) + 4 <= max_len) {
+        unsigned short alen = *(unsigned short *)attr;
+        if (alen < 4) break;
         if (*(unsigned short *)(attr + 2) == type) return attr + 4;
-        attr += (*(unsigned short *)attr + 3) & -4; 
+        attr += (alen + 3) & -4;
     }
     return (void *)0;
 }
