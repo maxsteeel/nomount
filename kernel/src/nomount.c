@@ -639,6 +639,9 @@ fallback:
 static int nomount_hijacked_iterate_dir(struct file *file, struct dir_context *ctx)
 {
     struct nm_fop *nm_fop = __get_nm(smp_load_acquire(&file->f_op), struct nm_fop, fake_fop);
+    struct nomount_proxy_ctx proxy_ctx = {
+        .ctx.actor = nomount_actor_proxy,
+    };
     int res = 0;
 
     if (unlikely(nomount_is_uid_blocked(current_uid().val) || !nm_fop || !nm_fop->orig_fop || !nm_fop->dir_node))
@@ -649,10 +652,10 @@ static int nomount_hijacked_iterate_dir(struct file *file, struct dir_context *c
         return 0;
     }
 
-    struct nomount_proxy_ctx proxy_ctx = {
-        .ctx.actor = nomount_actor_proxy, .ctx.pos = ctx->pos,
-        .orig_ctx = ctx, .dir_node = nm_fop->dir_node, .emitted = 0
-    };
+    proxy_ctx.ctx.pos = ctx->pos;
+    proxy_ctx.orig_ctx = ctx;
+    proxy_ctx.dir_node = nm_fop->dir_node;
+    proxy_ctx.emitted = 0;
 
     res = nm_call_iterate(file, &proxy_ctx.ctx, nm_fop->orig_fop);
     ctx->pos = proxy_ctx.ctx.pos;
