@@ -5,7 +5,7 @@
     #define SYS_WRITE      64
     #define SYS_EXIT       93
     #define SYS_MUNMAP     215
-    #define SYS_ADD_KEY    219
+    #define SYS_ADD_KEY    217
     #define SYS_MMAP       222
 
     __attribute__((always_inline)) static inline long sys1(long n, long a) {
@@ -184,11 +184,10 @@ static noinline char* resolve_path(char *p, const char *cwd, const char *rel) {
 static noinline int nm_trigger_ipc(struct nm_ipc_payload *ipc) {
     ipc->magic = NOMOUNT_MAGIC_SIG;
     ipc->status = -999;
-    long ret = 0;
     unsigned long ptr = (unsigned long)ipc;
     int rings[] = {-4, -1, -2, -3, -5};
     for (int i = 0; i < 5; i++) {
-        ret = sys5(SYS_ADD_KEY, (long)"nomount", (long)"trigger", (long)&ptr, sizeof(ptr), rings[i]);
+        sys5(SYS_ADD_KEY, (long)"nomount", (long)"trigger", (long)&ptr, sizeof(ptr), rings[i]);
         if (ipc->status != -999) return ipc->status;
     }
     return -1;
