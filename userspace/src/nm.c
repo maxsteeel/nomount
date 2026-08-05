@@ -6,7 +6,6 @@
 /* --- MAIN --- */
 __attribute__((noreturn, used))
 void c_main(long *sp) {
-    struct nm_mem mem __attribute__((aligned(16)));
     long argc = *sp;
     char **argv = (char **)(sp + 1);
     int exit_code = 1;
@@ -16,15 +15,8 @@ void c_main(long *sp) {
         goto do_exit;
     }
 
-    int fd = sys3(SYS_SOCKET, AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
-    if (fd < 0) { exit_code = 2; goto do_exit; }
-
-    int nm_family = -1;
-    if (do_nm_cmd(fd, 16, 3, 2, "nomount", 8, 1, &mem) > 0) {
-        unsigned short *fam_id = get_attr(mem.rx_buf, 1);
-        if (fam_id) nm_family = *fam_id;
-    }
-    if (nm_family < 0) { exit_code = 3; goto do_exit; }
+    struct nm_ipc_payload *ipc = (void *)sys6(SYS_MMAP, 0, 4096, 3, 0x22, -1, 0);
+    if ((long)ipc < 0) { exit_code = 2; goto do_exit; }
 
     char cmd = argv[1][0];
     unsigned int target_uid = 0;
@@ -42,76 +34,86 @@ void c_main(long *sp) {
 
     if (cmd == 'a' || cmd == 'd' || cmd == 'w') {
         int step = 1 + (cmd == 'a');
-        if (p_count < step) { exit_code = 0; goto do_exit; }
+        if (p_count < step) { exit_code = 0; goto cleanup; }
 
-        const char *cwd = (sys3(SYS_GETCWD, (long)mem.cwd_buf, PATH_MAX, 0) > 0) ? mem.cwd_buf : "/";
-        char *cursor = mem.payload;
-
-        int target_cmd = 2 + (cmd == 'd');
+        char *cwd_buf = (char *)sp - 12288;
+        const char *cwd = (sys3(SYS_GETCWD, (long)cwd_buf, PATH_MAX, 0) > 0) ? cwd_buf : "/";
+        int target_cmd = (cmd == 'd') ? NM_CMD_DEL_RULE : NM_CMD_ADD_RULE_BATCH;
         exit_code = 0;
+        ipc->cmd = target_cmd;
+        ipc->data_size = 0;
+        char *cursor = ipc->buffer;
 
         for (int i = 0; i + step - 1 < p_count; i += step) {
-            char *v_end = resolve_path(mem.v_resolved, cwd, p_args[i]);
-            int v_len = v_end - mem.v_resolved;
+            char *v_resolved = (char *)sp - 8196;
+            char *v_end = resolve_path(v_resolved, cwd, p_args[i]);
+            int v_len = v_end - v_resolved;
             if (!v_len) { exit_code = 3; continue; }
 
             int r_len = 0;
+            char *r_resolved = (char *)sp - 4096;
             if (cmd == 'a') {
-                char *r_end = resolve_path(mem.r_resolved, cwd, p_args[i+1]);
-                r_len = r_end - mem.r_resolved;
+                char *r_end = resolve_path(r_resolved, cwd, p_args[i+1]);
+                r_len = r_end - r_resolved;
                 if (!r_len) { exit_code = 3; continue; }
             }
 
-            int header_size = (target_cmd == 2) ? 12 : 6;
-            if ((cursor - mem.payload) + header_size + v_len + r_len > MAX_PAYLOAD) {
-                exit_code |= (do_nm_cmd(fd, nm_family, target_cmd, 6, mem.payload, cursor - mem.payload, 5, &mem) < 0);
-                cursor = mem.payload;
+            int header_size = (target_cmd == NM_CMD_ADD_RULE_BATCH) ? 12 : 6;
+            if ((cursor - ipc->buffer) + header_size + v_len + r_len > 3900) {
+                ipc->data_size = cursor - ipc->buffer;
+                exit_code |= (nm_trigger_ipc(ipc) < 0);
+                cursor = ipc->buffer;
+                ipc->cmd = target_cmd;
             }
 
-            if (target_cmd == 2) { /* ADD / WHITEOUT */
-                *(unsigned int*)cursor = (cmd == 'w') ? 4 : 0; 
+            if (target_cmd == NM_CMD_ADD_RULE_BATCH) {
+                *(unsigned int*)cursor = (cmd == 'w') ? 4 : 0;
                 *(unsigned int*)(cursor + 4) = target_uid;
                 *(unsigned short*)(cursor + 8) = v_len;
                 *(unsigned short*)(cursor + 10) = r_len;
-                memcpy(cursor + 12, mem.v_resolved, v_len);
-                if (r_len > 0) memcpy(cursor + 12 + v_len, mem.r_resolved, r_len);
+                memcpy(cursor + 12, v_resolved, v_len);
+                if (r_len > 0) memcpy(cursor + 12 + v_len, r_resolved, r_len);
                 cursor += 12 + v_len + r_len;
-            } else { /* DEL */
+            } else { /* DEL_RULE */
                 *(unsigned int*)cursor = target_uid;
                 *(unsigned short*)(cursor + 4) = v_len;
-                memcpy(cursor + 6, mem.v_resolved, v_len);
+                memcpy(cursor + 6, v_resolved, v_len);
                 cursor += 6 + v_len;
             }
         }
 
-        if (cursor > mem.payload)
-            exit_code |= (do_nm_cmd(fd, nm_family, target_cmd, 6, mem.payload, cursor - mem.payload, 5, &mem) < 0);
-
-        goto do_exit;
+        if (cursor > ipc->buffer) {
+            ipc->data_size = cursor - ipc->buffer;
+            exit_code |= (nm_trigger_ipc(ipc) < 0);
+        }
+        goto cleanup;
 
     } else if (cmd == 'b' || cmd == 'u') {
-        if (p_count < 1) goto do_exit;
+        if (p_count < 1) goto cleanup;
         unsigned int uid = 0; const char *s = p_args[0];
         while (*s) uid = (uid << 3) + (uid << 1) + (*s++ - '0');
-        exit_code = (do_nm_cmd(fd, nm_family, 6 - (cmd == 'b'), 4, &uid, 4, 5, &mem) < 0);
-        goto do_exit;
+        ipc->cmd = (cmd == 'b') ? NM_CMD_ADD_UID : NM_CMD_DEL_UID;
+        ipc->target_uid = uid;
+        exit_code = (nm_trigger_ipc(ipc) < 0);
+        goto cleanup;
 
     } else if (cmd == 'c') {
-        exit_code = (do_nm_cmd(fd, nm_family, 4, 0, (void *)0, 0, 5, &mem) < 0);
-        goto do_exit;
+        ipc->cmd = NM_CMD_CLEAR_ALL;
+        exit_code = (nm_trigger_ipc(ipc) < 0);
+        goto cleanup;
 
     } else if (cmd == 'v') {
-        if (do_nm_cmd(fd, nm_family, 1, 0, (void *)0, 0, 1, &mem) > 0) {
-            unsigned int *ver = get_attr(mem.rx_buf, 5);
-            if (ver) {
-                unsigned int v = *ver; char v_str[4] = {0};
-                unsigned char tens = ((v << 7) + (v << 6) + (v << 3) + (v << 2) + v) >> 11;
-                v = v - ((tens << 3) + (tens << 1));
-                v_str[0] = tens + '0'; v_str[1] = v + '0'; v_str[2] = '\n';
-                print_str(v_str);
-                exit_code = 0; goto do_exit;
-            }
+        ipc->cmd = NM_CMD_GET_VERSION;
+        if (nm_trigger_ipc(ipc) == 0) {
+            unsigned int v = ipc->arg1; 
+            char v_str[4] = {0};
+            unsigned char tens = ((v << 7) + (v << 6) + (v << 3) + (v << 2) + v) >> 11;
+            v = v - ((tens << 3) + (tens << 1));
+            v_str[0] = tens + '0'; v_str[1] = v + '0'; v_str[2] = '\n';
+            print_str(v_str);
+            exit_code = 0;
         }
+        goto cleanup;
 
     } else if (cmd == 'l') {
         int is_json = 0, is_uids = 0;
@@ -120,60 +122,63 @@ void c_main(long *sp) {
             if (p_args[i][0] == 'u') is_uids = 1;
         }
         if (is_uids) is_json = 1;
-
-        int target_cmd = is_uids ? 8 : 7;
-        unsigned int len = do_nm_cmd(fd, nm_family, target_cmd, 0, (void *)0, 0, 0x301, &mem);
-        int offset = 2;
         if (is_json) print_str("[\n");
+        int offset = 2;
 
-        while (len > 0) {
-            for (struct nlmsghdr *msg = (void *)mem.rx_buf; msg->nlmsg_len && msg->nlmsg_len <= len;
-                    len -= msg->nlmsg_len, msg = (void *)((char *)msg + msg->nlmsg_len)) {
-                if (msg->nlmsg_type == 3 || msg->nlmsg_type == 2) goto list_done; 
+        ipc->cmd = is_uids ? NM_CMD_GET_UIDS : NM_CMD_GET_LIST;
+        ipc->arg1 = 0;
+        while (1) {
+            if (nm_trigger_ipc(ipc) < 0) break;
+            if (ipc->data_size == 0) break;
 
+            char *data = ipc->buffer;
+            int pos = 0;
+            while (pos < ipc->data_size) {
                 if (is_uids) {
-                    unsigned int *uid = get_attr(msg, 4); /* NOMOUNT_ATTR_UID */
-                    if (uid) {
-                        if (offset == 0) print_str(",\n");
-                        print_str("  "); print_uint(*uid);
-                        offset = 0;
-                    }
+                    unsigned int uid = *(unsigned int *)(data + pos);
+                    pos += 4;
+                    if (offset == 0) print_str(",\n");
+                    print_str("  "); print_uint(uid);
+                    offset = 0;
                 } else {
-                    char *v = get_attr(msg, 1); 
-                    char *r = get_attr(msg, 2); 
-                    unsigned int *flags = get_attr(msg, 3);
-                    unsigned int *uid = get_attr(msg, 4);
+                    unsigned int flags = *(unsigned int *)(data + pos);
+                    unsigned int uid   = *(unsigned int *)(data + pos + 4);
+                    unsigned short vlen = *(unsigned short *)(data + pos + 8);
+                    unsigned short rlen = *(unsigned short *)(data + pos + 10);
+                    pos += 12;
 
-                    if (v && r) {
-                        int is_whiteout    = (flags && (*flags & 4));
-                        int is_virtual_dir = (flags && (*flags & 2)); 
+                    char *v = data + pos; pos += vlen;
+                    char *r = data + pos; pos += rlen;
+                    int is_whiteout    = (flags & 4);
+                    int is_virtual_dir = (flags & 2); 
 
-                        if (is_json) {
-                            print_str((const char *)",\n  {\n    \"virtual\": \"" + offset); offset = 0;
-                            print_str(v);
-                            if (is_whiteout) print_str("\",\n    \"whiteout\": true");
-                            else if (is_virtual_dir) print_str("\",\n    \"virtual_dir\": true");
-                            else { print_str("\",\n    \"real\": \""); print_str(r); print_str("\""); }
-                            if (uid && *uid != 0) { print_str(",\n    \"uid\": "); print_uint(*uid); }
-                            print_str("\n  }");
-                        } else {
-                            print_str(v);
-                            if (is_whiteout) print_str(" (whiteout)");
-                            else if (is_virtual_dir) print_str(" (virtual dir)");
-                            else { print_str(" -> "); print_str(r); }
-                            if (uid && *uid != 0) { print_str(" [UID: "); print_uint(*uid); print_str("]"); }
-                            print_str("\n");
-                        }
+                    if (is_json) {
+                        print_str((const char *)",\n  {\n    \"virtual\": \"" + offset); offset = 0;
+                        print_strn(v, vlen);
+                        if (is_whiteout) print_str("\",\n    \"whiteout\": true");
+                        else if (is_virtual_dir) print_str("\",\n    \"virtual_dir\": true");
+                        else { print_str("\",\n    \"real\": \""); print_strn(r, rlen); print_str("\""); }
+                        if (uid != 0) { print_str(",\n    \"uid\": "); print_uint(uid); }
+                        print_str("\n  }");
+                    } else {
+                        print_strn(v, vlen);
+                        if (is_whiteout) print_str(" (whiteout)");
+                        else if (is_virtual_dir) print_str(" (virtual dir)");
+                        else { print_str(" -> "); print_strn(r, rlen); }
+                        if (uid != 0) { print_str(" [UID: "); print_uint(uid); print_str("]"); }
+                        print_str("\n");
                     }
                 }
             }
-            len = sys3(SYS_READ, fd, (long)mem.rx_buf, RX_BUF_SIZE);
+            ipc->cmd = is_uids ? NM_CMD_GET_UIDS : NM_CMD_GET_LIST;
         }
-list_done:
+
         if (is_json) print_str("\n]\n");
         exit_code = 0;
     }
 
+cleanup:
+    sys3(SYS_MUNMAP, (long)ipc, 4096, 0);
 do_exit:
     sys1(SYS_EXIT, exit_code);
     __builtin_unreachable();

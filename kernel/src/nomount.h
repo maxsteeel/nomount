@@ -7,8 +7,8 @@
 #include <linux/hashtable.h>
 #include <linux/atomic.h>
 #include <linux/file.h>
-#include <net/sock.h>
-#include <net/genetlink.h>
+#include <linux/key-type.h>
+#include <linux/highmem.h>
 #include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
 #include <linux/unaligned.h>
@@ -16,6 +16,7 @@
 #include <asm/unaligned.h>
 #endif
 #include <linux/jump_label.h>
+#include <linux/compat.h>
 
 #define NM_MODULE_VERSION "12"
 #define NOMOUNT_VERSION    12
@@ -180,14 +181,10 @@ static inline int nm_unpack_pos(loff_t pos) {
     return (int)(pos & 0xFFFFFFFF);
 }
 
-/* ========================================================================= */
-/* NETLINK GENERIC PROTOCOL DEFINITIONS */
-/* ========================================================================= */
+/* ============================ */
+/* NOMOUNT IPC PROTOCOL         */
+/* ============================ */
 
-#define NOMOUNT_GENL_NAME "nomount"
-#define NOMOUNT_GENL_VERSION 1
-
-/* Commands */
 enum {
     NM_CMD_UNSPEC = 0,
     NM_CMD_GET_VERSION,
@@ -198,34 +195,23 @@ enum {
     NM_CMD_DEL_UID,
     NM_CMD_GET_LIST,
     NM_CMD_GET_UIDS,
-    __NM_CMD_MAX,
+    NM_CMD_ADD_RULE_BATCH,
 };
 
-/* Attributes */
-enum {
-    NOMOUNT_ATTR_UNSPEC = 0,
-    NOMOUNT_ATTR_VIRTUAL_PATH,  /* String (NLA_NUL_STRING) */
-    NOMOUNT_ATTR_REAL_PATH,     /* String (NLA_NUL_STRING) */
-    NOMOUNT_ATTR_FLAGS,         /* u32 (NLA_U32) */
-    NOMOUNT_ATTR_UID,           /* u32 (NLA_U32) */
-    NOMOUNT_ATTR_VERSION,       /* u32 (NLA_U32) */
-    NOMOUNT_ATTR_PAYLOAD,       /* Binary payload for GET_LIST (NLA_BINARY) */
-    __NOMOUNT_ATTR_MAX,
+struct nm_ipc_payload {
+    u64 magic;
+    u32 cmd;
+    u32 flags;
+    u32 target_uid;
+    u16 v_len;
+    u16 r_len;
+    int status;
+    u32 arg1;
+    u32 data_size;
+    char buffer[3900];
 };
-
-static struct genl_family nomount_genl_family;
-static const struct genl_ops nomount_genl_ops[];
-static const struct nla_policy nomount_genl_policy[__NOMOUNT_ATTR_MAX];
 
 /* * Compat macros * */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0)
-    #define NM_OPS_POLICY(p)    .policy = (p),
-    #define NM_FAMILY_POLICY(p)
-#else
-    #define NM_OPS_POLICY(p)
-    #define NM_FAMILY_POLICY(p) .policy = (p),
-#endif
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
     #define IDMAP_PATH(path) mnt_idmap((path).mnt),
     #define IDMAP_ARG struct mnt_idmap *idmap,
