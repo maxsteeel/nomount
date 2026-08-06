@@ -30,13 +30,13 @@ fi
 touch "$BOOT_SEMAPHORE"
 
 if ! "$LOADER" v > /dev/null 2>&1; then
-    echo "[FATAL] NoMount Netlink interface missing/unresponsive." >> "$LOG_FILE"
+    echo "[FATAL] NoMount Internal API is missing/unresponsive." >> "$LOG_FILE"
     touch "$MODDIR/disable"
     sed -i "s|^description=.*|description=[❌ ERROR: Kernel not patched] \\\\n$BASE_DESC|" "$PROP_FILE"
     rm -f "$BOOT_SEMAPHORE"
     exit 1
 fi
-echo "[OK] Netlink socket responding properly." >> "$LOG_FILE"
+echo "[OK] Internal API responding properly." >> "$LOG_FILE"
 
 VERBOSE=false
 if [ -f "$VERBOSE_FLAG" ]; then

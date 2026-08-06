@@ -14,24 +14,23 @@ mv "$MODPATH/bin/nm-$ARCH" "$MODPATH/bin/nm"
 set_perm "$MODPATH/bin/nm" 0 0 0755
 rm -rf $MODPATH/bin/nm-*
 
-ui_print "- Checking Kernel support via Netlink..."
-
+ui_print "- Checking Kernel support via Internal API..."
 if "$MODPATH/bin/nm" v > /dev/null 2>&1; then
-  ui_print "  [OK] NoMount Netlink interface detected."
+  ui_print "  [OK] NoMount Internal API detected."
   ui_print "  [OK] System is ready for injection."
 else
   ui_print " "
   ui_print "***************************************************"
   ui_print "* [!] WARNING: KERNEL DRIVER NOT DETECTED         *"
   ui_print "***************************************************"
-  ui_print "* The NoMount Netlink interface is unresponsive.  *"
+  ui_print "* NoMount Internal API is missing/unresponsive.   *"
   ui_print "* *"
   ui_print "* This module will NOT FUNCTION until you flash   *"
   ui_print "* a Kernel compiled with CONFIG_NOMOUNT=y         *"
   ui_print "***************************************************"
   ui_print " "
-  
-  touch "$MODPATH/disable"
+
+  abort "! Kernel module not detected"
 fi
 
 NOMOUNT_DATA="/data/adb/nomount"
