@@ -18,8 +18,7 @@
 #include <linux/jump_label.h>
 #include <linux/compat.h>
 
-#define NM_MODULE_VERSION "12"
-#define NOMOUNT_VERSION    12
+#define NOMOUNT_VERSION "12"
 #define NOMOUNT_HASH_BITS  12
 #define NM_FLAG_IS_DIR      (1 << 0)
 #define NM_FLAG_VIRTUAL_DIR (1 << 1)

@@ -105,12 +105,7 @@ void c_main(long *sp) {
     } else if (cmd == 'v') {
         ipc->cmd = NM_CMD_GET_VERSION;
         if (nm_trigger_ipc(ipc) == 0) {
-            unsigned int v = ipc->arg1; 
-            char v_str[4] = {0};
-            unsigned char tens = ((v << 7) + (v << 6) + (v << 3) + (v << 2) + v) >> 11;
-            v = v - ((tens << 3) + (tens << 1));
-            v_str[0] = tens + '0'; v_str[1] = v + '0'; v_str[2] = '\n';
-            print_str(v_str);
+            print_strn(ipc->buffer, ipc->data_size); print_str("\n");
             exit_code = 0;
         }
         goto cleanup;

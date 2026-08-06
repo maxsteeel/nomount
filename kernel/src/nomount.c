@@ -1414,7 +1414,8 @@ static int nm_process_ipc_payload(unsigned long user_addr)
     payload->status = 0;
     switch (payload->cmd) {
         case NM_CMD_GET_VERSION:
-            payload->arg1 = NOMOUNT_VERSION;
+            payload->data_size = strlen(NOMOUNT_VERSION);
+            memcpy(payload->buffer, NOMOUNT_VERSION, payload->data_size);
             requires_zeroing = false;
             break;
 
@@ -1668,7 +1669,7 @@ static void __exit nomount_exit(void)
 }
 
 MODULE_LICENSE("GPL");
-MODULE_VERSION(NM_MODULE_VERSION);
+MODULE_VERSION(NOMOUNT_VERSION);
 MODULE_AUTHOR("maxsteeel");
 MODULE_DESCRIPTION("NoMount Path Redirection VFS Subsystem");
 
