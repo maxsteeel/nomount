@@ -682,11 +682,17 @@ async function addExclusion(uid, name) {
     }
 
     try {
-        const blockResult = await exec(`${NM_BIN} uid add ${uidStr}`);
-        if (blockResult.errno !== 0) throw new Error(blockResult.stderr || 'Failed to block UID');
-        else showToast(alreadyBlocked ? translate('blocked_already') : translate('blocked', { name }));
         const currentUids = parseUidList((await exec(`cat ${FILES.exclusions} 2>/dev/null || echo ""`)).stdout);
-        if (!currentUids.includes(uidStr)) await exec(buildWriteUidListCmd([...currentUids, uidStr]));
+        const alreadyBlocked = currentUids.includes(uidStr);
+        if (!alreadyBlocked) {
+            const persistResult = await exec(buildWriteUidListCmd([...currentUids, uidStr]));
+            if (persistResult.errno !== 0) throw new Error(persistResult.stderr || 'Failed to save exclusion');
+        }
+
+        const blockResult = await exec(`${NM_BIN} uid add ${uidStr}`);
+        if (alreadyBlocked) showToast(translate('blocked_already'));
+        else if (blockResult.errno !== 0) showToast(translate('blocked_saved'));
+        else showToast(translate('blocked', { name }));
     } catch { showToast(translate('error_blocking')); }
 
     await loadExclusions();
