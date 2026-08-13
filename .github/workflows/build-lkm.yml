@@ -1,8 +1,6 @@
 name: build lkm
 
 on:
-  push:
-    branches: dev
   workflow_dispatch:
     inputs:
       kmi_android12_5_10:
@@ -40,7 +38,7 @@ permissions:
 jobs:
   select-kmis:
     name: Select KMI builds
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       kmi: ${{ steps.matrix.outputs.kmi }}
 
