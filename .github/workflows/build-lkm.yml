@@ -87,7 +87,7 @@ jobs:
 
     env:
       MODULE_DIR: ${{ github.workspace }}/build/nomount
-      ARTIFACT: artifacts/nomount-${{ matrix.kmi }}-arm64.ko
+      ARTIFACT: artifacts/nomount-${{ matrix.kmi }}.ko
 
     steps:
       - name: Checkout repo
@@ -116,19 +116,17 @@ jobs:
           set -euo pipefail
 
           mkdir -p "$MODULE_DIR"
-          cp kernel/src/nomount.{c,h} "$MODULE_DIR/"
+          cp kernel/src/* "$MODULE_DIR/"
 
           if ! grep -Fq 'MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);' "$MODULE_DIR/nomount.c"; then
             printf '\n%s\n' 'MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);' >> "$MODULE_DIR/nomount.c"
           fi
 
-          printf '%s\n' 'obj-m += nomount.o' > "$MODULE_DIR/Makefile"
-
       - name: Build module
         run: |
           set -euo pipefail
 
-          make \
+          CONFIG_NOMOUNT=m make \
             -j"$(nproc)" \
             -C "$KDIR" \
             ARCH=arm64 \
@@ -147,5 +145,5 @@ jobs:
       - name: Upload module
         uses: actions/upload-artifact@v7
         with:
-          name: nomount-${{ matrix.kmi }}-arm64
+          name: nomount-${{ matrix.kmi }}
           path: ${{ env.ARTIFACT }}
