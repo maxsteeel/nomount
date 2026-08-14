@@ -12,7 +12,39 @@ if [ ! -f "$MODPATH/bin/nm-$ARCH" ]; then
 fi
 mv "$MODPATH/bin/nm-$ARCH" "$MODPATH/bin/nm"
 set_perm "$MODPATH/bin/nm" 0 0 0755
-rm -rf "$MODPATH"/bin/nm-*
+
+USE_KSUD=false
+if command -v ksud >/dev/null 2>&1 && \
+   ksud -h 2>&1 | grep -qE '(^|[[:space:]])insmod([[:space:]]|$)'; then
+  USE_KSUD=true
+  ui_print "- KernelSU ksud insmod detected; KoLoader will remain as fallback."
+fi
+
+if [ ! -f "$MODPATH/bin/ko-loader-$ARCH" ]; then
+  abort "! KoLoader binary not found for architecture: $ARCH"
+fi
+mv "$MODPATH/bin/ko-loader-$ARCH" "$MODPATH/loader"
+set_perm "$MODPATH/loader" 0 0 0755
+rm -rf "$MODPATH"/bin/nm-* "$MODPATH"/bin/ko-loader-*
+
+KO_LOADER="$MODPATH/loader"
+
+load_ko() {
+  if [ "$USE_KSUD" = true ]; then
+    if ksud insmod "$1" && "$MODPATH/bin/nm" version > /dev/null 2>&1; then
+      return 0
+    fi
+    ui_print "  [!] ksud insmod failed; falling back to KoLoader."
+    rmmod nomount 2>/dev/null
+    USE_KSUD=false
+  fi
+
+  ko_name=${1##*/}
+  (
+    cd "$MODPATH/lkm" || exit 1
+    "$KO_LOADER" "$ko_name"
+  )
+}
 
 KVER=$(uname -r | cut -d'.' -f1,2)
 AKVER=$(uname -r | grep -oE 'android[0-9]+')
@@ -49,7 +81,7 @@ else
   EXACT_MATCH="$MODPATH/lkm/nomount-${AKVER}-${KVER}.ko"
   if [ -n "$AKVER" ] && [ -f "$EXACT_MATCH" ]; then
     ui_print "  [*] Trying exact match: $(basename "$EXACT_MATCH")"
-    if insmod "$EXACT_MATCH" && "$MODPATH/bin/nm" version > /dev/null 2>&1; then
+    if load_ko "$EXACT_MATCH" && "$MODPATH/bin/nm" version > /dev/null 2>&1; then
       mv "$EXACT_MATCH" "$MODPATH/lkm/nomount.ko"
       NOMOUNT_LOADED=true
     else
@@ -61,7 +93,7 @@ else
     for mod in "$MODPATH"/lkm/nomount*-${KVER}.ko; do
       if [ ! -f "$mod" ] || [ "$mod" = "$EXACT_MATCH" ]; then continue; fi
       ui_print "  [*] Trying fallback: $(basename "$mod")"
-      if insmod "$mod" && "$MODPATH/bin/nm" version > /dev/null 2>&1; then
+      if load_ko "$mod" && "$MODPATH/bin/nm" version > /dev/null 2>&1; then
         mv "$mod" "$MODPATH/lkm/nomount.ko"
         NOMOUNT_LOADED=true
         break
@@ -76,7 +108,7 @@ else
     ui_print "  [!] New modules failed. Restoring previous working LKM..."
     mkdir -p "$MODPATH/lkm"
     cp "$OLD_MODULE_KO" "$MODPATH/lkm/nomount.ko"
-    if insmod "$MODPATH/lkm/nomount.ko" && "$MODPATH/bin/nm" version > /dev/null 2>&1; then
+    if load_ko "$MODPATH/lkm/nomount.ko" && "$MODPATH/bin/nm" version > /dev/null 2>&1; then
       NOMOUNT_LOADED=true
       RESTORED_OLD_KO=true
     else
@@ -88,6 +120,9 @@ else
 fi
 
 if [ "$NOMOUNT_LOADED" = true ]; then
+  if [ "$USE_KSUD" = true ] || [ "$IS_BUILTIN" = true ]; then
+    rm -f "$MODPATH/loader"
+  fi
   ui_print "  [OK] System is ready for injection."
   if { [ "$OLD_LKM_UNLOADED" = true ] && [ "$IS_BUILTIN" = false ]; } || [ "$RESTORED_OLD_KO" = true ]; then
     if [ -f "$MODPATH/metamount.sh" ]; then

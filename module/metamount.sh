@@ -2,6 +2,8 @@
 
 MODDIR=${0%/*}
 LOADER="$MODDIR/bin/nm"
+KO_LOADER="$MODDIR/loader"
+USE_KSUD=false
 MODULES_DIR="/data/adb/modules"
 NOMOUNT_DATA="/data/adb/nomount"
 LOG_FILE="$NOMOUNT_DATA/nomount.log"
@@ -10,6 +12,29 @@ BOOT_SEMAPHORE="$NOMOUNT_DATA/.booting"
 TARGET_PARTITIONS="system vendor product system_ext odm oem"
 PROP_FILE="$MODDIR/module.prop"
 BASE_DESC="A metamodule that replaces OverlayFS/MagicMount with VFS path redirection."
+
+if command -v ksud >/dev/null 2>&1 && \
+   ksud -h 2>&1 | grep -qE '(^|[[:space:]])insmod([[:space:]]|$)'; then
+    USE_KSUD=true
+fi
+
+load_ko() {
+    ko_name=${1##*/}
+
+    if [ "$USE_KSUD" = true ]; then
+        if ksud insmod "$1" && "$LOADER" version > /dev/null 2>&1; then
+            return 0
+        fi
+        echo "[WARN] ksud insmod failed; falling back to KoLoader." >> "$LOG_FILE"
+        rmmod nomount 2>/dev/null
+        USE_KSUD=false
+    fi
+
+    (
+        cd "$MODDIR/lkm" || exit 1
+        "$KO_LOADER" "$ko_name"
+    )
+}
 
 if [ ! -d "$NOMOUNT_DATA" ]; then
     mkdir -p "$NOMOUNT_DATA"
@@ -35,11 +60,7 @@ if "$LOADER" version > /dev/null 2>&1; then
 else
     echo "[INFO] Built-in not found. Attempting to load LKM..." >> "$LOG_FILE"
     if [ -f "$MODDIR/lkm/nomount.ko" ]; then
-    	if command -v ksud >/dev/null 2>&1; then
-    		ksud insmod "$MODDIR/lkm/nomount.ko" 2>> "$LOG_FILE"
-    	else
-        	insmod "$MODDIR/lkm/nomount.ko" 2>> "$LOG_FILE"
-        fi
+        load_ko "$MODDIR/lkm/nomount.ko" >> "$LOG_FILE" 2>&1
     fi
 
     if ! "$LOADER" version > /dev/null 2>&1; then
