@@ -55,6 +55,16 @@ else
   ui_print "- Detected Kernel: $KVER (Custom/Unknown branch)"
 fi
 
+install_lkm() {
+  local module_path="$1"
+  if command -v ksud >/dev/null 2>&1; then
+    ksud insmod "$module_path"
+    return $?
+  fi
+  insmod "$module_path"
+  return $?
+}
+
 NOMOUNT_LOADED=false
 OLD_LKM_UNLOADED=false
 RESTORED_OLD_KO=false
