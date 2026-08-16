@@ -79,6 +79,7 @@ void c_main(long *sp) {
 
             exit_code = 0;
             payload->cmd = target_cmd;
+            payload->arg1 = 0;
             payload->data_size = 0;
             char *cursor = payload->buffer;
 
@@ -102,6 +103,7 @@ void c_main(long *sp) {
                     exit_code |= (nm_send_payload(payload) < 0);
                     cursor = payload->buffer;
                     payload->cmd = target_cmd;
+                    payload->arg1 = 0;
                 }
 
                 if (target_cmd == NM_CMD_ADD_RULE) {
