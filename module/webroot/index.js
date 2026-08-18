@@ -27,7 +27,8 @@ const LOCALE_NAMES = {
     id: 'Bahasa Indonesia',
     zh: '简体中文',
     ru: 'Русский',
-    tr: 'Türkçe'
+    tr: 'Türkçe',
+    vi: 'Tiếng Việt'
 };
 let activeLocale = 'en', translations = {};
 
