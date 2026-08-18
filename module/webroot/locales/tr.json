@@ -50,5 +50,7 @@
   "refresh_failed": "Yenileme başarısız oldu",
   "load_failed": "Uygulamalar yüklenirken hata oluştu",
   "status_version_unknown": "Bilinmiyor",
-  "add_exclusion": "Hariç tutma ekle"
+  "add_exclusion": "Hariç tutma ekle",
+  "mode_lkm": "LKM",
+  "mode_builtin": "Built-in"
 }

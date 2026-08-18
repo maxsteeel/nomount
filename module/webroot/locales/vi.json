@@ -50,5 +50,7 @@
   "refresh_failed": "Không thể tải lại",
   "load_failed": "Lỗi không thể tải ứng dụng",
   "status_version_unknown": "Chưa biết",
-  "add_exclusion": "Thêm vào danh sách đen"
+  "add_exclusion": "Thêm vào danh sách đen",
+  "mode_lkm": "LKM",
+  "mode_builtin": "Built-in"
 }

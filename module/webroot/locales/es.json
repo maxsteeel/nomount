@@ -50,5 +50,7 @@
   "refresh_failed": "Error al actualizar",
   "load_failed": "Error al cargar apps",
   "status_version_unknown": "Desconocido",
-  "add_exclusion": "Agregar exclusión"
+  "add_exclusion": "Agregar exclusión",
+  "mode_lkm": "LKM",
+  "mode_builtin": "Built-in"
 }

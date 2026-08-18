@@ -50,5 +50,7 @@
   "refresh_failed": "Refresh failed",
   "load_failed": "Error loading apps",
   "status_version_unknown": "Unknown",
-  "add_exclusion": "Add exclusion"
+  "add_exclusion": "Add exclusion",
+  "mode_lkm": "LKM",
+  "mode_builtin": "Built-in"
 }

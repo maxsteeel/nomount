@@ -213,6 +213,7 @@ function getHomeElements() {
         homeUI.statusLabel = document.getElementById('status-indicator');
         homeUI.statusCard = document.querySelector('.home-status-card');
         homeUI.statusIcon = document.getElementById('status-icon');
+        homeUI.modeBadge = document.getElementById('nm-mode-badge');
     }
     return homeUI;
 }
@@ -304,7 +305,8 @@ async function loadHome() {
         getprop ro.build.version.sdk; echo "|||"
         grep "version=" ${MOD_DIR}/nomount/module.prop | cut -d= -f2; echo "|||"
         ${NM_BIN} version; echo "|||"
-        ${NM_BIN} rule list --json
+        ${NM_BIN} rule list --json; echo "|||"
+        if ${NM_BIN} version > /dev/null 2>&1; then lsmod | grep -q nomount && echo lkm || echo built-in; fi
     `;
 
     try {
@@ -332,11 +334,13 @@ async function loadHome() {
               mVer = raw[4] || unk,
               dVer = raw[5] || unk;
 
+        const nmMode = (parts[7] || '').toLowerCase();
         const homeData = {
             kernelVer: kVer, deviceModel: model,
             androidInfo: `Android ${aRel} (API ${aSdk})`,
             versionFull: `${mVer} (${dVer})`,
-            active: dVer !== unk
+            active: dVer !== unk,
+            nmMode
         };
 
         requestAnimationFrame(() => {
@@ -361,6 +365,10 @@ function applyHomeData(data, statsText) {
     if (el.statusIcon) {
         el.statusIcon.classList.toggle('inactive', !data.active);
         setIcon(el.statusIcon, data.active ? 'check_circle' : 'error', 'outline');
+    }
+
+    if (el.modeBadge) {
+        el.modeBadge.textContent = data.nmMode === 'lkm' ? translate('mode_lkm') : data.nmMode === 'built-in' ? translate('mode_builtin') : '';
     }
 }
 

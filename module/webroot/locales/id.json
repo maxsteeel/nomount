@@ -50,5 +50,7 @@
   "refresh_failed": "Gagal memuat ulang",
   "load_failed": "Gagal memuat aplikasi",
   "status_version_unknown": "Tidak diketahui",
-  "add_exclusion": "Tambah pengecualian"
+  "add_exclusion": "Tambah pengecualian",
+  "mode_lkm": "LKM",
+  "mode_builtin": "Built-in"
 }

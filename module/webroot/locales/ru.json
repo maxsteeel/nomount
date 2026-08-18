@@ -50,5 +50,7 @@
   "refresh_failed": "Обновление не удалось",
   "load_failed": "Ошибка загрузки приложений",
   "status_version_unknown": "Неизвестно",
-  "add_exclusion": "Добавить исключение"
+  "add_exclusion": "Добавить исключение",
+  "mode_lkm": "LKM",
+  "mode_builtin": "Built-in"
 }
