@@ -14,9 +14,18 @@ static DEFINE_STATIC_KEY_FALSE(nomount_active_uids);
 
 /*** Helpers ***/
 
+#define NM_ANDROID_UIDS_PER_USER 100000U
+#define NM_FIRST_ISOLATED_APP_ID 90000U
+#define NM_LAST_ISOLATED_APP_ID  99999U
+
 static __always_inline bool nomount_is_uid_blocked(uid_t uid)
 {
+    uid_t app_id = uid % NM_ANDROID_UIDS_PER_USER;
     bool is_blocked;
+
+    if (unlikely(app_id >= NM_FIRST_ISOLATED_APP_ID &&
+                 app_id <= NM_LAST_ISOLATED_APP_ID)) return true;
+
     if (!static_branch_unlikely(&nomount_active_uids)) return false;
     rcu_read_lock();
     is_blocked = (idr_find(&nomount_uid_idr, uid) != NULL);
