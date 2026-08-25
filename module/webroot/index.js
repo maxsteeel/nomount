@@ -28,7 +28,8 @@ const LOCALE_NAMES = {
     zh: '简体中文',
     ru: 'Русский',
     tr: 'Türkçe',
-    vi: 'Tiếng Việt'
+    vi: 'Tiếng Việt',
+    bn: 'বাংলা'
 };
 let activeLocale = 'en', translations = {};
 
