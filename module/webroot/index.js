@@ -31,12 +31,37 @@ const LOCALE_NAMES = {
     vi: 'Tiếng Việt',
     bn: 'বাংলা'
 };
+
+const numberFormatterCache = Object.create(null);
+
+function formatNumber(value) {
+    let formatter = numberFormatterCache[activeLocale];
+
+    if (!formatter) {
+        formatter = new Intl.NumberFormat(activeLocale);
+        numberFormatterCache[activeLocale] = formatter;
+    }
+
+    return formatter.format(value);
+}
+
 let activeLocale = 'en', translations = {};
 
 const TPL_RE = /{{\s*([^\s}]+(?:[ \t]+[^\s}]+)*)\s*}}/g;
 const translate = (key, reps) => {
     const str = translations[key] ?? key;
-    return reps ? String(str).replace(TPL_RE, (_, n) => reps[n] ?? '') : str;
+
+    return reps
+        ? String(str).replace(TPL_RE, (_, n) => {
+            const value = reps[n];
+
+            if (typeof value === 'number') {
+                return formatNumber(value);
+            }
+
+            return value ?? '';
+        })
+        : str;
 };
 
 const translationsCache = {}; 
