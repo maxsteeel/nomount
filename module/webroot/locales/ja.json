@@ -52,5 +52,5 @@
   "status_version_unknown": "不明",
   "add_exclusion": "除外設定を追加",
   "mode_lkm": "LKM",
-  "mode_builtin": "組み込み"
+  "mode_builtin": "Built-in"
 }
