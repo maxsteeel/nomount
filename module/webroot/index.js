@@ -29,7 +29,8 @@ const LOCALE_NAMES = {
     ru: 'Русский',
     tr: 'Türkçe',
     vi: 'Tiếng Việt',
-    bn: 'বাংলা'
+    bn: 'বাংলা',
+    ja: '日本語'
 };
 
 const numberFormatterCache = Object.create(null);
