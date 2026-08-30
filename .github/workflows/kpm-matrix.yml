@@ -1,0 +1,137 @@
+name: NoMount KPM — compile matrix
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'kernel/kpm/**'
+      - 'kernel/src/**'
+      - '.github/workflows/kpm-matrix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kpm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.ver }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { ver: '4.9',  kref: 'deprecated/android-4.9-q',       tc: gcc   }
+          - { ver: '4.14', kref: 'deprecated/android-4.14-stable', tc: gcc   }
+          - { ver: '4.19', kref: 'deprecated/android-4.19-stable', tc: gcc   }
+          - { ver: '5.4',  kref: 'android11-5.4',                  tc: gcc   }
+          - { ver: '5.10', kref: 'android12-5.10',                 tc: clang }
+          - { ver: '5.15', kref: 'android13-5.15',                 tc: clang }
+          - { ver: '6.1',  kref: 'android14-6.1',                  tc: clang }
+          - { ver: '6.6',  kref: 'android15-6.6',                  tc: clang }
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: repo }
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu bc flex bison libssl-dev libelf-dev \
+                                      clang lld llvm
+          echo "clang: $(clang --version | head -1)"
+
+      - name: KernelPatch headers
+        run: git clone --depth 1 https://github.com/741afb7/KPatch-Next-EXP kp
+
+      - name: Cache kernel clone
+        id: kcache
+        uses: actions/cache@v4
+        with:
+          path: ksrc
+          key: kpm-ksrc-${{ matrix.ver }}-${{ matrix.kref }}-v1
+
+      - name: Clone kernel ${{ matrix.kref }}
+        if: steps.kcache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 -b "${{ matrix.kref }}" \
+            https://android.googlesource.com/kernel/common ksrc
+          head -3 ksrc/Makefile | tr '\n' ' '
+
+      - name: Configure kernel headers
+        run: |
+          set -e -o pipefail
+          cd ksrc
+          if [ "${{ matrix.tc }}" = "clang" ]; then
+            M="ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS=-Wno-error"
+          else
+            M="ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS=-Wno-error"
+          fi
+          if [ -f arch/arm64/configs/gki_defconfig ]; then
+            make $M gki_defconfig 2>&1 | tail -40
+          else
+            make $M defconfig 2>&1 | tail -40
+          fi
+          ./scripts/config --disable KASAN --disable FORTIFY_SOURCE \
+                           --disable DEBUG_LIST --disable PAGE_PINNER \
+                           --disable LOCKDEP --disable PROVE_LOCKING \
+                           --disable DEBUG_LOCK_ALLOC --disable TRACE_IRQFLAGS \
+                           --disable DEBUG_ATOMIC_SLEEP || true
+          make $M olddefconfig 2>&1 | tail -20
+          make $M modules_prepare 2>&1 | tail -30
+          test -f include/generated/autoconf.h || { echo "::error::prepare produced no autoconf.h"; exit 1; }
+
+      - name: Build the engine object
+        run: |
+          set -o pipefail
+          cd repo/kernel/kpm
+          if [ "${{ matrix.tc }}" = "clang" ]; then
+            CCX="clang --target=aarch64-linux-gnu"
+          else
+            CCX="aarch64-linux-gnu-gcc"
+          fi
+          make CC="$CCX" TARGET_COMPILE=aarch64-linux-gnu- \
+               KP_DIR="$GITHUB_WORKSPACE/kp" \
+               KERNEL_DIR="$GITHUB_WORKSPACE/ksrc" \
+               nm_engine.o 2>&1 | tee /tmp/kpm.log
+          ls -l nm_engine.o && echo "ENGINE_OK ${{ matrix.ver }}"
+
+      - name: Undefined symbols
+        run: |
+          cd repo/kernel/kpm
+          U=$(aarch64-linux-gnu-nm -u nm_engine.o | awk '{print $2}' | sort -u | grep -v '^nm_kpm_sym$' || true)
+          N=$(printf '%s' "$U" | grep -c . || true)
+          echo "::notice::${{ matrix.ver }} undefined=$N"
+          [ "$N" = "0" ] && exit 0
+          printf '%s\n' "$U"
+          if [ "${{ matrix.tc }}" = "clang" ]; then CCX="clang --target=aarch64-linux-gnu"; else CCX="aarch64-linux-gnu-gcc"; fi
+          make CC="$CCX" TARGET_COMPILE=aarch64-linux-gnu- \
+               KP_DIR="$GITHUB_WORKSPACE/kp" KERNEL_DIR="$GITHUB_WORKSPACE/ksrc" \
+               COMMON_EXTRA=-ffunction-sections clean >/dev/null 2>&1 || true
+          $CCX -O2 -fno-stack-protector -fno-pic -ffreestanding -w -ffunction-sections \
+            -mgeneral-regs-only -nostdinc -isystem $($CCX -print-file-name=include) \
+            -I$GITHUB_WORKSPACE/ksrc/include -I$GITHUB_WORKSPACE/ksrc/include/uapi \
+            -I$GITHUB_WORKSPACE/ksrc/include/generated -I$GITHUB_WORKSPACE/ksrc/include/generated/uapi \
+            -I$GITHUB_WORKSPACE/ksrc/arch/arm64/include -I$GITHUB_WORKSPACE/ksrc/arch/arm64/include/uapi \
+            -I$GITHUB_WORKSPACE/ksrc/arch/arm64/include/generated \
+            -I$GITHUB_WORKSPACE/ksrc/arch/arm64/include/generated/uapi \
+            -include $GITHUB_WORKSPACE/ksrc/include/linux/kconfig.h \
+            -D__KERNEL__ -DMODULE -DKBUILD_MODNAME='"nomount"' \
+            -c -o /tmp/attr.o nm_engine.c 2>/dev/null || true
+          if [ -f /tmp/attr.o ]; then
+            for sym in $U; do
+              callers=$(aarch64-linux-gnu-objdump -r /tmp/attr.o 2>/dev/null \
+                | awk -v s="$sym" '/^RELOCATION RECORDS FOR/{sec=$0} $0 ~ ("[ \t]"s"$"){print sec}' \
+                | sed 's/.*\[\.text\.//; s/\]://' | sort -u | tr '\n' ' ')
+              if [ -n "$callers" ]; then
+                echo "  $sym  <- $callers"
+              else
+                echo "  $sym  <- (no .text ref) raw records:"
+                aarch64-linux-gnu-objdump -r /tmp/attr.o 2>/dev/null \
+                  | grep -B40 "[ \t]$sym$" | grep "RELOCATION RECORDS" | tail -3 | sed 's/^/      /'
+              fi
+            done
+          fi
+          echo "::warning::${{ matrix.ver }} has $N unresolved symbol(s)"

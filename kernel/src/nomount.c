@@ -1501,6 +1501,15 @@ static struct key_type nm_key_type = {
 
 static int __init nomount_init(void)
 {
+#ifdef NM_KPM_BUILD
+    /* KPM builds declare nomount_srcu zeroed (see DEFINE_STATIC_SRCU in
+     * nm_kpm_shim.h) and must bring it up at runtime instead. */
+    if (init_srcu_struct(&nomount_srcu)) {
+        nm_err("Failed to initialize SRCU\n");
+        return -ENOMEM;
+    }
+#endif
+
     nm_dir_cachep   = KMEM_CACHE(nomount_dir_node, SLAB_HWCACHE_ALIGN);
     nm_inode_cachep = KMEM_CACHE(nm_inode_info, SLAB_HWCACHE_ALIGN);
     nm_iop_cachep   = KMEM_CACHE(nm_iop, SLAB_HWCACHE_ALIGN);
@@ -1512,6 +1521,9 @@ static int __init nomount_init(void)
         if (nm_inode_cachep) kmem_cache_destroy(nm_inode_cachep);
         if (nm_iop_cachep) kmem_cache_destroy(nm_iop_cachep);
         if (nm_fop_cachep) kmem_cache_destroy(nm_fop_cachep);
+#ifdef NM_KPM_BUILD
+        cleanup_srcu_struct(&nomount_srcu);
+#endif
         return -ENOMEM;
     }
 
@@ -1522,6 +1534,9 @@ static int __init nomount_init(void)
         kmem_cache_destroy(nm_inode_cachep);
         kmem_cache_destroy(nm_iop_cachep);
         kmem_cache_destroy(nm_fop_cachep);
+#ifdef NM_KPM_BUILD
+        cleanup_srcu_struct(&nomount_srcu);
+#endif
         return ret;
     }
 
@@ -1541,6 +1556,9 @@ static void __exit nomount_exit(void)
     kmem_cache_destroy(nm_inode_cachep);
     kmem_cache_destroy(nm_iop_cachep);
     kmem_cache_destroy(nm_fop_cachep);
+#ifdef NM_KPM_BUILD
+    cleanup_srcu_struct(&nomount_srcu);
+#endif
 
     nm_info("Unloaded successfully\n");
 }
