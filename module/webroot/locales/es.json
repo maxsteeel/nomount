@@ -52,7 +52,7 @@
   "clear_rules_done": "¡Todas las reglas borradas!",
   "refresh_failed": "Error al actualizar",
   "load_failed": "Error al cargar apps",
-  "status_version_unknown": "Desconocido",
+  "status_version": "Versión: {{version}}",
   "add_exclusion": "Agregar exclusión",
   "mode_lkm": "LKM",
   "mode_builtin": "Built-in"

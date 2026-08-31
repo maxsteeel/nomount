@@ -66,12 +66,14 @@ body.loading { opacity: 0; visibility: hidden; }
 
 .status-text-col, .info-data, .module-info, .app-details, .modal-overlay,
 .exclusion-app .setting-text { justify-content: center; min-width: 0; }
+.status-text-col { gap: 3px; }
+.status-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 
 .modal-header, .module-header, .filter-option { justify-content: space-between; }
 .root_layout { height: 100%; width: 100%; }
 
 .home-segment-row { grid-template-columns: 40px minmax(0, 1fr); }
-.home-status-card { grid-template-columns: 40px minmax(0, 1fr) auto; }
+.home-status-card { grid-template-columns: 40px minmax(0, 1fr); }
 .segment-card { grid-template-columns: 48px minmax(0, 1fr); }
 .setting-item { grid-template-columns: minmax(0, 1fr) auto; }
 
@@ -90,7 +92,7 @@ body.loading { opacity: 0; visibility: hidden; }
 }
 
 .header-title { font-size: 28px; margin: 0 0 4px; padding-left: 4px; font-weight: 500; }
-.status-text-col h2 { font-size: 19px; }
+.status-text-col h2 { font-size: 18px; }
 .uid-label { color: var(--md-sys-color-primary); font-size: 12px; font-weight: 600; }
 
 .segment-section-label {
@@ -110,14 +112,12 @@ body.loading { opacity: 0; visibility: hidden; }
 .status-label.inactive { color: var(--md-sys-color-error); }
 
 .mode-badge {
-    align-self: center;
     display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 700;
-    padding: 4px 8px;
-    border-radius: 6px;
+    font-size: 12px; font-weight: 600;
+    padding: 2px 4px;
+    border-radius: 4px;
     background: var(--md-sys-color-on-secondary-container);
     color: var(--md-sys-color-secondary-container);
-    transform: translateY(-3px);
 }
 .mode-badge:empty { display: none; }
 

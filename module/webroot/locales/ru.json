@@ -52,7 +52,7 @@
   "clear_rules_done": "Все правила очищены!",
   "refresh_failed": "Обновление не удалось",
   "load_failed": "Ошибка загрузки приложений",
-  "status_version_unknown": "Неизвестно",
+  "status_version": "Версия: {{version}}",
   "add_exclusion": "Добавить исключение",
   "mode_lkm": "LKM",
   "mode_builtin": "Built-in"

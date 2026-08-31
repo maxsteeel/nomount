@@ -52,7 +52,7 @@
   "clear_rules_done": "所有规则已清除！",
   "refresh_failed": "刷新失败",
   "load_failed": "加载应用程序出错",
-  "status_version_unknown": "未知",
+  "status_version": "版本：{{version}}",
   "add_exclusion": "添加排除项",
   "mode_lkm": "LKM",
   "mode_builtin": "Built-in"

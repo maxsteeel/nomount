@@ -52,7 +52,7 @@
   "clear_rules_done": "Semua aturan dibersihkan!",
   "refresh_failed": "Gagal memuat ulang",
   "load_failed": "Gagal memuat aplikasi",
-  "status_version_unknown": "Tidak diketahui",
+  "status_version": "Versi: {{version}}",
   "add_exclusion": "Tambah pengecualian",
   "mode_lkm": "LKM",
   "mode_builtin": "Built-in"

@@ -52,7 +52,7 @@
   "clear_rules_done": "Tüm kurallar temizlendi!",
   "refresh_failed": "Yenileme başarısız oldu",
   "load_failed": "Uygulamalar yüklenirken hata oluştu",
-  "status_version_unknown": "Bilinmiyor",
+  "status_version": "Sürüm: {{version}}",
   "add_exclusion": "İstisna ekle",
   "mode_lkm": "LKM",
   "mode_builtin": "Built-in"

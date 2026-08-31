@@ -52,7 +52,7 @@
   "clear_rules_done": "すべてのルールが消去されました！",
   "refresh_failed": "更新に失敗しました",
   "load_failed": "アプリの読み込み中にエラーが発生しました",
-  "status_version_unknown": "不明",
+  "status_version": "バージョン：{{version}}",
   "add_exclusion": "除外設定を追加",
   "mode_lkm": "LKM",
   "mode_builtin": "Built-in"

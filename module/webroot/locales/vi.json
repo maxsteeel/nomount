@@ -52,7 +52,7 @@
   "clear_rules_done": "Đã xóa tất cả các luật!",
   "refresh_failed": "Không thể tải lại",
   "load_failed": "Lỗi không thể tải ứng dụng",
-  "status_version_unknown": "Chưa biết",
+  "status_version": "Phiên bản: {{version}}",
   "add_exclusion": "Thêm vào danh sách đen",
   "mode_lkm": "LKM",
   "mode_builtin": "Built-in"

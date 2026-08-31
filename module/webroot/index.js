@@ -367,7 +367,9 @@ function applyHomeData(data, statsText) {
     if (el.kernel) el.kernel.textContent = data.kernelVer || translate('unknown_value');
     if (el.device) el.device.textContent = data.deviceModel || translate('unknown_value');
     if (el.android) el.android.textContent = data.androidInfo || translate('unknown_value');
-    if (el.statusLabel) el.statusLabel.textContent = data.versionFull || translate('unknown_value');
+    if (el.statusLabel) el.statusLabel.textContent = translate('status_version', {
+        version: (data.versionFull || translate('unknown_value')).replace(/^v(?=\d)/i, '')
+    });
     if (statsText && el.stats) el.stats.textContent = statsText;
 
     if (el.statusTitle) el.statusTitle.textContent = translate(data.active ? 'status_active' : 'status_inactive');

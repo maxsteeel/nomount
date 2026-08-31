@@ -52,7 +52,7 @@
   "clear_rules_done": "সব নিয়ম মুছে ফেলা হয়েছে!",
   "refresh_failed": "রিফ্রেশ ব্যর্থ হয়েছে",
   "load_failed": "অ্যাপ লোড করতে ত্রুটি",
-  "status_version_unknown": "অজানা",
+  "status_version": "সংস্করণ: {{version}}",
   "add_exclusion": "ব্যতিক্রম যোগ করুন",
   "mode_lkm": "LKM",
   "mode_builtin": "বিল্ট-ইন"
