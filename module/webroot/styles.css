@@ -91,7 +91,6 @@ body.loading { opacity: 0; visibility: hidden; }
 
 .header-title { font-size: 28px; margin: 0 0 4px; padding-left: 4px; font-weight: 500; }
 .status-text-col h2 { font-size: 19px; }
-.app-pkg { font-size: 12px; }
 .uid-label { color: var(--md-sys-color-primary); font-size: 12px; font-weight: 600; }
 
 .segment-section-label {
@@ -326,7 +325,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 .modal-header { padding: 0 8px; margin-bottom: 16px; flex-shrink: 0; }
 
 .search-box {
-    background: var(--md-sys-color-surface-container-highest); border-radius: 24px;
+    background: var(--md-sys-color-surface-container-highest); border-radius: 28px;
     padding: 0 16px; min-height: 56px; display: flex; align-items: center;
     gap: 12px; margin-bottom: 12px; flex-shrink: 0;
 }
@@ -350,7 +349,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 
 .modal-fab {
-    position: absolute; bottom: 24px; right: 24px; z-index: 100;
+    position: absolute; bottom: 24px; right: 8px; z-index: 100;
     transform: scale(1); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
