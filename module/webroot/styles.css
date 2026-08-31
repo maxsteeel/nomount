@@ -24,20 +24,20 @@ html, body {
 body { transition: opacity 250ms ease; }
 body.loading { opacity: 0; visibility: hidden; }
 
-.flex-center, .nav-item, .segment-icon, .status-icon, .app-icon-img, .exclusion-app img,
+.nav-item, .segment-icon, .app-icon-img, .exclusion-app img,
 .setting-item img, md-icon, .pull-to-refresh-indicator, .btn-hot-action, .custom-tonal-btn,
-.custom-fab, .modal-header, md-icon-button, .nav-icon, .empty-state, .search-box md-icon-button,
+.custom-fab, .modal-header, md-icon-button, .nav-icon, .empty-state,
 .filter-option, .bottom-nav, .custom-select-trigger, .root_layout {
     display: flex; align-items: center; justify-content: center;
 }
 
-.root_layout, .flex-col, .view-content.active, .home-segment-group, .settings-segment-group, .app-list,
+.root_layout, .view-content.active, .home-segment-group, .settings-segment-group, .app-list,
 .list, .app-list-wrapper, .status-text-col, .info-data, .module-info, .exclusion-app .setting-text,
 .app-details, .app-meta, .empty-state, .modal-content, .nav-item {
     display: flex; flex-direction: column;
 }
 
-.grid-card, .home-segment-row, .segment-card, .setting-item, .app-item, .home-status-card {
+.home-segment-row, .segment-card, .setting-item, .app-item, .home-status-card {
     display: grid; align-items: center; gap: 16px;
 }
 
@@ -55,7 +55,7 @@ body.loading { opacity: 0; visibility: hidden; }
 .card, .home-status-card { border-radius: 16px; padding: 16px; }
 
 .page-container::-webkit-scrollbar, .app-list::-webkit-scrollbar,
-.view-content, .modal-overlay, .filter-menu, md-icon:not([data-icon]),
+.view-content, .filter-menu, md-icon:not([data-icon]),
 .custom-switch .switch-input { display: none; }
 
 .page-container {
@@ -108,7 +108,7 @@ body.loading { opacity: 0; visibility: hidden; }
 }
 
 .status-label.active { color: var(--md-sys-color-on-secondary-container); }
-.status-label.inactive, .error-message { color: var(--md-sys-color-error); }
+.status-label.inactive { color: var(--md-sys-color-error); }
 
 .mode-badge {
     align-self: center;
@@ -173,7 +173,6 @@ body.loading { opacity: 0; visibility: hidden; }
     width: 56px; height: 56px; border-radius: 16px; padding: 0;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
 }
-.custom-fab md-icon { font-size: 24px; }
 .custom-fab:hover { box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3); }
 
 md-icon-button { border-radius: 999px; background: transparent; padding: 8px; color: inherit; }
@@ -197,7 +196,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 .custom-switch.switch-busy { pointer-events: none; opacity: 0.7; }
 .custom-switch .switch-track {
-    position: absolute; inset: 0; box-sizing: border-box;
+    position: absolute; inset: 0;
     background-color: var(--md-sys-color-surface-container-highest);
     border: 2px solid var(--md-sys-color-outline); border-radius: 16px;
     transition: background-color 0.2s, border-color 0.2s;
@@ -340,8 +339,6 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
     border-radius: 16px; padding: 12px 16px; margin-bottom: 12px;
 }
 .filter-menu.active { display: block; animation: fadeIn 0.2s; }
-.filter-option { font-size: 14px; }
-
 .app-list {
     flex: 1 1 0; min-height: 0; overflow-y: auto;
     padding-bottom: calc(16px + var(--insets-bottom));

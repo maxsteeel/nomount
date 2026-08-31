@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#fffbff">
     <title>NoMount</title>
-    <link rel="stylesheet" href="styles.css" type="text/css">
+    <link rel="stylesheet" href="styles.css">
     <script src="index.js" type="module"></script>
 </head>
 <body class="loading">
@@ -31,7 +31,7 @@
                 </div>
 
                 <div class="home-segment-group">
-                    <div class="home-segment-row info-row">
+                    <div class="home-segment-row">
                         <div class="segment-icon"><md-icon>account_tree</md-icon></div>
                         <div class="info-data">
                             <span class="info-label" data-i18n="status_label">Status</span>
@@ -42,7 +42,7 @@
 
                 <div class="segment-section-label" data-i18n="device_label">Device</div>
                 <div class="home-segment-group">
-                    <div class="home-segment-row info-row">
+                    <div class="home-segment-row">
                         <div class="segment-icon"><md-icon>smartphone</md-icon></div>
                         <div class="info-data">
                             <span class="info-label" data-i18n="model_label">Model</span>
@@ -50,7 +50,7 @@
                         </div>
                     </div>
 
-                    <div class="home-segment-row info-row">
+                    <div class="home-segment-row">
                         <div class="segment-icon"><md-icon>settings_suggest</md-icon></div>
                         <div class="info-data">
                             <span class="info-label" data-i18n="system_label">System</span>
@@ -58,7 +58,7 @@
                         </div>
                     </div>
 
-                    <div class="home-segment-row info-row">
+                    <div class="home-segment-row">
                         <div class="segment-icon">
                             <md-icon>memory</md-icon>
                         </div>
@@ -147,14 +147,14 @@
     <div id="uid-input-modal" class="modal-overlay">
         <div class="md-dialog">
             <h3 class="md-dialog-title" data-i18n="enter_manual_uid">Enter UID manually</h3>
-            <div class="md-dialog-content">
+            <div>
                 <div class="md-text-field">
-                    <input type="number" id="manual-uid-input" placeholder="e.g. 10123" pattern="\d*">
+                    <input type="number" id="manual-uid-input" placeholder="e.g. 10123">
                 </div>
             </div>
             <div class="md-dialog-actions">
                 <button class="btn-text" id="btn-cancel-uid" data-i18n="cancel">Cancel</button>
-                <button class="btn-text primary" id="btn-confirm-uid" data-i18n="add">Add</button>
+                <button class="btn-text" id="btn-confirm-uid" data-i18n="add">Add</button>
             </div>
         </div>
     </div>
@@ -170,8 +170,8 @@
 
             <div class="search-box">
                 <md-icon>search</md-icon>
-                <input type="text" id="app-search-input" data-i18n="search_placeholder"
-                    data-i18n-attr="placeholder" placeholder="Search app or package...">
+                <input id="app-search-input" data-i18n="search_placeholder"
+                    placeholder="Search app or package...">
                 <md-icon-button id="btn-filter-toggle">
                     <md-icon>filter_list</md-icon>
                 </md-icon-button>
