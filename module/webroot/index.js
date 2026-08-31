@@ -68,7 +68,7 @@ const translate = (key, reps) => {
 const translationsCache = {}; 
 let cachedI18nNodes = null;
 
-async function setAppLocale(locale) {
+async function setAppLocale(locale, refreshView = true) {
     activeLocale = locale in LOCALE_NAMES ? locale : 'en';
 
     if (!translationsCache[activeLocale]) {
@@ -96,7 +96,7 @@ async function setAppLocale(locale) {
     const activeViewId = document.querySelector('.view-content.active')?.id;
 
     for (const id in viewLoadState) viewLoadState[id] = id === activeViewId;
-    if (activeViewId && activeViewId !== 'view-options') refreshCurrentView();
+    if (refreshView && activeViewId && activeViewId !== 'view-options') refreshCurrentView();
 }
 
 function renderLanguagePicker() {
@@ -1143,7 +1143,7 @@ function initScrollListener() {
 
 // Init
 document.addEventListener('DOMContentLoaded', async () => {
-    await setAppLocale((localStorage.getItem('nm_locale') || navigator.language || 'en').split('-')[0]);
+    await setAppLocale((localStorage.getItem('nm_locale') || navigator.language || 'en').split('-')[0], false);
     applyIcons();
     syncSystemBarTheme();
     initNavigation();
