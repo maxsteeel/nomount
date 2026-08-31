@@ -54,6 +54,11 @@ body.loading { opacity: 0; visibility: hidden; }
 
 .card, .home-status-card { border-radius: 16px; padding: 16px; }
 
+.module-card {
+    background-color: color-mix(in srgb, var(--md-sys-color-primary) 5.1%, var(--md-sys-color-surface));
+    padding: 18px 22px 12px;
+}
+
 .page-container::-webkit-scrollbar, .app-list::-webkit-scrollbar,
 .view-content, .filter-menu, md-icon:not([data-icon]),
 .custom-switch .switch-input { display: none; }
@@ -108,6 +113,13 @@ body.loading { opacity: 0; visibility: hidden; }
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+.module-card .module-info { flex: 1; max-width: 80%; gap: 4px; }
+.module-card .module-info h3 {
+    font-weight: 600; line-height: 20px;
+    white-space: normal; overflow: visible; text-overflow: clip;
+}
+.module-card .module-info p, .module-card .file-count { font-size: 12px; line-height: 16px; }
+
 .status-label.active { color: var(--md-sys-color-on-secondary-container); }
 .status-label.inactive { color: var(--md-sys-color-error); }
 
@@ -151,7 +163,7 @@ body.loading { opacity: 0; visibility: hidden; }
 
 .btn-hot-action {
     min-height: 36px; padding: 0 14px; border-radius: 18px;
-    font-size: 14px; font-weight: 600; min-width: 80px;
+    font-size: 13px; line-height: 16px; font-weight: 600; min-width: 52px;
 }
 .btn-hot-action.unload {
     background-color: var(--md-sys-color-secondary-container);
@@ -264,8 +276,13 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 
 .module-header { display: flex; align-items: flex-start; margin-bottom: 8px; }
+.module-card .custom-switch { height: 48px; }
+.module-card .custom-switch .switch-track { inset: 8px 0; }
 .module-divider { height: 1px; background-color: rgba(120, 120, 120, 0.2); width: 100%; }
-.module-extension { display: flex; justify-content: flex-end; margin-top: 12px; }
+.module-extension {
+    display: flex; align-items: center; justify-content: flex-end;
+    margin-top: 8px;
+}
 
 .exclusion-app { display: flex; align-items: center; gap: var(--nm-gap-relaxed); min-width: 0; overflow: hidden; }
 .app-meta { align-items: flex-end; gap: 4px; flex: 0 0 auto; text-align: right; }

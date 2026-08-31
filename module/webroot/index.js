@@ -433,7 +433,7 @@ async function loadModules() {
                         <div class="module-info">
                             <h3>${realName || modId}</h3>
                             <p>${translate('status_label')}: ${translate(statusKey)}</p>
-                            <div class="file-count"><span>${translate('modules_injected_files', { count: fileCount })}</span></div>
+                            <p class="file-count"><span>${translate('modules_injected_files', { count: fileCount })}</span></p>
                         </div>
                         <label class="custom-switch" id="switch-${modId}">
                             <input type="checkbox" class="switch-input" aria-label="Toggle module" ${!hasDisable ? 'checked' : ''}>
