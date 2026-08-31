@@ -101,6 +101,7 @@ jobs:
           WEBUI_BUILD="$RUNNER_TEMP/nomount-webui-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 
           cp -a module "$MODULE_BUILD"
+          node -e 'const fs = require("node:fs"); for (const file of process.argv.slice(1)) fs.writeFileSync(file, JSON.stringify(JSON.parse(fs.readFileSync(file, "utf8"))), "utf8");' "$MODULE_BUILD"/webroot/locales/*.json
           mkdir -p "$WEBUI_BUILD"
           sed '/@import ".\/theme.css";/d' module/webroot/styles.css > "$WEBUI_BUILD/temp.css"
           cat "$WEBUI_BUILD/temp.css" module/webroot/theme.css > "$WEBUI_BUILD/combined.css"
