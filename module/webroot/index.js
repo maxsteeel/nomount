@@ -650,6 +650,16 @@ async function ensureAppsCache(force = false) {
     return appLoadingPromise;
 }
 
+function closeAppSelector() {
+    const modal = document.getElementById('app-selector-modal');
+    const content = modal?.querySelector('.modal-content');
+    modal?.classList.remove('active');
+    content?.classList.remove('viewport-locked');
+    content?.style.removeProperty('--app-selector-top');
+    content?.style.removeProperty('--app-selector-height');
+    if (listObserver) listObserver.disconnect();
+}
+
 function openAppSelector() {
     const modal = document.getElementById('app-selector-modal'), 
           container = document.getElementById('app-list-container'), 
@@ -659,6 +669,11 @@ function openAppSelector() {
     const sysSwitch = switchWrapper ? (switchWrapper.tagName === 'INPUT' ? switchWrapper : switchWrapper.querySelector('input')) : null;
     if (!modal) return;
 
+    const content = modal.querySelector('.modal-content');
+    const viewportHeight = document.documentElement.clientHeight;
+    content.style.setProperty('--app-selector-top', `${Math.round(viewportHeight * 0.1)}px`);
+    content.style.setProperty('--app-selector-height', `${Math.round(viewportHeight * 0.9)}px`);
+    content.classList.add('viewport-locked');
     modal.classList.add('active');
     if (listObserver) listObserver.disconnect();
     document.getElementById('filter-menu').classList.remove('active'); 
@@ -666,8 +681,7 @@ function openAppSelector() {
     if (sysSwitch) sysSwitch.checked = showSystemApps;
 
     document.getElementById('btn-close-modal').onclick = () => { 
-        modal.classList.remove('active'); 
-        if (listObserver) listObserver.disconnect(); 
+        closeAppSelector();
     };
 
     container.innerHTML = `<div class="loading-spinner">${translate('loading') || 'Loading apps...'}</div>`;
@@ -1029,8 +1043,7 @@ function initDelegationAndAttach() {
         } else {
             item.dataset.busy = 'true';
             const { uid, label, pkg } = item.dataset;
-            if (listObserver) listObserver.disconnect();
-            document.getElementById('app-selector-modal')?.classList.remove('active');
+            closeAppSelector();
             setTimeout(async () => { await addExclusion(uid, label, pkg); }, 50);
         }
     });
@@ -1039,8 +1052,7 @@ function initDelegationAndAttach() {
         if (isMultiSelectMode) {
             const appsToSave = new Map(selectedAppsMap);
             exitMultiSelectMode();
-            document.getElementById('app-selector-modal').classList.remove('active');
-            if (listObserver) listObserver.disconnect();
+            closeAppSelector();
             if (appsToSave.size > 0) {
                 try {
                     const currentData = await readExclusionsJson();
@@ -1080,8 +1092,7 @@ function initDelegationAndAttach() {
 
             const manualUid = await getManualUid();
             if (manualUid && /^\d+$/.test(manualUid.trim())) {
-                document.getElementById('app-selector-modal').classList.remove('active');
-                if (listObserver) listObserver.disconnect();
+                closeAppSelector();
                 await addExclusion(manualUid.trim(), `UID: ${manualUid.trim()}`, 'System/Manual');
             } else if (manualUid) {
                 showToast(translate('invalid_uid') || 'Invalid UID format');
@@ -1091,9 +1102,8 @@ function initDelegationAndAttach() {
 
     document.getElementById('app-selector-modal')?.addEventListener('click', (e) => {
         if (e.target === e.currentTarget) {
-            e.currentTarget.classList.remove('active');
+            closeAppSelector();
             exitMultiSelectMode();
-            if (listObserver) listObserver.disconnect(); 
         }
     });
     document.getElementById('btn-close-modal')?.addEventListener('click', () => {
