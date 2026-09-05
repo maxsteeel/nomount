@@ -269,10 +269,8 @@ static struct dentry *nomount_resolve_rule_dentry(struct inode *dir, struct dent
         goto unlock_out;
 
 resolve_rule:
-    if (unlikely(nomount_is_uid_blocked(current_uid().val))) {
-        if (d_is_negative(dentry)) d_drop(dentry);
+    if (unlikely(nomount_is_uid_blocked(current_uid().val)))
         goto unlock_out;
-    }
 
     if (rule_info.flags & NM_FLAG_WHITEOUT) {
         nomount_hijack_dentry_ops(dir, dentry);
@@ -317,10 +315,11 @@ static struct dentry *nomount_hijacked_lookup(struct inode *dir, struct dentry *
 {
     struct nm_iop *nm_iop = nm_get_nm_iop(smp_load_acquire(&dir->i_op));
     struct nomount_dir_node *dir_node = nm_iop ? READ_ONCE(nm_iop->dir_node) : NULL;
+    bool is_blocked = nomount_is_uid_blocked(current_uid().val);
     struct dentry *res;
     u32 hash = 0;
 
-    if (unlikely(!nm_iop || !dir_node))
+    if (unlikely(!nm_iop || !dir_node || is_blocked))
         goto do_real_lookup;
 
     hash = full_name_hash((const void *)(unsigned long)NOMOUNT_MAGIC_SIG, dentry->d_name.name, dentry->d_name.len);
@@ -333,7 +332,7 @@ static struct dentry *nomount_hijacked_lookup(struct inode *dir, struct dentry *
 do_real_lookup:
     if (likely(nm_iop && nm_iop->orig_iop && nm_iop->orig_iop->lookup)) {
         res = nm_iop->orig_iop->lookup(dir, dentry, flags);
-        if (unlikely(nomount_get_rule_info(dir_node, dentry->d_name.name, dentry->d_name.len, hash, NULL, false))) {
+        if (!is_blocked && unlikely(nomount_get_rule_info(dir_node, dentry->d_name.name, dentry->d_name.len, hash, NULL, false))) {
             struct dentry *target = res ? res : dentry;
             if (!IS_ERR(target)) d_drop(target);
         }
