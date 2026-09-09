@@ -30,7 +30,8 @@ const LOCALE_NAMES = {
     tr: 'Türkçe',
     vi: 'Tiếng Việt',
     bn: 'বাংলা',
-    ja: '日本語'
+    ja: '日本語',
+    ar: 'العربيه'
 };
 
 const numberFormatterCache = Object.create(null);
