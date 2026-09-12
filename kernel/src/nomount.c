@@ -1201,7 +1201,7 @@ static int nomount_generate_virtual_topology(struct nomount_rule *target_rule)
         }
 
         if (!(irule = kmalloc(sizeof(struct nomount_rule) + parent_len + 2, GFP_KERNEL))) { err = -ENOMEM; break; }
-        *irule = (struct nomount_rule){0};
+        memset(irule, 0, sizeof(*irule));
         irule->v_len = parent_len;
         irule->v_hash = full_name_hash((const void *)(unsigned long)NOMOUNT_MAGIC_SIG, v_path, parent_len);
         irule->flags = NM_FLAG_IS_DIR | NM_FLAG_VIRTUAL_DIR;
@@ -1279,7 +1279,7 @@ static struct nomount_rule *nm_alloc_rule(const char *v_path, const char *r_path
     if (is_whiteout) r_len = 0;
     if (!(rule = kmalloc((sizeof(struct nomount_rule) + v_len + r_len + 2), GFP_KERNEL))) return ERR_PTR(-ENOMEM);
 
-    *rule = (struct nomount_rule){0};
+    memset(rule, 0, sizeof(*rule));
     rule->v_hash = full_name_hash((const void *)(unsigned long)NOMOUNT_MAGIC_SIG, v_path, v_len);
     rule->flags = flags;
     rule->v_len = v_len;
