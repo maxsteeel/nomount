@@ -96,7 +96,7 @@ body.loading { opacity: 0; visibility: hidden; }
     color: var(--md-sys-color-on-surface-variant); font-size: 14px;
 }
 
-.header-title { font-size: 28px; margin: 0 0 4px; padding-left: 4px; font-weight: 500; }
+.header-title { font-size: 28px; margin: 0 0 4px; padding-inline-start: 4px; font-weight: 500; }
 .status-text-col h2 { font-size: 18px; }
 .uid-label { color: var(--md-sys-color-primary); font-size: 12px; font-weight: 600; }
 
@@ -213,22 +213,23 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
     transition: background-color 0.2s, border-color 0.2s;
 }
 .custom-switch .switch-thumb {
-    position: absolute; top: 6px; left: 6px; width: 16px; height: 16px;
+    position: absolute; top: 6px; inset-inline-start: 6px; width: 16px; height: 16px;
     background-color: var(--md-sys-color-outline); border-radius: 50%;
-    transition: transform 0.1s cubic-bezier(0.2, 0, 0, 1), background-color 0.2s, width 0.2s, height 0.2s, top 0.2s, left 0.2s;
+    transition: transform 0.1s cubic-bezier(0.2, 0, 0, 1), background-color 0.2s, width 0.2s, height 0.2s, top 0.2s, inset-inline-start 0.2s;
 }
 .custom-switch .switch-input:checked+.switch-track {
     background-color: var(--md-sys-color-primary); border-color: var(--md-sys-color-primary);
 }
 .custom-switch .switch-input:checked+.switch-track .switch-thumb {
     background-color: var(--md-sys-color-on-primary);
-    width: 24px; height: 24px; top: 2px; left: 2px; transform: translate3d(20px, 0, 0);
+    width: 24px; height: 24px; top: 2px; inset-inline-start: 2px; transform: translate3d(20px, 0, 0);
 }
+[dir="rtl"] .custom-switch .switch-input:checked+.switch-track .switch-thumb { transform: translate3d(-20px, 0, 0); }
 .custom-switch:active .switch-thumb { width: 28px; }
 
 .top-app-bar {
     --top-app-bar-opacity: 0; --top-app-title-opacity: 0;
-    position: fixed; top: 0; left: 0; right: 0; z-index: 90;
+    position: fixed; inset: 0 0 auto; z-index: 90;
     display: flex; align-items: flex-end;
     min-height: calc(var(--insets-top) + 64px);
     padding: var(--insets-top) var(--nm-page-padding-inline) 12px;
@@ -240,7 +241,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 .top-app-bar-title {
     position: relative; z-index: 1; width: 100%; max-width: 720px;
-    margin: 0 auto; padding-left: 4px; font-size: 22px; font-weight: 500;
+    margin: 0 auto; padding-inline-start: 4px; font-size: 22px; font-weight: 500;
     opacity: var(--top-app-title-opacity); visibility: hidden;
 }
 .top-app-bar.show-title .top-app-bar-title { visibility: visible; }
@@ -285,21 +286,21 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 
 .exclusion-app { display: flex; align-items: center; gap: var(--nm-gap-relaxed); min-width: 0; overflow: hidden; }
-.app-meta { align-items: flex-end; gap: 4px; flex: 0 0 auto; text-align: right; }
+.app-meta { align-items: flex-end; gap: 4px; flex: 0 0 auto; text-align: end; }
 
 .custom-select-wrapper { position: relative; width: min-content; word-break: keep-all; user-select: none; }
 .custom-select-trigger {
     height: 52px; padding: 0 12px; gap: 4px; border: 1px solid currentColor;
     border-radius: 12px; font-size: 16px; cursor: pointer; transition: all 150ms ease;
 }
-.dropdown-arrow { transition: transform 150ms ease; margin-right: -6px; }
+.dropdown-arrow { transition: transform 150ms ease; margin-inline-end: -6px; }
 .custom-select-wrapper.open .custom-select-trigger {
     border-color: var(--md-sys-color-primary);
     box-shadow: inset 0 0 0 1px var(--md-sys-color-primary);
 }
 .custom-select-wrapper.open .dropdown-arrow { transform: rotate(180deg); color: var(--md-sys-color-primary); }
 .custom-select-menu {
-    position: absolute; top: calc(100% + 4px); right: 0;
+    position: absolute; top: calc(100% + 4px); inset-inline-end: 0;
     background-color: var(--md-sys-color-surface-container); border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
     opacity: 0; visibility: hidden; transform: translate3d(0, -10px, 0);
@@ -336,7 +337,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
     animation: slideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 #app-selector-modal .modal-content.viewport-locked {
-    position: absolute; top: var(--app-selector-top); left: 0; right: 0;
+    position: absolute; top: var(--app-selector-top); inset-inline: 0;
     height: var(--app-selector-height); margin-inline: auto;
 }
 .modal-header { padding: 0 8px; margin-bottom: 16px; flex-shrink: 0; }
@@ -348,7 +349,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 .search-box input { background: transparent; border: none; width: 100%; outline: none; }
 .search-box input::placeholder { color: var(--md-sys-color-on-surface-variant); }
-.search-box md-icon-button { margin-right: -8px; }
+.search-box md-icon-button { margin-inline-end: -8px; }
 
 .filter-menu {
     background-color: var(--md-sys-color-surface-container-highest);
@@ -366,7 +367,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 
 .modal-fab {
-    position: absolute; bottom: 24px; right: 8px; z-index: 100;
+    position: absolute; bottom: 24px; inset-inline-end: 8px; z-index: 100;
     transform: scale(1); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
@@ -374,7 +375,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 .app-item.selected .app-name { color: var(--md-sys-color-primary); font-weight: 600; }
 
 .pull-to-refresh-indicator {
-    position: absolute; top: -60px; left: 0; right: 0; height: 50px; z-index: 10; pointer-events: none;
+    position: absolute; top: -60px; inset-inline: 0; height: 50px; z-index: 10; pointer-events: none;
 }
 .pull-to-refresh-indicator md-icon {
     background-color: var(--md-sys-color-surface-container-high);
@@ -385,7 +386,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 .pull-to-refresh-indicator.refreshing md-icon { animation: spin 1s linear infinite; }
 
 .bottom-nav {
-    position: fixed; bottom: 0; left: 0; width: 100%; justify-content: space-evenly;
+    position: fixed; inset: auto 0 0; width: 100%; justify-content: space-evenly;
     height: calc(var(--nav-height) + var(--insets-bottom)); padding-bottom: var(--insets-bottom);
     background-color: var(--nm-nav-background);
     backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); z-index: 100;
@@ -406,7 +407,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 
 #fab-container {
     position: fixed; bottom: calc(var(--nav-height) + var(--insets-bottom) + 16px);
-    right: 16px; z-index: 90; opacity: 0; transform: scale(0.8);
+    inset-inline-end: 16px; z-index: 90; opacity: 0; transform: scale(0.8);
     pointer-events: none; transition: transform 0.3s, opacity 0.2s;
 }
 #fab-container.visible { opacity: 1; transform: scale(1); pointer-events: auto; }

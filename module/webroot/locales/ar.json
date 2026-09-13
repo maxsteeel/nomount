@@ -1,6 +1,6 @@
 {
   "nav_home": "الرئيسية",
-  "nav_modules": "الاضافات",
+  "nav_modules": "الإضافات",
   "nav_exclusions": "الاستثناءات",
   "nav_options": "الخيارات",
   "injection-stats": "جارٍ الحساب...",
@@ -15,10 +15,10 @@
   "system_label": "النظام",
   "kernel_label": "النواة",
   "model_label": "الطراز",
-  "detailed_logging": "التسجيل التفصيلي",
+  "detailed_logging": "السجل التفصيلي",
   "detailed_logging_desc": "كتابة مخرجات تفصيلية إلى nomount.log",
   "safe_mode": "الوضع الآمن",
-  "safe_mode_desc": "تعطيل الحقن عند الإقلاع التالي",
+  "safe_mode_desc": "تعطيل الحقن عند إعادة التشغيل التالية",
   "clear_rules": "مسح جميع القواعد",
   "language": "اللغة",
   "language_description": "اختر لغة الواجهة.",
@@ -27,7 +27,7 @@
   "search_placeholder": "ابحث عن تطبيق أو حزمة...",
   "loading_apps": "جارٍ تحميل التطبيقات...",
   "no_apps_found": "لم يتم العثور على تطبيقات",
-  "no_modules_found": "لم يتم العثور على اضافات",
+  "no_modules_found": "لم يتم العثور على إضافات",
   "no_exclusions_yet": "لا توجد استثناءات حتى الآن",
   "remove_exclusion": "إزالة الاستثناء",
   "module_injected_count": "اضافه واحدة قيد الحقن",
@@ -56,5 +56,5 @@
   "add_exclusion": "إضافة استثناء",
   "mode_lkm": "LKM",
   "mode_builtin": "مدمج",
-  "module_version_label": "إصدار الاضافه"
+  "module_version_label": "إصدار الإضافة"
 }

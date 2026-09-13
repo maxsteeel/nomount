@@ -33,6 +33,7 @@ const LOCALE_NAMES = {
     ja: '日本語',
     ar: 'العربيه'
 };
+const RTL_LOCALES = new Set(['ar']);
 
 const numberFormatterCache = Object.create(null);
 
@@ -81,6 +82,7 @@ async function setAppLocale(locale, refreshView = true) {
 
     translations = translationsCache[activeLocale];
     document.documentElement.lang = activeLocale;
+    document.documentElement.dir = RTL_LOCALES.has(activeLocale) ? 'rtl' : 'ltr';
     localStorage.setItem('nm_locale', activeLocale);
     if (!cachedI18nNodes) cachedI18nNodes = document.querySelectorAll('[data-i18n]');
 
