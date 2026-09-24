@@ -17,8 +17,8 @@
   "model_label": "Model",
   "detailed_logging": "Pencatatan Log Detail",
   "detailed_logging_desc": "Tulis output verbose ke nomount.log",
-  "block_isolated_uids": "Block Isolated UIDs",
-  "block_isolated_uids_desc": "Bypass redirection for Android isolated processes (UIDs 90000-99999).",
+  "block_isolated_uids": "Blokir UID Terisolasi",
+  "block_isolated_uids_desc": "Lewati pengalihan untuk proses Android yang terisolasi (UID 90000-99999).",
   "safe_mode": "Mode Aman",
   "safe_mode_desc": "Nonaktifkan injeksi pada boot berikutnya",
   "clear_rules": "Bersihkan semua aturan",
@@ -38,10 +38,10 @@
   "modules_hot_load": "Muat",
   "modules_hot_unload": "Bongkar",
   "unknown_value": "Tidak diketahui",
-  "cancel": "Cancel",
-  "add": "Add",
-  "enter_manual_uid": "Enter UID manually",
-  "invalid_uid": "UID Invalid",
+  "cancel": "Batal",
+  "add": "Tambah",
+  "enter_manual_uid": "Masukkan UID secara manual",
+  "invalid_uid": "UID tidak valid",
   "unblocking_name": "Membuka blokir {{name}}...",
   "blocked_saved": "Tersimpan; pemblokiran runtime gagal",
   "blocked_already": "Sudah diblokir",
@@ -58,5 +58,5 @@
   "add_exclusion": "Tambah pengecualian",
   "mode_lkm": "LKM",
   "mode_builtin": "Built-in",
-  "module_version_label": "Module version"
+  "module_version_label": "Versi modul"
 }
