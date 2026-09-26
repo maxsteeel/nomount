@@ -239,6 +239,78 @@ const UI = {};
 let currentActiveViewId = 'view-home';
 let currentActiveViewTitle = '';
 
+let currentHistoryLevel = 0;
+history.replaceState({ level: 0 }, '');
+
+window.addEventListener('popstate', (e) => {
+    const level = e.state ? e.state.level : 0;
+
+    if (currentHistoryLevel === 3 && level < 3) {
+        currentHistoryLevel = level;
+        const uidModal = document.getElementById('uid-input-modal');
+        const cancelBtn = document.getElementById('btn-cancel-uid');
+        if (uidModal && uidModal.classList.contains('active') && cancelBtn) cancelBtn.click();
+    }
+
+    if (currentHistoryLevel === 2 && level < 2) {
+        currentHistoryLevel = level;
+        if (typeof closeAppSelector === 'function') closeAppSelector(true);
+        if (typeof exitMultiSelectMode === 'function') exitMultiSelectMode();
+    }
+
+    if (currentHistoryLevel >= 1 && level === 0) {
+        currentHistoryLevel = level;
+        switchToTab('view-home', false);
+    }
+
+    currentHistoryLevel = level;
+});
+
+function switchToTab(target, pushToHistory = true) {
+    if (currentActiveViewId === target && document.getElementById(target)?.classList.contains('active')) return;
+
+    const navItems = document.querySelectorAll('.nav-item');
+    const views = document.querySelectorAll('.view-content');
+    const fab = document.getElementById('fab-container');
+
+    navItems.forEach(nav => {
+        nav.classList.remove('active');
+        const i = nav.querySelector('md-icon');
+        if (i) setIcon(i, (i.dataset.icon || i.textContent.trim()), nav.dataset.target === target ? 'filled' : 'outline');
+        if (nav.dataset.target === target) nav.classList.add('active');
+    });
+
+    views.forEach(v => v.classList.remove('active'));
+    const targetView = document.getElementById(target);
+    if (targetView) targetView.classList.add('active');
+
+    currentActiveViewId = target;
+    currentActiveViewTitle = targetView.querySelector('.header-title')?.textContent?.trim() || '';
+
+    updateTopAppBar();
+    if (fab) fab.classList.toggle('visible', target === 'view-exclusions');
+
+    if (pushToHistory) {
+        if (target === 'view-home') {
+            if (currentHistoryLevel === 1) { history.back(); currentHistoryLevel = 0; } 
+            else if (currentHistoryLevel > 1) { history.go(-currentHistoryLevel); currentHistoryLevel = 0; }
+        } else {
+            if (currentHistoryLevel === 0) { history.pushState({ level: 1 }, ''); currentHistoryLevel = 1; } 
+            else if (currentHistoryLevel === 1) { history.replaceState({ level: 1 }, ''); }
+        }
+    }
+
+    setTimeout(() => {
+        if (!viewLoadState[target]) {
+            viewLoadState[target] = true;
+            if (target === 'view-home') loadHome();
+            else if (target === 'view-modules') loadModules();
+            else if (target === 'view-exclusions') loadExclusions();
+            else if (target === 'view-options') loadOptions();
+        }
+    }, 0);
+}
+
 function updateTopAppBar() {
     if (!UI.c) {
         UI.c = document.querySelector('.page-container');
@@ -269,45 +341,13 @@ function updateTopAppBar() {
 
 function initNavigation() {
     const navItems = document.querySelectorAll('.nav-item');
-    const views = document.querySelectorAll('.view-content');
-    const fab = document.getElementById('fab-container');
-
     navItems.forEach(item => {
         const iconEl = item.querySelector('md-icon');
         if (iconEl) {
             const iconName = iconEl.dataset.icon || iconEl.textContent.trim();
             setIcon(iconEl, iconName, item.classList.contains('active') ? 'filled' : 'outline');
         }
-
-        item.addEventListener('click', () => {
-            navItems.forEach(nav => {
-                nav.classList.remove('active');
-                const i = nav.querySelector('md-icon');
-                if (i) setIcon(i, (i.dataset.icon || i.textContent.trim()), nav === item ? 'filled' : 'outline');
-            });
-            item.classList.add('active');
-            const target = item.dataset.target;
-            
-            views.forEach(v => v.classList.remove('active'));
-            const targetView = document.getElementById(target);
-            targetView.classList.add('active');
-            
-            currentActiveViewId = target;
-            currentActiveViewTitle = targetView.querySelector('.header-title')?.textContent?.trim() || '';
-            
-            updateTopAppBar();
-            fab.classList.toggle('visible', target === 'view-exclusions');
-
-            setTimeout(() => {
-                if (!viewLoadState[target]) {
-                    viewLoadState[target] = true;
-                    if (target === 'view-home') loadHome();
-                    else if (target === 'view-modules') loadModules();
-                    else if (target === 'view-exclusions') loadExclusions();
-                    else if (target === 'view-options') loadOptions();
-                }
-            }, 0);
-        });
+        item.addEventListener('click', () => switchToTab(item.dataset.target, true));
     });
 }
 
@@ -717,7 +757,7 @@ async function ensureAppsCache(force = false) {
     return appLoadingPromise;
 }
 
-function closeAppSelector() {
+function closeAppSelector(fromHistory = false) {
     const modal = document.getElementById('app-selector-modal');
     const content = modal?.querySelector('.modal-content');
     modal?.classList.remove('active');
@@ -725,6 +765,11 @@ function closeAppSelector() {
     content?.style.removeProperty('--app-selector-top');
     content?.style.removeProperty('--app-selector-height');
     if (listObserver) listObserver.disconnect();
+
+    if (!fromHistory && currentHistoryLevel >= 2) {
+        history.back();
+        currentHistoryLevel = 1;
+    }
 }
 
 function openAppSelector() {
@@ -742,6 +787,12 @@ function openAppSelector() {
     content.style.setProperty('--app-selector-height', `${Math.round(viewportHeight * 0.9)}px`);
     content.classList.add('viewport-locked');
     modal.classList.add('active');
+
+    if (currentHistoryLevel < 2) {
+        history.pushState({ level: 2 }, '');
+        currentHistoryLevel = 2;
+    }
+
     if (listObserver) listObserver.disconnect();
     document.getElementById('filter-menu').classList.remove('active'); 
     searchInput.value = '';
@@ -1065,7 +1116,7 @@ function initDelegationAndAttach() {
     });
 
     let pressTimer, touchMoved = false;
-    const exitMultiSelectMode = () => {
+    const exitMultiSelectMode = window.exitMultiSelectMode = () => {
         isMultiSelectMode = false;
         selectedAppsMap.clear();
         document.querySelectorAll('.app-item.selected').forEach(el => el.classList.remove('selected'));
@@ -1161,6 +1212,11 @@ function initDelegationAndAttach() {
                 const btnCancel = document.getElementById('btn-cancel-uid');
                 const btnAdd = document.getElementById('btn-confirm-uid');
                 modalDialog.classList.add('active');
+
+                const wasLevel = currentHistoryLevel;
+                history.pushState({ level: 3 }, '');
+                currentHistoryLevel = 3;
+
                 input.value = '';
                 setTimeout(() => input.focus(), 150);
                 const cleanup = () => {
@@ -1169,6 +1225,11 @@ function initDelegationAndAttach() {
                     btnCancel.onclick = null;
                     btnAdd.onclick = null;
                     modalDialog.onclick = null;
+
+                    if (currentHistoryLevel === 3) {
+                        history.back();
+                        currentHistoryLevel = wasLevel;
+                    }
                 };
                 btnCancel.onclick = () => { cleanup(); resolve(null); };
                 btnAdd.onclick = () => { cleanup(); resolve(input.value); };
@@ -1191,7 +1252,9 @@ function initDelegationAndAttach() {
             exitMultiSelectMode();
         }
     });
+
     document.getElementById('btn-close-modal')?.addEventListener('click', () => {
+        closeAppSelector();
         exitMultiSelectMode();
     });
 
