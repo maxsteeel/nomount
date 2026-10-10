@@ -101,20 +101,16 @@ jobs:
           cp -a module "$MODULE_BUILD"
           for f in "$MODULE_BUILD"/webroot/locales/*.json; do jq -c . "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done
           mkdir -p "$WEBUI_BUILD"
-          sed '/@import ".\/theme.css";/d' module/webroot/styles.css > "$WEBUI_BUILD/temp.css"
-          cat "$WEBUI_BUILD/temp.css" module/webroot/theme.css > "$WEBUI_BUILD/combined.css"
 
           curl -sL "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.1.tgz" -o /tmp/esbuild.tgz
           tar -xzf /tmp/esbuild.tgz -C /tmp && mv /tmp/package/bin/esbuild /tmp/esbuild && chmod +x /tmp/esbuild
           /tmp/esbuild module/webroot/index.js --bundle --format=esm --minify --outfile="$WEBUI_BUILD/index.js"
-          /tmp/esbuild "$WEBUI_BUILD/combined.css" --minify --outfile="$WEBUI_BUILD/styles.css"
+          /tmp/esbuild module/webroot/styles.css --minify --outfile="$WEBUI_BUILD/styles.css"
           tr '\n' ' ' < module/webroot/index.html | sed 's/  */ /g' | sed 's/> </></g' > "$WEBUI_BUILD/index.html"
 
           install -m 0644 "$WEBUI_BUILD/index.js" "$MODULE_BUILD/webroot/index.js"
           install -m 0644 "$WEBUI_BUILD/styles.css" "$MODULE_BUILD/webroot/styles.css"
           install -m 0644 "$WEBUI_BUILD/index.html" "$MODULE_BUILD/webroot/index.html"
-
-          rm "$MODULE_BUILD/webroot/theme.css"
 
       - name: Pack prepared module
         id: pack
