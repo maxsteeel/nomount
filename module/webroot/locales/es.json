@@ -63,7 +63,7 @@
   "status_version": "Versión: {{version}}",
   "add_exclusion": "Agregar exclusión",
   "mode_lkm": "LKM",
-  "mode_builtin": "Built-in",
+  "mode_builtin": "Integrado",
   "module_version_label": "Versión del módulo",
   "appearance": "Apariencia",
   "theme_mode": "Tema",
