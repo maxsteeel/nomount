@@ -77,7 +77,7 @@
   "custom_color": "Цвет",
   "custom_color_desc": "Выбор основного цвета интерфейса",
   "select_custom_color": "Выбор цвета",
-  "advanced":"Настройка",
-  "advanced_color":"Настройка цвета",
-  "done":"Готово"
+  "advanced": "Настройка",
+  "advanced_color": "Настройка цвета",
+  "done": "Готово"
 }
