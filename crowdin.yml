@@ -1,3 +1,5 @@
 files:
   - source: /module/webroot/locales/en.json
     translation: /module/webroot/locales/%two_letters_code%.json
+bundles:
+  - 1
