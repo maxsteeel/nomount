@@ -1,83 +1,650 @@
-{
-  "nav_home": "الرئيسية",
-  "nav_modules": "الإضافات",
-  "nav_exclusions": "الاستثناءات",
-  "nav_options": "الخيارات",
-  "injection-stats": "جارٍ الحساب...",
-  "status_checking": "جارٍ التحقق...",
-  "status_active": "نشط",
-  "status_loaded": "تم التحميل",
-  "status_disabled": "معطّل",
-  "status_skipped": "تم التخطي",
-  "status_inactive": "غير نشط",
-  "status_label": "الحالة",
-  "device_label": "الجهاز",
-  "system_label": "النظام",
-  "kernel_label": "النواة",
-  "model_label": "الطراز",
-  "detailed_logging": "السجل التفصيلي",
-  "detailed_logging_desc": "كتابة مخرجات تفصيلية إلى nomount.log",
-  "block_isolated_uids": "حظر معرفات UID المعزولة",
-  "block_isolated_uids_desc": "تجاوز إعادة التوجيه للعمليات المعزولة في أندرويد (معرفات UID من 90000 إلى 99999).",
-  "safe_mode": "الوضع الآمن",
-  "safe_mode_desc": "تعطيل الحقن عند إعادة التشغيل التالية",
-  "clear_rules": "مسح القواعد",
-  "clear_uids": "مسح معرفات UID",
-  "clear_all": "مسح الكل",
-  "language": "اللغة",
-  "language_description": "اختر لغة الواجهة.",
-  "filter_show_system_apps": "إظهار تطبيقات النظام",
-  "select_application": "اختر تطبيقًا",
-  "search_placeholder": "ابحث عن تطبيق أو حزمة...",
-  "loading_apps": "جارٍ تحميل التطبيقات...",
-  "no_apps_found": "لم يتم العثور على تطبيقات",
-  "no_modules_found": "لم يتم العثور على إضافات",
-  "no_exclusions_yet": "لا توجد استثناءات حتى الآن",
-  "remove_exclusion": "إزالة الاستثناء",
-  "module_injected_count": "اضافه واحدة قيد الحقن",
-  "modules_injected_count": "{{count}} اضافات قيد الحقن",
-  "modules_injected_files": "{{count}} ملفًا",
-  "modules_hot_load": "تحميل فوري",
-  "modules_hot_unload": "إلغاء تحميل فوري",
-  "unknown_value": "غير معروف",
-  "cancel": "إلغاء",
-  "add": "إضافة",
-  "enter_manual_uid": "أدخل UID يدويًا",
-  "invalid_uid": "UID غير صالح",
-  "unblocking_name": "جارٍ إلغاء حظر {{name}}...",
-  "blocked_saved": "تم الحفظ؛ فشل الحظر أثناء التشغيل",
-  "blocked_already": "محظور بالفعل",
-  "blocked": "تم حظر: {{name}}",
-  "error_blocking": "خطأ أثناء الحظر",
-  "error_unblocking": "خطأ أثناء إلغاء الحظر",
-  "error_loading_exclusions": "خطأ أثناء تحميل الاستثناءات",
-  "error_loading_modules": "خطأ أثناء تحميل الاضافات",
-  "clear_rules_toast": "جارٍ مسح جميع القواعد...",
-  "clear_rules_done": "تم مسح جميع القواعد!",
-  "clear_uids_toast": "جارٍ مسح جميع معرفات UID...",
-  "clear_uids_done": "تم مسح جميع معرفات UID بنجاح!",
-  "clear_all_toast": "جارٍ مسح جميع القواعد ومعرفات UID...",
-  "clear_all_done": "تم مسح جميع القواعد ومعرفات UID بنجاح!",
-  "refresh_failed": "فشل التحديث",
-  "load_failed": "خطأ أثناء تحميل التطبيقات",
-  "status_version": "الإصدار: {{version}}",
-  "add_exclusion": "إضافة استثناء",
-  "mode_lkm": "LKM",
-  "mode_builtin": "مدمج",
-  "module_version_label": "إصدار الإضافة",
-  "appearance": "المظهر",
-  "theme_mode": "السمة",
-  "theme_mode_desc": "اختر السمة المفضلة لديك",
-  "theme_system": "النظام",
-  "theme_light": "فاتح",
-  "theme_dark": "داكن",
-  "theme_amoled": "أسود (AMOLED)",
-  "material_you": "تصميم Material You",
-  "material_you_desc": "استخدام ألوان خلفية النظام",
-  "custom_color": "لون مخصص",
-  "custom_color_desc": "اختر اللون الأساسي للواجهة",
-  "select_custom_color": "تحديد لون مخصص",
-  "advanced": "متقدم",
-  "advanced_color": "ألوان متقدمة",
-  "done": "تم"
-}
+[
+    {
+        "identifier": "nav_home",
+        "source_string": "Home",
+        "translation": "Home",
+        "context": " -> nav_home",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "nav_modules",
+        "source_string": "Modules",
+        "translation": "Modules",
+        "context": " -> nav_modules",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "nav_exclusions",
+        "source_string": "Exclusions",
+        "translation": "Exclusions",
+        "context": " -> nav_exclusions",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "nav_options",
+        "source_string": "Options",
+        "translation": "Options",
+        "context": " -> nav_options",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "injection-stats",
+        "source_string": "Calculating...",
+        "translation": "Calculating...",
+        "context": " -> injection-stats",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "status_checking",
+        "source_string": "Checking...",
+        "translation": "Checking...",
+        "context": " -> status_checking",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "status_active",
+        "source_string": "Active",
+        "translation": "Active",
+        "context": " -> status_active",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "status_loaded",
+        "source_string": "Loaded",
+        "translation": "Loaded",
+        "context": " -> status_loaded",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "status_disabled",
+        "source_string": "Disabled",
+        "translation": "Disabled",
+        "context": " -> status_disabled",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "status_skipped",
+        "source_string": "Skipped",
+        "translation": "Skipped",
+        "context": " -> status_skipped",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "status_inactive",
+        "source_string": "Inactive",
+        "translation": "Inactive",
+        "context": " -> status_inactive",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "status_label",
+        "source_string": "Status",
+        "translation": "Status",
+        "context": " -> status_label",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "device_label",
+        "source_string": "Device",
+        "translation": "Device",
+        "context": " -> device_label",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "system_label",
+        "source_string": "System",
+        "translation": "System",
+        "context": " -> system_label",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "kernel_label",
+        "source_string": "Kernel",
+        "translation": "Kernel",
+        "context": " -> kernel_label",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "model_label",
+        "source_string": "Model",
+        "translation": "Model",
+        "context": " -> model_label",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "detailed_logging",
+        "source_string": "Detailed Logging",
+        "translation": "Detailed Logging",
+        "context": " -> detailed_logging",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "detailed_logging_desc",
+        "source_string": "Write verbose output to nomount.log",
+        "translation": "Write verbose output to nomount.log",
+        "context": " -> detailed_logging_desc",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "block_isolated_uids",
+        "source_string": "Block Isolated UIDs",
+        "translation": "Block Isolated UIDs",
+        "context": " -> block_isolated_uids",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "block_isolated_uids_desc",
+        "source_string": "Bypass redirection for Android isolated processes (UIDs 90000-99999).",
+        "translation": "Bypass redirection for Android isolated processes (UIDs 90000-99999).",
+        "context": " -> block_isolated_uids_desc",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "safe_mode",
+        "source_string": "Safe Mode",
+        "translation": "Safe Mode",
+        "context": " -> safe_mode",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "safe_mode_desc",
+        "source_string": "Disable injection on next boot",
+        "translation": "Disable injection on next boot",
+        "context": " -> safe_mode_desc",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "clear_rules",
+        "source_string": "Clear rules",
+        "translation": "Clear rules",
+        "context": " -> clear_rules",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "clear_uids",
+        "source_string": "Clear UIDs",
+        "translation": "Clear UIDs",
+        "context": " -> clear_uids",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "clear_all",
+        "source_string": "Clear all",
+        "translation": "Clear all",
+        "context": " -> clear_all",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "language",
+        "source_string": "Language",
+        "translation": "Language",
+        "context": " -> language",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "language_description",
+        "source_string": "Select the interface language.",
+        "translation": "Select the interface language.",
+        "context": " -> language_description",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "filter_show_system_apps",
+        "source_string": "Show System Apps",
+        "translation": "Show System Apps",
+        "context": " -> filter_show_system_apps",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "select_application",
+        "source_string": "Select Application",
+        "translation": "Select Application",
+        "context": " -> select_application",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "search_placeholder",
+        "source_string": "Search app or package...",
+        "translation": "Search app or package...",
+        "context": " -> search_placeholder",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "loading_apps",
+        "source_string": "Loading apps...",
+        "translation": "Loading apps...",
+        "context": " -> loading_apps",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "no_apps_found",
+        "source_string": "No apps found",
+        "translation": "No apps found",
+        "context": " -> no_apps_found",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "no_modules_found",
+        "source_string": "No modules found",
+        "translation": "No modules found",
+        "context": " -> no_modules_found",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "no_exclusions_yet",
+        "source_string": "No exclusions yet",
+        "translation": "No exclusions yet",
+        "context": " -> no_exclusions_yet",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "remove_exclusion",
+        "source_string": "Remove exclusion",
+        "translation": "Remove exclusion",
+        "context": " -> remove_exclusion",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "module_injected_count",
+        "source_string": "1 module injecting",
+        "translation": "1 module injecting",
+        "context": " -> module_injected_count",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "modules_injected_count",
+        "source_string": "{{count}} modules injecting",
+        "translation": "{{count}} modules injecting",
+        "context": " -> modules_injected_count",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "modules_injected_files",
+        "source_string": "{{count}} files",
+        "translation": "{{count}} files",
+        "context": " -> modules_injected_files",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "modules_hot_load",
+        "source_string": "Hot Load",
+        "translation": "Hot Load",
+        "context": " -> modules_hot_load",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "modules_hot_unload",
+        "source_string": "Hot Unload",
+        "translation": "Hot Unload",
+        "context": " -> modules_hot_unload",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "unknown_value",
+        "source_string": "Unknown",
+        "translation": "Unknown",
+        "context": " -> unknown_value",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "cancel",
+        "source_string": "Cancel",
+        "translation": "Cancel",
+        "context": " -> cancel",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "add",
+        "source_string": "Add",
+        "translation": "Add",
+        "context": " -> add",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "enter_manual_uid",
+        "source_string": "Enter UID manually",
+        "translation": "Enter UID manually",
+        "context": " -> enter_manual_uid",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "invalid_uid",
+        "source_string": "Invalid UID",
+        "translation": "Invalid UID",
+        "context": " -> invalid_uid",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "unblocking_name",
+        "source_string": "Unblocking {{name}}...",
+        "translation": "Unblocking {{name}}...",
+        "context": " -> unblocking_name",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "blocked_saved",
+        "source_string": "Saved; runtime block failed",
+        "translation": "Saved; runtime block failed",
+        "context": " -> blocked_saved",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "blocked_already",
+        "source_string": "Already blocked",
+        "translation": "Already blocked",
+        "context": " -> blocked_already",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "blocked",
+        "source_string": "Blocked: {{name}}",
+        "translation": "Blocked: {{name}}",
+        "context": " -> blocked",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "error_blocking",
+        "source_string": "Error blocking",
+        "translation": "Error blocking",
+        "context": " -> error_blocking",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "error_unblocking",
+        "source_string": "Error unblocking",
+        "translation": "Error unblocking",
+        "context": " -> error_unblocking",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "error_loading_exclusions",
+        "source_string": "Error loading exclusions",
+        "translation": "Error loading exclusions",
+        "context": " -> error_loading_exclusions",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "error_loading_modules",
+        "source_string": "Error loading modules",
+        "translation": "Error loading modules",
+        "context": " -> error_loading_modules",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "clear_rules_toast",
+        "source_string": "Clearing all rules...",
+        "translation": "Clearing all rules...",
+        "context": " -> clear_rules_toast",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "clear_rules_done",
+        "source_string": "All rules cleared!",
+        "translation": "All rules cleared!",
+        "context": " -> clear_rules_done",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "clear_uids_toast",
+        "source_string": "Clearing all UIDs...",
+        "translation": "Clearing all UIDs...",
+        "context": " -> clear_uids_toast",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "clear_uids_done",
+        "source_string": "All UIDs cleared!",
+        "translation": "All UIDs cleared!",
+        "context": " -> clear_uids_done",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "clear_all_toast",
+        "source_string": "Clearing all rules and UIDs...",
+        "translation": "Clearing all rules and UIDs...",
+        "context": " -> clear_all_toast",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "clear_all_done",
+        "source_string": "All rules and UIDs cleared!",
+        "translation": "All rules and UIDs cleared!",
+        "context": " -> clear_all_done",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "refresh_failed",
+        "source_string": "Refresh failed",
+        "translation": "Refresh failed",
+        "context": " -> refresh_failed",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "load_failed",
+        "source_string": "Error loading apps",
+        "translation": "Error loading apps",
+        "context": " -> load_failed",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "status_version",
+        "source_string": "Version: {{version}}",
+        "translation": "Version: {{version}}",
+        "context": " -> status_version",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "add_exclusion",
+        "source_string": "Add exclusion",
+        "translation": "Add exclusion",
+        "context": " -> add_exclusion",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "mode_lkm",
+        "source_string": "LKM",
+        "translation": "LKM",
+        "context": " -> mode_lkm",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "mode_builtin",
+        "source_string": "Built-in",
+        "translation": "Built-in",
+        "context": " -> mode_builtin",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "module_version_label",
+        "source_string": "Module version",
+        "translation": "Module version",
+        "context": " -> module_version_label",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "appearance",
+        "source_string": "Appearance",
+        "translation": "Appearance",
+        "context": " -> appearance",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "theme_mode",
+        "source_string": "Theme",
+        "translation": "Theme",
+        "context": " -> theme_mode",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "theme_mode_desc",
+        "source_string": "Select your preferred theme",
+        "translation": "Select your preferred theme",
+        "context": " -> theme_mode_desc",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "theme_system",
+        "source_string": "System",
+        "translation": "System",
+        "context": " -> theme_system",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "theme_light",
+        "source_string": "Light",
+        "translation": "Light",
+        "context": " -> theme_light",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "theme_dark",
+        "source_string": "Dark",
+        "translation": "Dark",
+        "context": " -> theme_dark",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "theme_amoled",
+        "source_string": "AMOLED",
+        "translation": "AMOLED",
+        "context": " -> theme_amoled",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "material_you",
+        "source_string": "Material You",
+        "translation": "Material You",
+        "context": " -> material_you",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "material_you_desc",
+        "source_string": "Use system wallpaper colors",
+        "translation": "Use system wallpaper colors",
+        "context": " -> material_you_desc",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "custom_color",
+        "source_string": "Custom Color",
+        "translation": "Custom Color",
+        "context": " -> custom_color",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "custom_color_desc",
+        "source_string": "Pick your interface accent color",
+        "translation": "Pick your interface accent color",
+        "context": " -> custom_color_desc",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "select_custom_color",
+        "source_string": "Select custom color",
+        "translation": "Select custom color",
+        "context": " -> select_custom_color",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "advanced",
+        "source_string": "Advanced",
+        "translation": "Advanced",
+        "context": " -> advanced",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "advanced_color",
+        "source_string": "Advanced Color",
+        "translation": "Advanced Color",
+        "context": " -> advanced_color",
+        "labels": "en.json",
+        "max_length": null
+    },
+    {
+        "identifier": "done",
+        "source_string": "Done",
+        "translation": "Done",
+        "context": " -> done",
+        "labels": "en.json",
+        "max_length": null
+    }
+]
