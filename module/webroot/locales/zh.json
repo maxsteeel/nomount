@@ -80,5 +80,6 @@
   "advanced": "高级",
   "advanced_color": "高级颜色",
   "done": "完成",
-  "modules_skip": "Skip"
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip"
 }
