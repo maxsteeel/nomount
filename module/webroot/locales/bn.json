@@ -80,5 +80,6 @@
   "advanced": "উন্নত",
   "advanced_color": "উন্নত রঙ",
   "done": "সম্পন্ন",
-  "modules_skip": "Skip"
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip"
 }
