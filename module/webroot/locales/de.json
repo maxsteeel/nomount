@@ -79,5 +79,6 @@
   "select_custom_color": "Select custom color",
   "advanced": "Advanced",
   "advanced_color": "Advanced Color",
-  "done": "Done"
+  "done": "Done",
+  "modules_skip": "Skip"
 }
