@@ -79,5 +79,6 @@
   "select_custom_color": "Выбор цвета",
   "advanced": "Настройка",
   "advanced_color": "Настройка цвета",
-  "done": "Готово"
+  "done": "Готово",
+  "modules_skip": "Skip"
 }
