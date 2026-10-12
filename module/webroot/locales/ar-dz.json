@@ -80,5 +80,6 @@
   "advanced": "حوايج متقدمة",
   "advanced_color": "كولور متقدم",
   "done": "خلاص (تم)",
-  "modules_skip": "Skip"
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip"
 }
