@@ -80,5 +80,6 @@
   "advanced": "Nâng cao",
   "advanced_color": "Chọn màu nâng cao",
   "done": "Xong",
-  "modules_skip": "Skip"
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip"
 }
