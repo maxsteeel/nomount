@@ -80,6 +80,6 @@
   "advanced": "高度な設定",
   "advanced_color": "高度な色設定",
   "done": "完了",
-  "modules_skip": "Skip",
-  "modules_unskip": "Unskip"
+  "modules_skip": "スキップ",
+  "modules_unskip": "スキップ解除"
 }
