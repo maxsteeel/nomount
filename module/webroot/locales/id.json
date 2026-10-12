@@ -80,5 +80,6 @@
   "advanced": "Canggih",
   "advanced_color": "Warna Tingkat Lanjut",
   "done": "Selesai",
-  "modules_skip": "Skip"
+  "modules_skip": "Abaikan",
+  "modules_unskip": "Sertakan"
 }
