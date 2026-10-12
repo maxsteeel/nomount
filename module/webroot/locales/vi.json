@@ -79,5 +79,6 @@
   "select_custom_color": "Chọn màu tùy chỉnh",
   "advanced": "Nâng cao",
   "advanced_color": "Chọn màu nâng cao",
-  "done": "Xong"
+  "done": "Xong",
+  "modules_skip": "Skip"
 }
