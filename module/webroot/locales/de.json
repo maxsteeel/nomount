@@ -80,5 +80,6 @@
   "advanced": "Advanced",
   "advanced_color": "Advanced Color",
   "done": "Done",
-  "modules_skip": "Skip"
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip"
 }
