@@ -79,5 +79,6 @@
   "select_custom_color": "Kişisel renk seç",
   "advanced": "Gelişmiş",
   "advanced_color": "Gelişmiş Renk",
-  "done": "Tamam"
+  "done": "Tamam",
+  "modules_skip": "Skip"
 }
