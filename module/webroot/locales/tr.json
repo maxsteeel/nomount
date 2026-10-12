@@ -80,5 +80,6 @@
   "advanced": "Gelişmiş",
   "advanced_color": "Gelişmiş Renk",
   "done": "Tamam",
-  "modules_skip": "Skip"
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip"
 }
