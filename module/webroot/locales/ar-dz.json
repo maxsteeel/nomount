@@ -79,5 +79,6 @@
   "select_custom_color": "خير كولور مخصص",
   "advanced": "حوايج متقدمة",
   "advanced_color": "كولور متقدم",
-  "done": "خلاص (تم)"
+  "done": "خلاص (تم)",
+  "modules_skip": "Skip"
 }
