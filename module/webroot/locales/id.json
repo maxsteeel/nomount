@@ -79,5 +79,6 @@
   "select_custom_color": "Pilih warna khusus",
   "advanced": "Canggih",
   "advanced_color": "Warna Tingkat Lanjut",
-  "done": "Selesai"
+  "done": "Selesai",
+  "modules_skip": "Skip"
 }
