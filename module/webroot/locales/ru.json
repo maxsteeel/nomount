@@ -80,5 +80,6 @@
   "advanced": "Настройка",
   "advanced_color": "Настройка цвета",
   "done": "Готово",
-  "modules_skip": "Skip"
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip"
 }
