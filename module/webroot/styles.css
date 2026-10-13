@@ -52,7 +52,7 @@ html[data-scheme="dark"], html[data-scheme="amoled"] {
 html[data-scheme="amoled"] {
     --md-sys-color-background: #000000;
     --md-sys-color-surface: #000000;
-    --nm-nav-background: #000000;
+    --nm-nav-background: color-mix(in srgb, #000000 80%, transparent);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
