@@ -54,7 +54,7 @@
   "error_loading_modules": "Ошибка загрузки модулей",
   "clear_rules_toast": "Очищаем все правила...",
   "clear_rules_done": "Все правила очищены!",
-  "clear_uids_toast": "Clearing all UIDs...",
+  "clear_uids_toast": "Очистка всех UID...",
   "clear_uids_done": "Все UIDs очищены!",
   "clear_all_toast": "Удалить все правила и UIDs...",
   "clear_all_done": "Все правила и UIDs очищены!",
@@ -80,6 +80,6 @@
   "advanced": "Настройка",
   "advanced_color": "Настройка цвета",
   "done": "Готово",
-  "modules_skip": "Skip",
-  "modules_unskip": "Unskip"
+  "modules_skip": "Пропустить",
+  "modules_unskip": "Не пропустить"
 }
