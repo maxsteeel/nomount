@@ -33,6 +33,7 @@ const LOCALE_NAMES = {
     en: 'English',
     es: 'Español',
     id: 'Bahasa Indonesia',
+    de: 'Deutsch',
     zh: '简体中文',
     ru: 'Русский',
     pl: 'Polski',
