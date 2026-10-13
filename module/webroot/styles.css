@@ -49,6 +49,12 @@ html[data-scheme="dark"], html[data-scheme="amoled"] {
     --nm-elevation-2: 0 10px 28px color-mix(in srgb, var(--md-sys-color-shadow) 30%, transparent);
 }
 
+html[data-scheme="amoled"] {
+    --md-sys-color-background: #000000;
+    --md-sys-color-surface: #000000;
+    --nm-nav-background: #000000;
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 
 html, body {
@@ -379,7 +385,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 
 .modal-overlay {
-    position: fixed; inset: 0; background: var(--nm-scrim); z-index: 2000;
+    position: fixed; inset: 0; background: var(--nm-scrim-mix); z-index: 2000;
     display: none; align-items: flex-end;
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }

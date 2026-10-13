@@ -337,8 +337,8 @@ const _PALETTE_ROLES = {
 };
 
 _PALETTE_ROLES.amoled = Object.assign({}, _PALETTE_ROLES.dark, {
-    surface:                ['neutral', 4, 0.02],
-    background:             ['neutral', 4, 0.02],
+    surface:                ['neutral', 0, 0],
+    background:             ['neutral', 0, 0],
     surfaceContainer:       ['neutral', 8, 0.08],
     surfaceContainerHigh:   ['neutral', 12, 0.12],
     surfaceContainerHighest:['neutral', 16, 0.16],
