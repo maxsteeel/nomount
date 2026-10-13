@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}} archivos",
   "modules_hot_load": "Cargar",
   "modules_hot_unload": "Descargar",
+  "modules_skip": "Omitir",
+  "modules_unskip": "No omitir",
   "unknown_value": "Desconocido",
   "cancel": "Cancelar",
   "add": "Añadir",

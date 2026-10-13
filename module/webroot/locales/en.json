@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}} files",
   "modules_hot_load": "Hot Load",
   "modules_hot_unload": "Hot Unload",
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip",
   "unknown_value": "Unknown",
   "cancel": "Cancel",
   "add": "Add",

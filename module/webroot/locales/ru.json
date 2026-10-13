@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}} файлов",
   "modules_hot_load": "Горячая загрузка",
   "modules_hot_unload": "Горячая выгрузка",
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip",
   "unknown_value": "Неизвестно",
   "cancel": "Отмена",
   "add": "Добавить",

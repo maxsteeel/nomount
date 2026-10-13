@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}} 件のファイル",
   "modules_hot_load": "ホット ロード",
   "modules_hot_unload": "ホット アンロード",
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip",
   "unknown_value": "不明",
   "cancel": "キャンセル",
   "add": "追加",

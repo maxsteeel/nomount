@@ -43,9 +43,8 @@ static DEFINE_MUTEX(nomount_mutex);
 static LIST_HEAD(nomount_sb_list);
 
 /* * Helpers to dynamically calculate the memory address of the strings / structs */
-#define nm_get_vpath(leaf) ((leaf)->paths)
-#define nm_get_rpath(rule) ((rule)->paths)
-#define nm_get_child_name(leaf) (nm_get_vpath(leaf) + (leaf)->v_len - (leaf)->child_len)
+#define nm_get_child_name(leaf) ((leaf)->paths + (leaf)->v_len - (leaf)->child_len)
+#define nm_rule_heap(arr) ((char *)(arr)->rules + (arr)->count * sizeof(struct nm_rule))
 
 struct nm_dir_ops {
     struct inode_operations fake_iop;
@@ -71,8 +70,8 @@ struct nm_sop {
 };
 
 struct nm_inode_info {
+    struct path r_path;
     struct nomount_dir_node *dir_node;
-    struct nomount_rule *rule;
     struct rcu_head rcu;
 };
 
@@ -97,20 +96,17 @@ struct nomount_dir_node {
     struct nomount_leaf *owner;
 };
 
-struct nomount_rule {
+struct nm_rule {
     struct path r_path;
-    atomic_t refs;
     unsigned int target_uid;
     u16 r_len;
     u16 flags;
-    struct nomount_rule *next;
-    char paths[];
 };
 
 struct nm_rule_array {
-    struct rcu_head rcu;
+    struct nm_rule_array *next;
     int count;
-    struct nomount_rule *rules[];
+    struct nm_rule rules[];
 };
 
 struct nomount_leaf {
@@ -128,14 +124,14 @@ struct nomount_leaf {
 };
 
 struct nm_updates {
-    struct nomount_rule *rules;
+    struct nm_rule_array *arrays;
     struct nomount_leaf *leaves;
 };
 
 struct nm_rule_info {
     u16 flags;
     unsigned long v_ino;
-    struct nomount_rule *rule;
+    struct path r_path;
     struct nomount_dir_node *this_dir;
 };
 
@@ -168,8 +164,7 @@ static inline int nm_bloom_words_for(int count)
 
 static __always_inline u32 nm_qhash(const char *name, size_t len)
 {
-    u32 h = (u32)len * 33u;
-    h = (h << 5) + (u8)name[0];
+    u32 h = (u8)name[0] ^ (u32)len;
     h = (h << 5) + (u8)name[len - 1];
     h = (h << 5) + (u8)name[len >> 1];
     return h;
@@ -191,7 +186,6 @@ static struct dentry *nomount_hijacked_lookup(struct inode *dir, struct dentry *
 static int nomount_hijacked_iterate_dir(struct file *file, struct dir_context *ctx);
 static void nomount_hijacked_evict_inode(struct inode *inode);
 static void nomount_hijack_dentry_ops(struct inode *dir, struct dentry *dentry, bool injected);
-static void nm_free_rule(struct nomount_rule *rule);
 static void nm_dir_put(struct nomount_dir_node *dir_node);
 
 /* =====================================================================

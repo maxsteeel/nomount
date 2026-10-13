@@ -159,7 +159,8 @@ void c_main(long *sp) {
             payload->cmd = is_uids ? NM_CMD_GET_UIDS : NM_CMD_GET_LIST;
             payload->arg1 = 0;
             while (1) {
-                if (nm_send_payload(payload) < 0 || payload->data_size == 0) break;
+                exit_code = (nm_send_payload(payload) < 0);
+                if (exit_code || payload->data_size == 0) break;
 
                 char *data = payload->buffer;
                 int pos = 0;
@@ -183,10 +184,10 @@ void c_main(long *sp) {
 
                         if (args.is_json) {
                             list_print_literal_offset(&output, ",\n  {\n    \"virtual\": \"", offset); offset = 0;
-                            list_print_strn(&output, v, vlen);
+                            list_print_json_strn(&output, v, vlen);
                             if (is_white_flag) list_print_literal(&output, "\",\n    \"whiteout\": true");
                             else if (is_virtual_dir) list_print_literal(&output, "\",\n    \"virtual_dir\": true");
-                            else { list_print_literal(&output, "\",\n    \"real\": \""); list_print_strn(&output, r, rlen); list_print_literal(&output, "\""); }
+                            else { list_print_literal(&output, "\",\n    \"real\": \""); list_print_json_strn(&output, r, rlen); list_print_literal(&output, "\""); }
                             if (uid != 0) { list_print_literal(&output, ",\n    \"uid\": "); list_print_uint(&output, uid); }
                             list_print_literal(&output, "\n  }");
                         } else {
@@ -203,7 +204,6 @@ void c_main(long *sp) {
 
             if (args.is_json) list_print_literal(&output, "\n]\n");
             list_flush(&output);
-            exit_code = 0;
             break;
         }
 

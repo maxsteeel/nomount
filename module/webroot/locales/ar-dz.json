@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}} فيشي (ملف)",
   "modules_hot_load": "تحميل فوري",
   "modules_hot_unload": "تنحية فورية",
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip",
   "unknown_value": "مش معروف",
   "cancel": "أعقب (إلغاء)",
   "add": "زيد (إضافة)",

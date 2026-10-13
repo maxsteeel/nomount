@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}} file",
   "modules_hot_load": "Muat",
   "modules_hot_unload": "Bongkar",
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip",
   "unknown_value": "Tidak diketahui",
   "cancel": "Batal",
   "add": "Tambah",

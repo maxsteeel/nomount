@@ -123,6 +123,17 @@ jobs:
         run: |
           set -euo pipefail
           git config --global --add safe.directory '*' || true
+
+          # strip page pinner symbols
+          for MM in /opt/ddk/src/*/include/linux/mm.h /opt/ddk/kdir/*/include/linux/mm.h; do
+            [ -f "$MM" ] || continue
+            if grep -q '^#include <linux/page_pinner.h>' "$MM"; then
+              cp "$MM" "$MM.orig"
+              sed -i 's|^#include <linux/page_pinner.h>|/* NoMount CI: page_pinner disabled */|' "$MM"
+              sed -i 's|^\tpage_pinner_put_page(page);|\t/* NoMount CI: page_pinner disabled */|' "$MM"
+            fi
+          done
+
           CONFIG_NOMOUNT=m make -j"$(nproc)" -C "$KDIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 M="$SRC_DIR" modules
 
       - name: Collect module

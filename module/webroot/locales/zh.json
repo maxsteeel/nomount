@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}} 个文件",
   "modules_hot_load": "热加载",
   "modules_hot_unload": "热卸载",
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip",
   "unknown_value": "未知",
   "cancel": "取消",
   "add": "添加",

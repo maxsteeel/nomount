@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}} ملفًا",
   "modules_hot_load": "تحميل فوري",
   "modules_hot_unload": "إلغاء تحميل فوري",
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip",
   "unknown_value": "غير معروف",
   "cancel": "إلغاء",
   "add": "إضافة",

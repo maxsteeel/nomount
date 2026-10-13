@@ -234,6 +234,20 @@ static noinline void list_print_strn(struct nm_output *out, const char *s, unsig
     }
 }
 
+static noinline void list_print_json_strn(struct nm_output *out, const char *s, unsigned long len) {
+    const char *start = s;
+    while (len--) {
+        unsigned char c = *s++;
+        if (c >= 0x20 && c != '"' && c != '\\') continue;
+        list_print_strn(out, start, s - start - 1);
+        char escaped[6] = {'\\', 'u', '0', '0', '0' + (c >> 4), "0123456789abcdef"[c & 15]};
+        if (c >= 0x20) escaped[1] = c;
+        list_print_strn(out, escaped, c < 0x20 ? sizeof(escaped) : 2);
+        start = s;
+    }
+    list_print_strn(out, start, s - start);
+}
+
 #define list_print_literal(out, s) list_print_strn((out), (s), sizeof(s) - 1)
 #define list_print_literal_offset(out, s, offset) list_print_strn((out), (s) + (offset), sizeof(s) - 1 - (offset))
 

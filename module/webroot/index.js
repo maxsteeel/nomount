@@ -744,7 +744,7 @@ async function loadModules() {
             const hasDisable = disableStr === 'true', hasSkipMount = skipStr === 'true';
             const fileCount = ruleCountByMod[modId] || 0;
             const isLoaded = fileCount > 0;
-            const statusKey = isLoaded ? (hasDisable ? 'status_loaded' : 'status_active') : (hasDisable ? 'status_disabled' : (hasSkipMount ? 'status_skipped' : 'status_inactive'));
+            const statusKey = isLoaded ? ((hasDisable || hasSkipMount) ? 'status_loaded' : 'status_active') : (hasDisable ? 'status_disabled' : (hasSkipMount ? 'status_skipped' : 'status_inactive'));
             return `
                 <div class="card module-card" data-module-id="${modId}">
                     <div class="module-header">
@@ -773,6 +773,9 @@ async function loadModules() {
                     </div>
                     <div class="module-divider"></div>
                     <div class="module-extension">
+                        <button class="btn-skip-action ${hasSkipMount ? 'unskip' : ''}" id="btn-skip-${modId}">
+                            <span>${translate(hasSkipMount ? 'modules_unskip' : 'modules_skip')}</span>
+                        </button>
                         <button class="btn-hot-action ${isLoaded ? 'unload' : ''}" id="btn-hot-${modId}">
                             <span>${translate(isLoaded ? 'modules_hot_unload' : 'modules_hot_load')}</span>
                         </button>
@@ -1503,7 +1506,8 @@ function initDelegationAndAttach() {
         activeRules.forEach(r => { if (r?.real?.startsWith(`${MOD_DIR}/${modId}/`)) newFileCount++; });
         const nowLoaded = newFileCount > 0;
         const toggleChecked = card.querySelector('.switch-input').checked;
-        const statusKey = nowLoaded ? (toggleChecked ? 'status_loaded' : 'status_active') : (toggleChecked ? 'status_inactive' : 'status_disabled');
+        const hasSkipMount = card.querySelector('.btn-skip-action')?.classList.contains('unskip');
+        const statusKey = nowLoaded ? ((!toggleChecked || hasSkipMount) ? 'status_loaded' : 'status_active') : (!toggleChecked ? 'status_disabled' : (hasSkipMount ? 'status_skipped' : 'status_inactive'));
 
         const filesChip = card.querySelector('.files-chip');
         if (newFileCount > 0) {
@@ -1587,6 +1591,30 @@ function initDelegationAndAttach() {
             }, 0);
         }
     });
+
+    document.getElementById('modules-list')?.addEventListener('click', (e) => {
+    const skipBtn = e.target.closest('.btn-skip-action');
+    if (skipBtn && !skipBtn.disabled) {
+        skipBtn.disabled = true;
+        const card = skipBtn.closest('.module-card');
+        const modId = card.dataset.moduleId;
+        const wasSkipped = skipBtn.classList.contains('unskip');
+        const skipFile = `${MOD_DIR}/${modId}/skip_mount`;
+
+        setTimeout(async () => {
+            try {
+                await exec(wasSkipped ? `rm -f ${skipFile}` : `touch ${skipFile}`);
+                skipBtn.classList.toggle('unskip', !wasSkipped);
+                skipBtn.querySelector('span').textContent = translate(!wasSkipped ? 'modules_unskip' : 'modules_skip');
+                await updateModuleCardDOM(card, modId);
+            } catch (err) {
+                showToast(`Error: ${err.message}`);
+            } finally {
+                skipBtn.disabled = false;
+            }
+        }, 0);
+    }
+});
 
     document.getElementById('exclusions-list')?.addEventListener('click', (e) => {
         const delBtn = e.target.closest('.btn-delete');

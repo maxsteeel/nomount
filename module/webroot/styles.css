@@ -67,7 +67,7 @@ body.loading { opacity: 0; visibility: hidden; }
 
 .nav-item, .segment-icon, .app-icon-img, .exclusion-app img,
 .setting-item img, md-icon, .pull-to-refresh-indicator, .btn-hot-action, .custom-tonal-btn,
-.custom-fab, .modal-header, md-icon-button, .nav-icon, .empty-state,
+.custom-fab, .modal-header, md-icon-button, .nav-icon, .empty-state, .btn-skip-action,
 .filter-option, .bottom-nav, .custom-select-trigger, .root_layout {
     display: flex; align-items: center; justify-content: center;
 }
@@ -183,33 +183,33 @@ body.loading { opacity: 0; visibility: hidden; }
     background: var(--md-sys-color-error-container);
 }
 
-.btn-hot-action, .custom-tonal-btn, .custom-fab, md-icon-button {
+.btn-hot-action, .btn-skip-action, .custom-tonal-btn, .custom-fab, md-icon-button {
     border: none; outline: none; cursor: pointer;
     transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.2s;
 }
 
 .home-status-card:active, .home-segment-row:active, .segment-card:active, md-icon-button:active,
-.nav-item:active, .btn-hot-action:active, .custom-tonal-btn:active, .custom-fab:active {
+.nav-item:active, .btn-hot-action:active, .btn-skip-action:active, .custom-tonal-btn:active, .custom-fab:active {
     transform: scale(0.96);
 }
 
-.btn-hot-action:hover, .custom-tonal-btn:hover, .custom-fab:hover { opacity: 0.85; }
+.btn-hot-action:hover, .btn-skip-action:hover, .custom-tonal-btn:hover, .custom-fab:hover { opacity: 0.85; }
 .home-segment-row:active, .segment-card:active { background-color: var(--md-sys-color-surface-container-high); }
 
-.btn-hot-action, .custom-fab {
+.btn-hot-action, .btn-skip-action, .custom-fab {
     background-color: var(--md-sys-color-primary-container);
     color: var(--md-sys-color-on-primary-container);
 }
 
-.btn-hot-action {
+.btn-hot-action, .btn-skip-action {
     min-height: 36px; padding: 0 14px; border-radius: 18px;
     font-size: 13px; line-height: 16px; font-weight: 600; min-width: 52px;
 }
-.btn-hot-action.unload {
+.btn-hot-action.unload, .btn-skip-action.unskip {
     background-color: var(--md-sys-color-secondary-container);
     color: var(--md-sys-color-on-secondary-container);
 }
-.btn-hot-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-hot-action:disabled, .btn-skip-action:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .custom-tonal-btn {
     width: 100%; min-height: 40px; padding: 0 24px;
@@ -323,7 +323,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 .module-divider { height: 1px; background-color: rgba(120, 120, 120, 0.2); width: 100%; }
 .module-extension {
     display: flex; align-items: center; justify-content: flex-end;
-    margin-top: 8px;
+    margin-top: 8px; gap: 8px;
 }
 
 .exclusion-app { display: flex; align-items: center; gap: var(--nm-gap-relaxed); min-width: 0; overflow: hidden; }

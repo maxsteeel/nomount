@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}} tệp",
   "modules_hot_load": "Nạp ngay",
   "modules_hot_unload": "Gỡ ngay",
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip",
   "unknown_value": "Chưa biết",
   "cancel": "Hủy bỏ",
   "add": "Thêm",

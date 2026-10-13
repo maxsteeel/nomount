@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}} dosya",
   "modules_hot_load": "Anında Yükle (Hot Load)",
   "modules_hot_unload": "Anında Kaldır (Hot Unload)",
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip",
   "unknown_value": "Bilinmiyor",
   "cancel": "İptal",
   "add": "Ekle",

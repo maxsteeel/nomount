@@ -39,6 +39,8 @@
   "modules_injected_files": "{{count}}টি ফাইল",
   "modules_hot_load": "হট লোড",
   "modules_hot_unload": "হট আনলোড",
+  "modules_skip": "Skip",
+  "modules_unskip": "Unskip",
   "unknown_value": "অজানা",
   "cancel": "বাতিল",
   "add": "যোগ করুন",
