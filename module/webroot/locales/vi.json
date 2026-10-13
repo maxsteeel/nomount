@@ -25,7 +25,7 @@
   "clear_uids": "Xoá các UID",
   "clear_all": "Xóa tất cả",
   "language": "Ngôn ngữ",
-  "language_description": "Lựa chọn ngôn ngữ hiển thị",
+  "language_description": "Lựa chọn ngôn ngữ hiển thị.",
   "filter_show_system_apps": "Hiển thị ứng dụng hệ thống",
   "select_application": "Chọn ứng dụng",
   "search_placeholder": "Tìm kiếm tên hoặc gói...",
@@ -80,6 +80,6 @@
   "advanced": "Nâng cao",
   "advanced_color": "Chọn màu nâng cao",
   "done": "Xong",
-  "modules_skip": "Skip",
-  "modules_unskip": "Unskip"
+  "modules_skip": "Bỏ qua",
+  "modules_unskip": "Khôi phục"
 }
