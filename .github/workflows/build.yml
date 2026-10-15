@@ -52,9 +52,13 @@ jobs:
           zig cc -target arm-linux -Oz -static -nostdlib -ffreestanding -fno-unwind-tables -fno-ident -Wno-invalid-noreturn \
             -ffunction-sections -fdata-sections -Wl,--gc-sections -Wl,--entry=_start nm.c -o ../../bin/nm-arm
 
+          zig cc -target x86_64-linux -Oz -static -nostdlib -ffreestanding -fno-unwind-tables -fno-ident -Wno-invalid-noreturn \
+            -Wl,--entry=_start nm.c -o ../../bin/nm-x86_64
+
           cd ../../bin
           ../sstrip -z nm-arm64
           ../sstrip -z nm-arm
+          ../sstrip -z nm-x86_64
 
           wc -c nm-*
           file nm-*
@@ -71,6 +75,9 @@ jobs:
 
           zig cc -target arm-linux -Oz -static -Wl,--gc-sections,-z,norelro -fno-unwind-tables \
             -fno-ident -flto -fmerge-all-constants -fomit-frame-pointer src/lkmloader.c -o lkmloader-arm
+
+          zig cc -target x86_64-linux -Oz -static -Wl,--gc-sections,-z,norelro -fno-unwind-tables \
+            -fno-ident -flto -fmerge-all-constants -fomit-frame-pointer src/lkmloader.c -o lkmloader-x86_64
 
           ../sstrip -z lkmloader-*
           wc -c lkmloader-*
