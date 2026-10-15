@@ -7,6 +7,10 @@ ui_print " "
 
 ui_print "- Device Architecture: $ARCH"
 
+# KernelSU reports x86_64 devices as "x64", Magisk as "x86_64"
+ARCH_BIN="$ARCH"
+[ "$ARCH_BIN" = "x64" ] && ARCH_BIN="x86_64"
+
 # Check root implementation
 if [ "$KSU" = "true" ] || command -v ksud >/dev/null 2>&1 || [ -x /data/adb/ksu/bin/ksud ];  then
   ROOT_IMP=ksu
@@ -18,10 +22,10 @@ else
   abort "! Unsupported root env"
 fi
 
-if [ ! -f "$MODPATH/bin/nm-$ARCH" ]; then
+if [ ! -f "$MODPATH/bin/nm-$ARCH_BIN" ]; then
   abort "! Unsupported architecture: $ARCH"
 fi
-mv "$MODPATH/bin/nm-$ARCH" "$MODPATH/bin/nm"
+mv "$MODPATH/bin/nm-$ARCH_BIN" "$MODPATH/bin/nm"
 set_perm "$MODPATH/bin/nm" 0 0 0755
 
 mkdir -p "/data/adb/$ROOT_IMP/bin"
@@ -33,7 +37,7 @@ fi
 
 USE_ROOT_INSMOD=false
 
-mv "$MODPATH/bin/lkmloader-$ARCH" "$MODPATH/lkm/lkmloader"
+mv "$MODPATH/bin/lkmloader-$ARCH_BIN" "$MODPATH/lkm/lkmloader"
 set_perm "$MODPATH/lkm/lkmloader" 0 0 0755
 rm -rf "$MODPATH"/bin/nm-* "$MODPATH"/bin/lkmloader-*
 
@@ -71,7 +75,7 @@ OLD_MODPATH="/data/adb/modules/nomount"
 KVER=$(uname -r | cut -d'.' -f1,2)
 AKVER=$(uname -r | grep -oE 'android[0-9]+')
 ARCH_SFX=""
-[ "$ARCH" = "x86_64" ] && ARCH_SFX="-x86_64"
+[ "$ARCH_BIN" = "x86_64" ] && ARCH_SFX="-x86_64"
 
 if [ -n "$AKVER" ]; then
   ui_print "- Detected Kernel: $KVER ($AKVER branch)"
