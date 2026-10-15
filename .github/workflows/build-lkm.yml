@@ -74,8 +74,8 @@ jobs:
               {kmi: "android16-6.12", enabled: (if $force_all then true else (env.KMI_ANDROID16_6_12 == "true") end)}
             ] | map(select(.enabled).kmi) as $selected
               | (if $selected == [] then map(.kmi) else $selected end) as $kmis
-              | ($kmis | map({kmi: ., arch: "arm64"}))
-                + ($kmis | map(select(. == "android15-6.6")) | map({kmi: ., arch: "x86_64"}))')"
+              | {include: (($kmis | map({kmi: ., arch: "arm64"}))
+                + ($kmis | map(select(. == "android15-6.6")) | map({kmi: ., arch: "x86_64"})))}')"
 
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
