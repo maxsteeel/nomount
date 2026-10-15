@@ -70,6 +70,8 @@ load_ko() {
 OLD_MODPATH="/data/adb/modules/nomount"
 KVER=$(uname -r | cut -d'.' -f1,2)
 AKVER=$(uname -r | grep -oE 'android[0-9]+')
+ARCH_SFX=""
+[ "$ARCH" = "x86_64" ] && ARCH_SFX="-x86_64"
 
 if [ -n "$AKVER" ]; then
   ui_print "- Detected Kernel: $KVER ($AKVER branch)"
@@ -119,7 +121,7 @@ else
     ui_print "- APatch apd insmod detected; lkmloader will remain as fallback."
   fi
 
-  EXACT_MATCH="$MODPATH/lkm/nomount-${AKVER}-${KVER}.ko"
+  EXACT_MATCH="$MODPATH/lkm/nomount-${AKVER}-${KVER}${ARCH_SFX}.ko"
   if [ -n "$AKVER" ] && [ -f "$EXACT_MATCH" ]; then
     ui_print "  [*] Trying exact match: ${EXACT_MATCH##*/}"
     if load_ko "$EXACT_MATCH"; then
@@ -134,7 +136,7 @@ else
   fi
 
   if [ "$NOMOUNT_LOADED" = false ]; then
-    for mod in "$MODPATH"/lkm/nomount*-${KVER}.ko; do
+    for mod in "$MODPATH"/lkm/nomount*-${KVER}${ARCH_SFX}.ko; do
       if [ ! -f "$mod" ] || [ "$mod" = "$EXACT_MATCH" ]; then continue; fi
       ui_print "  [*] Trying fallback: ${mod##*/}"
       if load_ko "$mod"; then
