@@ -75,7 +75,7 @@ jobs:
             ] | map(select(.enabled).kmi) as $selected
               | (if $selected == [] then map(.kmi) else $selected end) as $kmis
               | ($kmis | map({kmi: ., arch: "arm64"}))
-                + ($kmis | map(select(. == "android15-6.6")) | map({kmi: ., arch: "x86_64"}))"
+                + ($kmis | map(select(. == "android15-6.6")) | map({kmi: ., arch: "x86_64"}))')"
 
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
