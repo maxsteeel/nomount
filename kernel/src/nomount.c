@@ -318,7 +318,7 @@ static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentr
     struct nm_dir_ops *nm_iop = NULL;
     struct nm_leaf *leaf = NULL;
     struct dentry *res;
-    bool special = false, found = false;
+    bool special = false, found = false, uid_dep = false;
 
     rcu_read_lock();
     if (likely((nm_iop = nm_get_nm_iop(rcu_dereference(dir->i_op))))) {
@@ -327,9 +327,10 @@ static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentr
             if ((leaf = nm_find_leaf_in_dir(dir_node, dentry->d_name.name, dentry->d_name.len))) {
                 struct nm_rule_array *arr = rcu_dereference(leaf->rules);
                 special = nm_per_uid_view_active();
-                uid_t fsuid = (special || (arr && arr->uid_dependent)) ? current_fsuid().val : 0;
+                uid_dep = arr && arr->uid_dependent;
+                uid_t fsuid = (special || uid_dep) ? current_fsuid().val : 0;
                 if (!special || likely(!nm_is_uid_blocked(fsuid))) {
-                    special = special || !arr || arr->uid_dependent;
+                    special = special || uid_dep;
                     found = nm_resolve_rule_from_leaf(leaf, arr, fsuid, &rule_info);
                 }
             }
@@ -345,7 +346,7 @@ static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentr
         return ERR_PTR(-EOPNOTSUPP);
 
     if (special && !IS_ERR(res))
-        nm_mark_uncacheable(res ? res : dentry);
+        nm_install_dops(res ? res : dentry, uid_dep);
     return res;
 }
 
@@ -685,7 +686,7 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     struct nm_rule_info rule_info = {0};
     struct nm_dir_node *dir_node;
     struct dentry *res;
-    bool special = false, found = false, uid_blocked = false;
+    bool special = false, found = false, uid_blocked = false, uid_dep = false;
 
     if (unlikely(!info))
         goto negative_dentry;
@@ -696,9 +697,10 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
         if (leaf) {
             struct nm_rule_array *arr = rcu_dereference(leaf->rules);
             special = nm_per_uid_view_active();
-            uid_t fsuid = (special || (arr && arr->uid_dependent)) ? current_fsuid().val : 0;
+            uid_dep = arr && arr->uid_dependent;
+            uid_t fsuid = (special || uid_dep) ? current_fsuid().val : 0;
             if (!special || likely(!(uid_blocked = nm_is_uid_blocked(fsuid)))) {
-                special = special || !arr || arr->uid_dependent;
+                special = special || uid_dep;
                 found = nm_resolve_rule_from_leaf(leaf, arr, fsuid, &rule_info);
             }
         }
@@ -711,7 +713,7 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     if (found) {
         res = nm_materialize_rule(dir, dentry, &rule_info);
         if (special && !IS_ERR(res))
-            nm_mark_uncacheable(res ? res : dentry);
+            nm_install_dops(res ? res : dentry, uid_dep);
         return res;
     }
 
@@ -725,7 +727,7 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     if (r_dir->i_op->lookup) {
         res = r_dir->i_op->lookup(r_dir, dentry, flags);
         if (special && !IS_ERR(res))
-            nm_mark_uncacheable(res ? res : dentry);
+            nm_install_dops(res ? res : dentry, uid_dep);
         return res;
     }
     return ERR_PTR(-EOPNOTSUPP);
@@ -733,7 +735,7 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
 negative_dentry:
     d_add(dentry, NULL);
     if (special)
-        nm_mark_uncacheable(dentry);
+        nm_install_dops(dentry, uid_dep);
     return NULL;
 }
 
@@ -822,7 +824,7 @@ static void nm_d_release(struct dentry *dentry)
     kfree_rcu(ops, rcu);
 }
 
-static inline void nm_mark_uncacheable(struct dentry *dentry)
+static inline void nm_install_dops(struct dentry *dentry, bool uid_dependent)
 {
     struct nm_dops *ops;
 
@@ -844,14 +846,16 @@ static inline void nm_mark_uncacheable(struct dentry *dentry)
     ops->fake.d_revalidate = nm_d_revalidate;
     ops->fake.d_release    = nm_d_release;
 #ifndef DCACHE_DONTCACHE
-    ops->fake.d_delete     = nm_d_delete;
-    dentry->d_flags |= DCACHE_OP_DELETE;
+    if (uid_dependent) {
+        ops->fake.d_delete = nm_d_delete;
+        dentry->d_flags |= DCACHE_OP_DELETE;
+    }
 #endif
     ops->view_uid = current_fsuid().val;
     dentry->d_op = &ops->fake;
     dentry->d_flags |= DCACHE_OP_REVALIDATE;
 #ifdef DCACHE_DONTCACHE
-    dentry->d_flags |= DCACHE_DONTCACHE;
+    if (uid_dependent) dentry->d_flags |= DCACHE_DONTCACHE;
 #endif
     spin_unlock(&dentry->d_lock);
 }

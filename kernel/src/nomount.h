@@ -186,7 +186,7 @@ static const struct inode_operations nm_dir_iops;
 static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags);
 static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx);
 static void nm_hijacked_evict_inode(struct inode *inode);
-static void nm_mark_uncacheable(struct dentry *dentry);
+static void nm_install_dops(struct dentry *dentry, bool uid_dependent);
 static void nm_dir_put(struct nm_dir_node *dir_node);
 
 /* =====================================================================
