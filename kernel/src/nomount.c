@@ -794,6 +794,14 @@ static int nm_d_revalidate(struct dentry *dentry, unsigned int flags)
         return 1;
 
     ops = container_of(dentry->d_op, struct nm_dops, fake);
+    if (ops->orig && ops->orig->d_revalidate) {
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
+        int ret = ops->orig->d_revalidate(dir, name, dentry, flags);
+    #else
+        int ret = ops->orig->d_revalidate(dentry, flags);
+    #endif
+        if (ret <= 0) return ret;
+    }
     if (likely(ops->view_uid == current_fsuid().val))
         return 1;
 
