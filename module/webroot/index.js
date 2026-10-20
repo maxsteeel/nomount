@@ -1034,10 +1034,6 @@ function openAppSelector() {
     searchInput.value = '';
     if (sysSwitch) sysSwitch.checked = showSystemApps;
 
-    document.getElementById('btn-close-modal').onclick = () => { 
-        closeAppSelector();
-    };
-
     container.innerHTML = `<div class="loading-spinner">${translate('loading') || 'Loading apps...'}</div>`;
     listObserver = new IntersectionObserver((entries) => { 
         if (entries[0].isIntersecting) renderNextAppBatch(); 
