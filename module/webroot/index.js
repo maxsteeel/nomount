@@ -820,7 +820,7 @@ async function unloadModule(modId) {
 }
 
 // Apps & Exclusions
-let allAppsCache = [], showSystemApps = false, appLoadingPromise = null, appListRenderIndex = 0,
+let allAppsCache = [], showSystemApps = localStorage.getItem('nm_show_system_apps') === 'true', appLoadingPromise = null, appListRenderIndex = 0,
     currentlyDisplayedApps = [], listObserver = null, filterTimeout, exclusionsLoadId = 0,
     isMultiSelectMode = false, selectedAppsMap = new Map();
 
@@ -1045,7 +1045,11 @@ function openAppSelector() {
             filterAndRender();
             searchInput.oninput = (e) => filterAndRender(e.target.value);
             document.getElementById('btn-filter-toggle').onclick = () => document.getElementById('filter-menu').classList.toggle('active');
-            if (sysSwitch) sysSwitch.onchange = (e) => { showSystemApps = e.target.checked; filterAndRender(searchInput.value); };
+            if (sysSwitch) sysSwitch.onchange = (e) => { 
+                showSystemApps = e.target.checked;
+                localStorage.setItem('nm_show_system_apps', showSystemApps);
+                filterAndRender(searchInput.value);
+            };
         } catch (e) { 
             renderTextState(container, 'error-message', `${translate('load_failed') || 'Failed'}`); 
         }
