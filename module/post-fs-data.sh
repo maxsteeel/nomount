@@ -18,4 +18,7 @@ if ! ensure_lkm_loaded; then
 fi
 
 echo "[OK] Kernel API ready (post-fs-data)." >> "$LOG_FILE"
+
+"$LOADER" reboot-watch </dev/null >/dev/null 2>&1 &
+
 exit 0

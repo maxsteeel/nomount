@@ -3,6 +3,7 @@
 
 NOMOUNT_DATA="/data/adb/nomount"
 LOG_FILE="$NOMOUNT_DATA/nomount.log"
+REBOOT_WATCH_LOG="$NOMOUNT_DATA/reboot-watch.log"
 LOADER="$MODDIR/bin/nm"
 BOOT_SEMAPHORE="$NOMOUNT_DATA/.booting"
 PROP_FILE="$MODDIR/module.prop"
@@ -44,6 +45,12 @@ _lock_fd() {
     return 0
 }
 
+rotate_prev_logs() {
+    [ -f "$LOG_FILE" ] && mv -f "$LOG_FILE" "$LOG_FILE.old" 2>/dev/null
+    [ -f "$REBOOT_WATCH_LOG" ] && mv -f "$REBOOT_WATCH_LOG" "$REBOOT_WATCH_LOG.old" 2>/dev/null
+    return 0
+}
+
 bootloop_check() {
     exec 8>"$NOMOUNT_DATA/.boot.lock"
     if ! _lock_fd 8 15; then
@@ -65,6 +72,7 @@ bootloop_check() {
             return 1
         fi
     else
+        rotate_prev_logs
         echo "=== NoMount Boot Log | Started: $(date) ===" > "$LOG_FILE"
         echo "Kernel Version: $(uname -r)" >> "$LOG_FILE"
         echo "$current" > "$BOOT_SEMAPHORE"
