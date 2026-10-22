@@ -2,9 +2,11 @@
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/namei.h>
+#include <linux/mount.h>
 #include <linux/cred.h>
 #include <linux/xattr.h>
 #include <linux/module.h>
+#include <linux/jiffies.h>
 #include "nomount.h"
 
 /*** Helpers ***/
@@ -30,6 +32,87 @@ static __always_inline bool nm_is_uid_blocked(uid_t target_uid)
         }
     }
     return false;
+}
+
+static void nm_rebind_rules(struct work_struct *work);
+static atomic_t nm_rebind_pending = ATOMIC_INIT(0);
+static unsigned long nm_rebind_scan_at;
+static DECLARE_WORK(nm_rebind_work, nm_rebind_rules);
+
+#define NM_RB_IDLE  0
+#define NM_RB_LATER 1
+#define NM_RB_NOMEM 2
+
+#define NM_REBIND_RETRY_SYNC (HZ / 4)
+#define NM_REBIND_RETRY_MAX ((unsigned long)10 * HZ)
+#define NM_REBIND_SCAN_MIN (HZ / 10)
+/* Worker attempts bound per pass: a mass heal (module hot install) walks the
+ * table in NM_REBIND_CHUNK lock-held attempts instead of one hold over all. */
+#define NM_REBIND_CHUNK 8
+
+static __always_inline bool nm_rule_pin_stale(const struct nm_rule *rule)
+{
+    return rule->r_len > 0 && rule->r_path.dentry && d_unlinked(rule->r_path.dentry);
+}
+
+/* Cloned namespaces get a new struct mount but share mnt_sb and mnt_root. */
+static __always_inline bool nm_same_mount_object(const struct vfsmount *a, const struct vfsmount *b)
+{
+    if (a == b) return true;
+    if (a->mnt_sb != b->mnt_sb || a->mnt_root != b->mnt_root) return false;
+    /* write paths run through the accepted instance; ro drift would fail-closed instead */
+    if ((a->mnt_flags ^ b->mnt_flags) & MNT_READONLY) return false;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+    return mnt_idmap(a) == mnt_idmap(b);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
+    return mnt_user_ns(a) == mnt_user_ns(b);
+#else
+    return true;
+#endif
+}
+
+/* Ancestors are not held by the endpoint refs and dentries are RCU-freed, so
+ * both chains must be walked in one RCU section. Torn rename reads reject,
+ * which is fail-closed; the next scan re-runs the walk. */
+static bool nm_same_dtree_position(const struct dentry *a, const struct dentry *b)
+{
+    const struct dentry *p, *q;
+    bool same = true;
+
+    rcu_read_lock();
+    p = a;
+    q = b;
+    while (same) {
+        bool root_p = p->d_parent == p, root_q = q->d_parent == q;
+
+        if (root_p != root_q) { same = false; break; }
+        if (root_p) break;
+        if (p->d_name.len != q->d_name.len ||
+            memcmp(p->d_name.name, q->d_name.name, p->d_name.len)) {
+            same = false;
+            break;
+        }
+        p = p->d_parent;
+        q = q->d_parent;
+    }
+    rcu_read_unlock();
+    return same;
+}
+
+static __always_inline void nm_rebind_if_stale(const struct nm_rule *rule)
+{
+    unsigned long scan_at;
+
+    if (!nm_rule_pin_stale(rule)) return;
+    if (atomic_read(&nm_rebind_pending) || atomic_xchg(&nm_rebind_pending, 1))
+        return;
+    scan_at = READ_ONCE(nm_rebind_scan_at);
+    if (scan_at && time_before(jiffies, scan_at)) {
+        atomic_set(&nm_rebind_pending, 0);
+        return;
+    }
+    WRITE_ONCE(nm_rebind_scan_at, jiffies + NM_REBIND_SCAN_MIN);
+    schedule_work(&nm_rebind_work);
 }
 
 static __always_inline bool nm_child_matches(struct nm_leaf *leaf, const char *name, size_t len)
@@ -105,10 +188,9 @@ static struct nm_leaf *nm_find_leaf_in_dir(struct nm_dir_node *dir_node, const c
     return leaf;
 }
 
-static bool nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct nm_rule_info *out)
+static bool nm_fill_rule_info(struct nm_leaf *leaf, struct nm_rule *rule, struct nm_rule_info *out)
 {
-    struct nm_rule *rule = nm_select_rule(leaf, fsuid);
-    if (!rule) return false;
+    nm_rebind_if_stale(rule);
     out->flags = rule->flags;
     out->v_ino = leaf->v_ino;
     out->r_path = rule->r_path;
@@ -116,6 +198,34 @@ static bool nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct 
     if (out->r_path.dentry) path_get(&out->r_path);
     if (out->this_dir) atomic_inc(&out->this_dir->refs);
     return true;
+}
+
+static void nm_rebind_leaf_sync(struct nm_dir_node *dir_node, const struct qstr *name);
+
+static bool nm_resolve_leaf_for_lookup(struct nm_dir_node *dir_node, const struct qstr *name,
+                                       uid_t fsuid, struct nm_rule_info *out, bool *has_leaf)
+{
+    bool found = false, stale = false;
+
+    *has_leaf = false;
+    for (int pass = 0; pass < 2; pass++) {
+        struct nm_leaf *leaf;
+        struct nm_rule *rule;
+
+        stale = false;
+        rcu_read_lock();
+        leaf = nm_find_leaf_in_dir(dir_node, name->name, name->len);
+        *has_leaf = (leaf != NULL);
+        rule = (leaf && !nm_is_uid_blocked(fsuid)) ? nm_select_rule(leaf, fsuid) : NULL;
+        if (pass == 0 && rule && nm_rule_pin_stale(rule))
+            stale = true;
+        else if (rule)
+            found = nm_fill_rule_info(leaf, rule, out);
+        rcu_read_unlock();
+        if (!stale) break;
+        nm_rebind_leaf_sync(dir_node, name);
+    }
+    return found;
 }
 
 static void nm_dir_rcu_free(struct rcu_head *head)
@@ -344,23 +454,24 @@ static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentr
     const struct inode_operations *orig_iop = NULL;
     struct nm_rule_info rule_info = {0};
     struct nm_dir_ops *nm_iop = NULL;
+    struct nm_dir_node *dir_node = NULL;
     struct dentry *res, *target;
+    uid_t fsuid = current_fsuid().val;
     bool found = false, has_leaf = false;
 
     rcu_read_lock();
     if (likely((nm_iop = nm_get_nm_iop(rcu_dereference(dir->i_op))))) {
         orig_iop = nm_iop->orig_iop;
-        struct nm_dir_node *dir_node = rcu_dereference(nm_iop->dir_node);
-        if (likely(dir_node && rcu_access_pointer(dir_node->children))) {
-            struct nm_leaf *leaf = nm_find_leaf_in_dir(dir_node, dentry->d_name.name, dentry->d_name.len);
-            has_leaf = leaf != NULL;
-            if (has_leaf) {
-                uid_t fsuid = current_fsuid().val;
-                if (likely(!nm_is_uid_blocked(fsuid))) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
-            }
-        }
+        dir_node = rcu_dereference(nm_iop->dir_node);
+        if (dir_node && !atomic_inc_not_zero(&dir_node->refs))
+            dir_node = NULL;
     }
     rcu_read_unlock();
+
+    if (dir_node) {
+        found = nm_resolve_leaf_for_lookup(dir_node, &dentry->d_name, fsuid, &rule_info, &has_leaf);
+        nm_dir_put(dir_node);
+    }
 
     if (found)
         return nm_materialize_rule(dir, dentry, &rule_info);
@@ -714,7 +825,7 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
 {
     struct nm_inode_info *info = dir->i_private;
     struct nm_rule_info rule_info = {0};
-    struct nm_dir_node *dn;
+    struct nm_dir_node *dn = NULL;
     struct inode *r_dir;
     struct dentry *res;
     uid_t fsuid = current_fsuid().val;
@@ -724,12 +835,9 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
         goto negative_dentry;
 
     rcu_read_lock();
-    if (likely((dn = READ_ONCE(info->dir_node)) && rcu_access_pointer(dn->children))) {
-        struct nm_leaf *leaf = nm_find_leaf_in_dir(dn, dentry->d_name.name, dentry->d_name.len);
-        has_leaf = leaf != NULL;
-        found = leaf && nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
-    }
+    dn = READ_ONCE(info->dir_node);
     rcu_read_unlock();
+    found = nm_resolve_leaf_for_lookup(dn, &dentry->d_name, fsuid, &rule_info, &has_leaf);
     if (found) return nm_materialize_rule(dir, dentry, &rule_info);
 
     if (info->opaque)
@@ -798,14 +906,14 @@ static int nm_xattr_set(const struct xattr_handler *handler, IDMAP_ARG struct de
 }
 
 static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr *name,
-                                  struct dentry *dentry, unsigned int flags)
+                                  struct dentry *dentry, unsigned int flags, bool weak)
 {
     struct nm_dir_node *parent_dir = NULL;
     const struct dentry_operations *orig_dops = NULL;
     struct inode *inode = READ_ONCE(dentry->d_inode);
     struct nm_dir_ops *iop = NULL;
     struct nm_rule *rule;
-    bool has_rule = false, whiteout = false, match_rule = false;
+    bool has_rule = false, whiteout = false, match_rule = false, stale = false;
     uid_t fsuid;
 
     if (unlikely(!parent_inode)) return 1;
@@ -825,13 +933,21 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
         has_rule = true;
         if (rule->flags & NM_FLAG_WHITEOUT)
             whiteout = true;
+        else if (nm_rule_pin_stale(rule))
+            stale = true;
         else if (inode && (inode->i_op == &nm_file_iops || inode->i_op == &nm_dir_iops))
             match_rule = nm_inode_matches_binding(inode, &rule->r_path, (rule->flags & NM_FLAG_IS_DIR) ? leaf->this_dir : NULL, rule->flags & NM_FLAG_OPAQUE);
+        nm_rebind_if_stale(rule);
     }
 
     if (!has_rule) orig_dops = nm_get_orig_dops(iop);
     rcu_read_unlock();
 
+    if (stale) {
+        /* complete_walk() turns a weak 0 into -ESTALE instead of re-looking-up. */
+        if (!weak || !(inode && nm_inode_is_virtual(inode))) goto drop_it;
+        return 1;
+    }
     if (whiteout) return !inode;
     if (match_rule) return 1;
     if (has_rule || READ_ONCE(dentry->d_op) == &nm_owned_dops || (inode && nm_inode_is_virtual(inode))) goto drop_it;
@@ -846,16 +962,16 @@ drop_it:
 
 static int nm_d_weak_revalidate(struct dentry *dentry, unsigned int flags)
 {
-    return nm_d_revalidate_common(d_inode(READ_ONCE(dentry->d_parent)), &dentry->d_name, dentry, flags);
+    return nm_d_revalidate_common(d_inode(READ_ONCE(dentry->d_parent)), &dentry->d_name, dentry, flags, true);
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
 static int nm_d_revalidate(struct inode *parent_inode, const struct qstr *name, struct dentry *dentry, unsigned int flags) {
-    return nm_d_revalidate_common(parent_inode, name, dentry, flags);
+    return nm_d_revalidate_common(parent_inode, name, dentry, flags, false);
 }
 #else
 static int nm_d_revalidate(struct dentry *dentry, unsigned int flags) {
-    return nm_d_revalidate_common(d_inode(READ_ONCE(dentry->d_parent)), &dentry->d_name, dentry, flags);
+    return nm_d_revalidate_common(d_inode(READ_ONCE(dentry->d_parent)), &dentry->d_name, dentry, flags, false);
 }
 #endif
 
@@ -1409,6 +1525,154 @@ static void nm_retire_leaf_locked(struct nm_leaf *leaf)
     nm_retired_leaves = leaf;
     if (array) nm_retire_array_locked(array);
     else schedule_work(&nm_reclaim_work);
+}
+
+static int nm_rule_reresolve(struct nm_rule *out, const struct nm_rule *rule, const char *slice)
+{
+    struct path new_path;
+    char *buf;
+    int ret = -1;
+
+    if (!(buf = kmalloc((size_t)rule->r_len + 1, GFP_KERNEL))) return -1;
+    memcpy(buf, slice, rule->r_len);
+    buf[rule->r_len] = '\0';
+    if (kern_path(buf, LOOKUP_FOLLOW, &new_path) == 0) {
+        struct inode *inode = d_backing_inode(new_path.dentry);
+        struct inode *old_inode = d_backing_inode(rule->r_path.dentry);
+
+        if (nm_same_mount_object(new_path.mnt, rule->r_path.mnt) &&
+            nm_same_dtree_position(new_path.dentry, rule->r_path.dentry) && old_inode && inode &&
+            (inode->i_mode & S_IFMT) == (old_inode->i_mode & S_IFMT)) {
+            ret = new_path.dentry == rule->r_path.dentry ? 0 : 1;
+            if (ret == 1) {
+                *out = *rule;
+                out->r_path = new_path;
+            }
+        }
+        if (ret != 1) path_put(&new_path);
+    }
+    kfree(buf);
+    return ret;
+}
+
+static unsigned char nm_rebind_leaf_locked(struct nm_leaf *leaf)
+{
+    struct nm_rule_array *old, *array;
+    const char *old_h;
+    char *new_h;
+    size_t heap_size = 0;
+    bool changed = false, unresolved = false, has_stale = false;
+    unsigned char state;
+    int count;
+
+    old = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex));
+    if (!old) return NM_RB_IDLE;
+    count = old->count;
+    for (int i = 0; i < count; i++) {
+        heap_size += old->rules[i].r_len;
+        has_stale |= nm_rule_pin_stale(&old->rules[i]);
+    }
+
+    if (!has_stale) return NM_RB_IDLE;
+
+    if (!(array = nm_alloc_rule_array(count, heap_size))) return NM_RB_NOMEM;
+
+    new_h = nm_rule_heap(array);
+    old_h = nm_rule_heap(old);
+    for (int i = 0; i < count; i++) {
+        struct nm_rule *rule = &old->rules[i];
+        struct nm_rule out;
+
+        if (nm_rule_pin_stale(rule)) {
+            int rr = nm_rule_reresolve(&out, rule, old_h);
+
+            if (rr > 0) {
+                array->rules[i] = out;
+                memcpy(new_h, old_h, rule->r_len);
+                new_h += rule->r_len;
+                old_h += rule->r_len;
+                changed = true;
+                continue;
+            }
+            unresolved = true;
+        }
+        new_h = nm_copy_rule(&array->rules[i], rule, new_h, old_h);
+        old_h += rule->r_len;
+    }
+
+    state = unresolved ? NM_RB_LATER : NM_RB_IDLE;
+    if (!changed) { nm_rule_array_free(array); return state; }
+    nm_publish_rules_locked(leaf, array, old);
+    return state;
+}
+
+static void nm_rebind_leaf_sync(struct nm_dir_node *dir_node, const struct qstr *name)
+{
+    struct nm_leaf *leaf;
+    unsigned char state;
+
+    if (!mutex_trylock(&nm_mutex)) return;
+    rcu_read_lock();
+    leaf = nm_find_leaf_in_dir(dir_node, name->name, name->len);
+    rcu_read_unlock();
+    if (leaf && (!leaf->rebind_retry_at || !time_before(jiffies, leaf->rebind_retry_at))) {
+        state = nm_rebind_leaf_locked(leaf);
+        if (state == NM_RB_IDLE) {
+            leaf->rebind_retry_at = 0;
+            leaf->rebind_worker_at = 0;
+            leaf->rebind_shift = 0;
+        } else {
+            unsigned long stamp = jiffies + NM_REBIND_RETRY_SYNC;
+
+            if (time_before(stamp, leaf->rebind_worker_at)) stamp = leaf->rebind_worker_at;
+            leaf->rebind_worker_at = stamp;
+            leaf->rebind_retry_at = jiffies + NM_REBIND_RETRY_SYNC;
+        }
+    }
+    mutex_unlock(&nm_mutex);
+}
+
+static void nm_rebind_rules(struct work_struct *work)
+{
+    struct nm_leaf *leaf;
+    struct hlist_node *tmp;
+    int bkt;
+    unsigned int trouble = 0;
+    bool more = false;
+
+    mutex_lock(&nm_mutex);
+    hash_for_each_safe(nm_leaves_ht, bkt, tmp, leaf, ht_node) {
+        unsigned char state;
+
+        if (leaf->rebind_worker_at && time_before(jiffies, leaf->rebind_worker_at))
+            continue;
+        if (trouble >= NM_REBIND_CHUNK) {
+            /* The boundary leaf is due, so the remainder must still be swept:
+             * requeue instead of extending this pass's nm_mutex hold. */
+            more = true;
+            break;
+        }
+        state = nm_rebind_leaf_locked(leaf);
+        switch (state) {
+        case NM_RB_IDLE:
+            leaf->rebind_worker_at = 0;
+            leaf->rebind_shift = 0;
+            break;
+        case NM_RB_NOMEM:
+            leaf->rebind_worker_at = jiffies + NM_REBIND_RETRY_SYNC;
+            break;
+        case NM_RB_LATER:
+            leaf->rebind_worker_at = jiffies + min((unsigned long)(HZ / 4) << leaf->rebind_shift,
+                                                    NM_REBIND_RETRY_MAX);
+            if (leaf->rebind_shift < 6) leaf->rebind_shift++;
+            break;
+        }
+        if (state != NM_RB_IDLE) trouble++;
+    }
+    if (more)
+        schedule_work(&nm_rebind_work); /* requeue while the claim is still held */
+    atomic_set(&nm_rebind_pending, 0);
+    mutex_unlock(&nm_mutex);
 }
 
 static void nm_prepare_native_file(struct nm_leaf *leaf, struct nm_dir_node *dir_node, struct dentry *parent)
@@ -1969,6 +2233,9 @@ static void __exit nomount_exit(void)
 {
     unregister_key_type(&nm_key_type);
     nm_clear_state(NM_CLEAR_UIDS | NM_CLEAR_RULES | NM_CLEAR_EXIT);
+    /* Drain VFS hook readers before cancelling queued work. */
+    synchronize_rcu();
+    cancel_work_sync(&nm_rebind_work);
     flush_work(&nm_reclaim_work);
     rcu_barrier();
     nm_info("Unloaded successfully\n");
