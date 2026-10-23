@@ -45,6 +45,12 @@ _lock_fd() {
     return 0
 }
 
+module_version() {
+    local ver
+    ver=$(sed -n 's/^version=//p' "$PROP_FILE" 2>/dev/null | head -n1 | tr -d '\r')
+    echo "${ver:-unknown}"
+}
+
 rotate_prev_logs() {
     [ -f "$LOG_FILE" ] && mv -f "$LOG_FILE" "$LOG_FILE.old" 2>/dev/null
     [ -f "$REBOOT_WATCH_LOG" ] && mv -f "$REBOOT_WATCH_LOG" "$REBOOT_WATCH_LOG.old" 2>/dev/null
@@ -75,6 +81,7 @@ bootloop_check() {
         rotate_prev_logs
         echo "=== NoMount Boot Log | Started: $(date) ===" > "$LOG_FILE"
         echo "Kernel Version: $(uname -r)" >> "$LOG_FILE"
+        echo "Module Version: $(module_version)" >> "$LOG_FILE"
         echo "$current" > "$BOOT_SEMAPHORE"
     fi
 

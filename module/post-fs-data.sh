@@ -17,6 +17,7 @@ if ! ensure_lkm_loaded; then
     exit 1
 fi
 
+echo "Driver Version: $("$LOADER" version 2>/dev/null | head -n1)" >> "$LOG_FILE"
 echo "[OK] Kernel API ready (post-fs-data)." >> "$LOG_FILE"
 
 "$LOADER" reboot-watch </dev/null >/dev/null 2>&1 &
