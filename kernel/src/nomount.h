@@ -124,6 +124,9 @@ struct nm_leaf {
     struct nm_dir_node *this_dir;
     struct nm_dir_node *parent_dir;
     unsigned long v_ino;
+    unsigned long rebind_retry_at;  /* jiffies; cold lookups skip the sync rebind until then, 0 = none */
+    unsigned long rebind_worker_at;
+    u8 rebind_shift;
     u32 v_hash;
     u16 v_len;
     u16 child_len;

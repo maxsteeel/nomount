@@ -2,9 +2,16 @@
 #if defined(__aarch64__)
     #define SYS_GETCWD     17
     #define SYS_READ       63
+    #define SYS_CLOSE      57
+    #define SYS_LSEEK      62
     #define SYS_WRITE      64
     #define SYS_EXIT       93
     #define SYS_ADD_KEY    217
+    #define SYS_OPENAT     56
+    #define SYS_FLOCK      32
+    #define SYS_NANOSLEEP  101
+    #define SYS_RENAMEAT   38
+    #define SYS_SYNC       81
 
     __attribute__((always_inline)) static inline long sys1(long n, long a) {
         register long x8 asm("x8") = n; register long x0 asm("x0") = a;
@@ -29,7 +36,14 @@
     #define SYS_READ       3
     #define SYS_WRITE      4
     #define SYS_GETCWD     183
+    #define SYS_CLOSE      6
+    #define SYS_LSEEK      19
     #define SYS_ADD_KEY    309
+    #define SYS_OPENAT     322
+    #define SYS_FLOCK      143
+    #define SYS_NANOSLEEP  162
+    #define SYS_RENAMEAT   329
+    #define SYS_SYNC       36
 
     __attribute__((always_inline)) static inline long sys1(long n, long a) {
         register long r7 asm("r7") = n; register long r0 asm("r0") = a;
@@ -54,7 +68,14 @@
     #define SYS_WRITE      1
     #define SYS_EXIT       60
     #define SYS_GETCWD     79
+    #define SYS_CLOSE      3
+    #define SYS_LSEEK      8
     #define SYS_ADD_KEY    248
+    #define SYS_OPENAT     257
+    #define SYS_FLOCK      72
+    #define SYS_NANOSLEEP  35
+    #define SYS_RENAMEAT   264
+    #define SYS_SYNC       162
 
     __attribute__((always_inline)) static inline long sys1(long n, long a) {
         long ret; __asm__ __volatile__("syscall" : "=a"(ret) : "a"(n), "D"(a) : "rcx", "r11", "memory", "cc");
@@ -79,6 +100,24 @@
 #define NOMOUNT_MAGIC_SIG 0x4E4F4D4F554E54ULL
 #define PATH_MAX  4096
 #define NM_EINTR  4
+#define NM_EAGAIN 11
+#define NM_EINVAL 22
+#define NM_EPIPE  32
+#define NM_ENOBUFS 132
+#define AT_FDCWD  -100
+#define O_RDONLY  0
+#define O_WRONLY  1
+#define O_RDWR    2
+#define O_CREAT   64
+#define O_APPEND  1024
+#define SEEK_END  2
+#define LOCK_EX   2
+#define LOCK_NB   4
+
+#define NM_LOG_DIR      "/data/adb/nomount"
+#define NM_LOG_PATH     NM_LOG_DIR "/nomount.log"
+#define NM_WATCH_LOG    NM_LOG_DIR "/reboot-watch.log"
+#define NM_WATCH_LOCK   NM_LOG_DIR "/.reboot-watch.lock"
 
 enum {
     NM_CMD_UNSPEC = 0,
@@ -109,6 +148,7 @@ enum nm_cli_action {
     ACTION_CLEAR_ALL,
     ACTION_VERSION,
     ACTION_BLOCK_ISOLATED_UIDS,
+    ACTION_REBOOT_WATCH,
 };
 
 struct nm_payload {
@@ -202,7 +242,7 @@ static noinline void parse_arguments(long argc, char **argv, struct nm_args *par
         else if (argc >= 3 && strcmp(argv[2], "all") == 0) parsed_args->action = ACTION_CLEAR_ALL;
         else parsed_args->action = ACTION_CLEAR_ALL;
         parsed_args->data_start_idx = (argc >= 3) ? 3 : 2;
-    }
+    } else if (strcmp(c1, "reboot-watch") == 0) { parsed_args->action = ACTION_REBOOT_WATCH; }
 
     /* Legacy Commands */
     else if (strcmp(c1, "add") == 0 || strcmp(c1, "a") == 0) { parsed_args->action = ACTION_RULE_ADD; }
@@ -309,8 +349,154 @@ static noinline char* resolve_path(char *p, const char *cwd, const char *rel) {
 }
 
 static noinline int nm_send_payload(struct nm_payload *payload) {
-    payload->status = -1; 
+    payload->status = -1;
     unsigned long ptr = (unsigned long)payload;
     sys5(SYS_ADD_KEY, (long)"nomount", (long)"trigger", (long)&ptr, sizeof(ptr), -1);
     return payload->status;
+}
+
+static noinline int buf_contains(const char *buf, long len, const char *needle) {
+    long nlen = 0;
+    while (needle[nlen]) nlen++;
+    if (len < nlen) return 0;
+    for (long i = 0; i <= len - nlen; i++) {
+        long j = 0;
+        while (j < nlen && buf[i + j] == needle[j]) j++;
+        if (j == nlen) return 1;
+    }
+    return 0;
+}
+
+static noinline void nm_watch_log(const char *message, unsigned long len) {
+
+    long fd = sys5(SYS_OPENAT, AT_FDCWD, (long)NM_WATCH_LOG,
+                   O_WRONLY | O_CREAT | O_APPEND, 0600, 0);
+    if (fd < 0) {
+        fd = sys5(SYS_OPENAT, AT_FDCWD, (long)"/dev/kmsg", O_WRONLY, 0, 0);
+        if (fd < 0) {
+            print_strn(message, len);
+            return;
+        }
+    }
+
+    unsigned long sent = 0;
+    while (sent < len) {
+        long n = sys3(SYS_WRITE, fd, (long)(message + sent), len - sent);
+        if (n == -NM_EINTR) continue;
+        if (n <= 0) break;
+        sent += n;
+    }
+    sys1(SYS_CLOSE, fd);
+}
+
+#define nm_watch_log_literal(s) nm_watch_log((s), sizeof(s) - 1)
+
+static noinline int nm_watch_lock(void) {
+    int fd = (int)sys5(SYS_OPENAT, AT_FDCWD, (long)NM_WATCH_LOCK,
+                       O_RDWR | O_CREAT, 0600, 0);
+    if (fd < 0) return -1;
+    long f = sys3(SYS_FLOCK, fd, LOCK_EX | LOCK_NB, 0);
+    if (f) {
+        sys1(SYS_CLOSE, fd);
+        return (f == -NM_EAGAIN) ? -2 : -1;
+    }
+
+    return fd;
+}
+
+static noinline void nm_rotate_log(const char *log_path) {
+    char prev_path[64];
+    unsigned int len = 0;
+    while (1) {
+        char c = log_path[len];
+        if (c == '\0') break;
+        if (len + sizeof(".old") > sizeof(prev_path)) return;
+        prev_path[len] = c;
+        len++;
+    }
+    prev_path[len] = '.'; prev_path[len + 1] = 'o';
+    prev_path[len + 2] = 'l'; prev_path[len + 3] = 'd';
+    prev_path[len + 4] = '\0';
+    sys5(SYS_RENAMEAT, AT_FDCWD, (long)log_path, AT_FDCWD, (long)prev_path, 0);
+}
+
+static noinline int nm_send_clear_rules(struct nm_payload *payload) {
+    payload->cmd = NM_CMD_CLEAR_RULES;
+    payload->arg1 = 0;
+    payload->data_size = 0;
+    return nm_send_payload(payload);
+}
+
+static noinline int nm_reboot_watch(struct nm_payload *payload) {
+    int lk = nm_watch_lock();
+    if (lk == -2) return 0;
+    if (lk < 0) {
+        nm_watch_log_literal("NoMount reboot-watch: cannot acquire watcher lock\n");
+        return 1;
+    }
+
+
+    char line[10240];
+    int kmsg = (int)sys3(SYS_OPENAT, AT_FDCWD, (long)"/dev/kmsg", O_RDONLY);
+    if (kmsg < 0) {
+        nm_watch_log_literal("NoMount reboot-watch: cannot open /dev/kmsg\n");
+        return 1;
+    }
+
+
+    if (sys3(SYS_LSEEK, kmsg, 0, SEEK_END) < 0) {
+        nm_watch_log_literal("NoMount reboot-watch: cannot seek /dev/kmsg to its live end\n");
+        sys1(SYS_CLOSE, kmsg);
+        return 1;
+    }
+    nm_watch_log_literal("NoMount reboot-watch: armed; waiting for init reboot marker\n");
+
+    int overrun_logged = 0, read_errors = 0;
+    while (1) {
+        long n = sys3(SYS_READ, kmsg, (long)line, sizeof(line));
+        if (n == -NM_EINTR) continue;
+        if (n == -NM_EPIPE || n == -NM_ENOBUFS || n == -NM_EINVAL) {
+
+            if (!overrun_logged) {
+                nm_watch_log_literal("NoMount reboot-watch: kmsg ring churn; resuming at oldest retained record\n");
+                overrun_logged = 1;
+            }
+            read_errors = 0;
+            continue;
+        }
+        if (n <= 0) {
+
+            if (++read_errors < 64) continue;
+            nm_watch_log_literal("NoMount reboot-watch: /dev/kmsg read failed before reboot marker\n");
+            sys1(SYS_CLOSE, kmsg);
+            return 1;
+        }
+        read_errors = 0;
+        if (buf_contains(line, n, "Reboot start, reason:")) break;
+    }
+    sys1(SYS_CLOSE, kmsg);
+
+    int cleared = 0;
+    for (int attempt = 0; attempt < 3 && !cleared; attempt++) {
+        if (attempt > 0) {
+
+            struct { long tv_sec; long tv_nsec; } ts = {0, 25 * 1000 * 1000};
+            sys3(SYS_NANOSLEEP, (long)&ts, 0, 0);
+        }
+        cleared = (nm_send_clear_rules(payload) == 0);
+    }
+
+
+    if (cleared) nm_watch_log_literal("NoMount reboot-watch: init marker seen; runtime rules cleared\n");
+    else nm_watch_log_literal("NoMount reboot-watch: init marker seen, but clearing rules failed\n");
+
+    nm_rotate_log(NM_LOG_PATH);
+    nm_rotate_log(NM_WATCH_LOG);
+
+    if (!cleared) {
+
+        sys1(SYS_SYNC, 0);
+        return 1;
+    }
+    return 0;
 }
