@@ -12,6 +12,7 @@
 /*** Helpers ***/
 
 static bool nm_block_isolated_uids = false;
+static bool nm_shutdown_released;
 static __always_inline bool nm_is_uid_blocked(uid_t target_uid)
 {
     struct nm_uid_array *arr;
@@ -1062,30 +1063,58 @@ static const struct inode_operations nm_dir_iops = {
 
 /* --- Hijacking Management --- */
 
-static inline int nm_hijack_superblock(struct super_block *sb)
+static struct nm_sop *nm_alloc_sop(struct super_block *sb, const struct super_operations *orig)
 {
-    struct nm_sop *nm_sop;
-    int count = 0;
+    struct nm_sop *nm_sop = kzalloc(sizeof(*nm_sop), GFP_KERNEL);
 
-    if (nm_get_nm_sop(smp_load_acquire(&sb->s_op))) return 0;
-    if (!(nm_sop = kmalloc(sizeof(*nm_sop), GFP_KERNEL))) return -ENOMEM;
-
-    nm_sop->fake_sop = *(sb->s_op);
-    nm_sop->orig_sop = sb->s_op;
-    nm_sop->orig_xattr = nm_sop->fake_xattr = NULL;
+    if (!nm_sop) return NULL;
+    nm_sop->fake_sop = *orig;
+    nm_sop->orig_sop = orig;
     nm_sop->sb = sb;
     nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
     nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
+    nm_sop->fake_sop.sync_fs = nm_shutdown_sync_fs;
+    nm_sop->fake_sop.umount_begin = nm_shutdown_umount_begin;
+    return nm_sop;
+}
+
+static int nm_install_sop(struct super_block *sb)
+{
+    struct nm_sop *nm_sop;
+
+    if (nm_get_nm_sop(smp_load_acquire(&sb->s_op))) return 0;
+    if (!(nm_sop = nm_alloc_sop(sb, sb->s_op))) return -ENOMEM;
+    list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
+    smp_store_release(&sb->s_op, &nm_sop->fake_sop);
+    return 0;
+}
+
+/* sync_filesystems() never calls ->sync_fs on a read-only sb, and replacing
+ * kernfs' s_op trips BUG_ON() in kernfs_node_dentry(). */
+static int nm_install_sync_sop(struct super_block *sb)
+{
+    if (sb_rdonly(sb) || nm_is_pseudo_fs(sb)) return 0;
+    return nm_install_sop(sb);
+}
+
+static inline int nm_hijack_superblock(struct super_block *sb)
+{
+    struct nm_sop *nm_sop = nm_get_nm_sop(smp_load_acquire(&sb->s_op));
+    int count = 0, err;
+
+    if (nm_sop && nm_sop->full) return 0;
+    if (!nm_sop) {
+        if ((err = nm_install_sop(sb))) return err;
+        nm_sop = nm_get_nm_sop(smp_load_acquire(&sb->s_op));
+    }
 
     if (sb->s_xattr) {
         const struct xattr_handler **new_array;
         struct nm_xattr_proxy *proxies;
 
         while (sb->s_xattr[count]) count++;
-        if (!(new_array = kmalloc((count + 1) * sizeof(void *) + (count * sizeof(*proxies)), GFP_KERNEL))) {
-            kfree(nm_sop);
+        if (!(new_array = kmalloc((count + 1) * sizeof(void *) + (count * sizeof(*proxies)), GFP_KERNEL)))
             return -ENOMEM;
-        }
         proxies = (void *)(new_array + count + 1);
         new_array[count] = NULL;
         for (int i = 0; i < count; i++) {
@@ -1104,8 +1133,7 @@ static inline int nm_hijack_superblock(struct super_block *sb)
         nm_debug("xattr handlers successfully hijacked for dev: 0x%x\n", sb->s_dev);
     }
 
-    list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
-    smp_store_release(&sb->s_op, &nm_sop->fake_sop);
+    nm_sop->full = true;
     nm_debug("Superblock successfully hijacked for dev: 0x%x\n", sb->s_dev);
     return 0;
 }
@@ -1240,14 +1268,16 @@ static void nm_restore_superblocks(void)
     struct inode *inode;
     list_for_each_entry_safe(nm_sop, tmp, &nm_sb_list, list) {
         if (nm_sop->sb) {
-            nm_clear_dops_sb(nm_sop->sb);
-            shrink_dcache_sb(nm_sop->sb);
-            spin_lock(&nm_sop->sb->s_inode_list_lock);
-            list_for_each_entry(inode, &nm_sop->sb->s_inodes, i_sb_list) {
-                if (!inode->i_op && !inode->i_fop) continue;
-                nm_destroy_hijacked_inode(inode);
+            if (nm_sop->full) {
+                nm_clear_dops_sb(nm_sop->sb);
+                shrink_dcache_sb(nm_sop->sb);
+                spin_lock(&nm_sop->sb->s_inode_list_lock);
+                list_for_each_entry(inode, &nm_sop->sb->s_inodes, i_sb_list) {
+                    if (!inode->i_op && !inode->i_fop) continue;
+                    nm_destroy_hijacked_inode(inode);
+                }
+                spin_unlock(&nm_sop->sb->s_inode_list_lock);
             }
-            spin_unlock(&nm_sop->sb->s_inode_list_lock);
             smp_store_release(&nm_sop->sb->s_op, nm_sop->orig_sop);
             if (nm_sop->fake_xattr) {
                 smp_store_release((const struct xattr_handler ***)&nm_sop->sb->s_xattr, nm_sop->orig_xattr);
@@ -1400,6 +1430,11 @@ static int nm_prepare_rule(const char *r_path, u16 r_len, u32 flags, unsigned in
         if (err) { memset(out, 0, sizeof(*out)); return err; }
         struct inode *inode = d_backing_inode(out->r_path.dentry);
         if (S_ISDIR(inode->i_mode)) out->flags |= NM_FLAG_IS_DIR;
+        if ((err = nm_install_sync_sop(out->r_path.dentry->d_sb))) {
+            path_put(&out->r_path);
+            memset(out, 0, sizeof(*out));
+            return err;
+        }
     }
     return 0;
 }
@@ -1430,6 +1465,7 @@ static int nm_resolve_anchor_locked(struct nm_leaf *leaf, u32 flags)
     struct inode *inode;
     struct nm_dir_ops *iop, *fop;
     struct nm_dir_node *dir;
+    int err;
 
     if (kern_path(leaf->paths, LOOKUP_FOLLOW, &anchor)) {
         leaf->this_dir = nm_alloc_dir_node();
@@ -1442,6 +1478,11 @@ static int nm_resolve_anchor_locked(struct nm_leaf *leaf, u32 flags)
     if (!S_ISDIR(inode->i_mode)) {
         path_put(&anchor);
         return 0;
+    }
+
+    if ((err = nm_install_sync_sop(anchor.dentry->d_sb))) {
+        path_put(&anchor);
+        return err;
     }
 
     leaf->v_ino = inode->i_ino;
@@ -1484,16 +1525,8 @@ static void nm_rule_array_free(struct nm_rule_array *arr)
     kfree(arr);
 }
 
-static void nm_reclaim(struct work_struct *work)
+static void nm_free_retired(struct nm_rule_array *arrays, struct nm_leaf *leaves)
 {
-    struct nm_rule_array *arrays;
-    struct nm_leaf *leaves;
-    mutex_lock(&nm_mutex);
-    arrays = nm_retired_arrays;
-    leaves = nm_retired_leaves;
-    nm_retired_arrays = NULL;
-    nm_retired_leaves = NULL;
-    mutex_unlock(&nm_mutex);
     if (!arrays && !leaves) return;
 
     synchronize_rcu();
@@ -1507,6 +1540,20 @@ static void nm_reclaim(struct work_struct *work)
         leaves = leaf->next;
         nm_free_leaf(leaf);
     }
+}
+
+static void nm_reclaim(struct work_struct *work)
+{
+    struct nm_rule_array *arrays;
+    struct nm_leaf *leaves;
+
+    mutex_lock(&nm_mutex);
+    arrays = nm_retired_arrays;
+    leaves = nm_retired_leaves;
+    nm_retired_arrays = NULL;
+    nm_retired_leaves = NULL;
+    mutex_unlock(&nm_mutex);
+    nm_free_retired(arrays, leaves);
 }
 
 static DECLARE_WORK(nm_reclaim_work, nm_reclaim);
@@ -1896,6 +1943,7 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     size_t heap_size = 0;
     bool fresh, replace = false;
 
+    if (READ_ONCE(nm_shutdown_released)) return -ESHUTDOWN;
     if (deny_start || deny_end) {
         if (!deny_start || !deny_end) return -EINVAL;
         if (deny_start > deny_end) { unsigned int t = deny_start; deny_start = deny_end; deny_end = t; }
@@ -2075,9 +2123,8 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
     return 0;
 }
 
-static void nm_clear_state(int clear_flags)
+static void nm_clear_locked(int clear_flags)
 {
-    mutex_lock(&nm_mutex);
     if (clear_flags & NM_CLEAR_UIDS) {
         struct nm_uid_array *old = rcu_dereference_protected(nm_uids, lockdep_is_held(&nm_mutex));
         RCU_INIT_POINTER(nm_uids, NULL);
@@ -2095,7 +2142,53 @@ static void nm_clear_state(int clear_flags)
         }
     }
     if (clear_flags & NM_CLEAR_EXIT) nm_restore_superblocks();
+}
+
+static void nm_clear_state(int clear_flags)
+{
+    mutex_lock(&nm_mutex);
+    nm_clear_locked(clear_flags);
     mutex_unlock(&nm_mutex);
+}
+
+static void nm_shutdown_release(void)
+{
+    struct nm_rule_array *arrays;
+    struct nm_leaf *leaves;
+
+    mutex_lock(&nm_mutex);
+    if (READ_ONCE(nm_shutdown_released)) {
+        mutex_unlock(&nm_mutex);
+        return;
+    }
+    WRITE_ONCE(nm_shutdown_released, true);
+    nm_clear_locked(NM_CLEAR_UIDS | NM_CLEAR_RULES);
+    arrays = nm_retired_arrays;
+    leaves = nm_retired_leaves;
+    nm_retired_arrays = NULL;
+    nm_retired_leaves = NULL;
+    mutex_unlock(&nm_mutex);
+
+    nm_free_retired(arrays, leaves);
+}
+
+static int nm_shutdown_sync_fs(struct super_block *sb, int wait)
+{
+    struct nm_sop *nm_sop = nm_get_nm_sop(smp_load_acquire(&sb->s_op));
+
+    if (current->pid == 1) nm_shutdown_release();
+    if (nm_sop && nm_sop->orig_sop && nm_sop->orig_sop->sync_fs)
+        return nm_sop->orig_sop->sync_fs(sb, wait);
+    return 0;
+}
+
+static void nm_shutdown_umount_begin(struct super_block *sb)
+{
+    struct nm_sop *nm_sop = nm_get_nm_sop(smp_load_acquire(&sb->s_op));
+
+    if (current->pid == 1) nm_shutdown_release();
+    if (nm_sop && nm_sop->orig_sop && nm_sop->orig_sop->umount_begin)
+        nm_sop->orig_sop->umount_begin(sb);
 }
 
 /*** Payload Communication API ***/
