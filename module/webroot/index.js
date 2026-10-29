@@ -798,38 +798,46 @@ async function loadModules() {
 async function loadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
     const script = `
-        cd "${modPath}" || exit 0
+        cd "${modPath}" || exit 1
         valid_dirs=""
         for p in ${TARGET_PARTITIONS}; do [ -d "$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && valid_dirs="$valid_dirs $p"; done
         [ -z "$valid_dirs" ] && exit 0
+        set -o pipefail
+        status=0
 
         find -L $valid_dirs \\( -type d -o -type c -o -name ".replace" -o -name ".remove" \\) \
             -exec sh "${RULE_PATHS}" path "${modPath}" {} + 2>/dev/null \
-            | xargs -0 -r -n 200 ${NM_BIN} rule add --whiteout
+            | xargs -0 -r -n 200 ${NM_BIN} rule add --whiteout || status=1
 
         find -L $valid_dirs \\( -type d -o -name ".replace" \\) \
             -exec sh "${RULE_PATHS}" opaque "${modPath}" {} + 2>/dev/null \
-            | xargs -0 -r -n 200 ${NM_BIN} rule add --opaque
+            | xargs -0 -r -n 200 ${NM_BIN} rule add --opaque || status=1
 
         find -L $valid_dirs \\( -type f -o -type l \\) ! -name ".replace" ! -name ".remove" \
             -exec sh "${RULE_PATHS}" pair "${modPath}" {} + 2>/dev/null \
-            | xargs -0 -r -n 200 ${NM_BIN} rule add
+            | xargs -0 -r -n 200 ${NM_BIN} rule add || status=1
+        exit "$status"
     `;
-    try { await exec(script); } catch (e) { throw e; }
+    const result = await exec(script);
+    if (result.errno !== 0) throw new Error(result.stderr || 'Failed to load module');
 }
 
 async function unloadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
     const script = `
-        cd "${modPath}" || exit 0
+        cd "${modPath}" || exit 1
         valid_dirs=""
         for p in ${TARGET_PARTITIONS}; do [ -d "$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && valid_dirs="$valid_dirs $p"; done
         [ -z "$valid_dirs" ] && exit 0
+        set -o pipefail
+        status=0
         find -L $valid_dirs \\( -type f -o -type l -o -type c -o -type d \\) \
             -exec sh "${RULE_PATHS}" del "${modPath}" {} + 2>/dev/null \
-            | xargs -0 -r -n 200 ${NM_BIN} rule del
+            | xargs -0 -r -n 200 ${NM_BIN} rule del || status=1
+        exit "$status"
     `;
-    try { await exec(script); } catch (e) { throw e; }
+    const result = await exec(script);
+    if (result.errno !== 0) throw new Error(result.stderr || 'Failed to unload module');
 }
 
 // Apps & Exclusions

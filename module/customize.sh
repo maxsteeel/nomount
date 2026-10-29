@@ -35,8 +35,7 @@ rm -rf "$MODPATH"/bin/nm-* "$MODPATH"/bin/lkmloader-*
 try_load_ko() {
   local output
 
-  output=$("$MODPATH/lkm/lkmloader" "$1" 2>&1)
-  if "$MODPATH/bin/nm" version >/dev/null 2>&1; then
+  if output=$("$MODPATH/lkm/lkmloader" "$1" 2>&1) && "$MODPATH/bin/nm" version >/dev/null 2>&1; then
     return 0
   fi
 

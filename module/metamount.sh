@@ -30,6 +30,8 @@ if ! _lock_fd 6 120; then
 fi
 
 klog "Injection started"
+set -o pipefail
+status=0
 
 for mod_path in "$MODULES_DIR"/*; do
     [ -d "$mod_path" ] || continue
@@ -47,21 +49,25 @@ for mod_path in "$MODULES_DIR"/*; do
             klog "mounting module $mod_name (/$partition)"
             find -L "$mod_path/$partition" \( -type d -o -type c -o -name ".replace" -o -name ".remove" \) \
                 -exec sh "$MODDIR/rule-paths.sh" path "$mod_path" {} + 2>/dev/null \
-                | add_rule_and_log --whiteout
+                | add_rule_and_log --whiteout || status=1
 
             find -L "$mod_path/$partition" \( -type d -o -name ".replace" \) \
                 -exec sh "$MODDIR/rule-paths.sh" opaque "$mod_path" {} + 2>/dev/null \
-                | add_rule_and_log --opaque
+                | add_rule_and_log --opaque || status=1
 
             find -L "$mod_path/$partition" \( -type f -o -type l \) ! -name ".replace" ! -name ".remove" \
                 -exec sh "$MODDIR/rule-paths.sh" pair "$mod_path" {} + 2>/dev/null \
-                | add_rule_and_log
+                | add_rule_and_log || status=1
         fi
     done
 done
 
-klog "Injection completed"
-sed -i "s|^description=.*|description=$BASE_DESC|" "$PROP_FILE"
+if [ "$status" -eq 0 ]; then
+    klog "Injection completed"
+    sed -i "s|^description=.*|description=$BASE_DESC|" "$PROP_FILE"
+else
+    klogerr "Injection completed with errors."
+fi
 
 exec 6>&-
-exit 0
+exit "$status"
