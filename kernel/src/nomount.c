@@ -795,7 +795,7 @@ static bool nm_is_our_dops(struct nm_dir_ops *iop, const struct dentry_operation
 }
 
 static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr *name,
-                                  struct dentry *dentry, unsigned int flags)
+                                  struct dentry *dentry, unsigned int flags, bool weak)
 {
     struct nm_dir_node *parent_dir = NULL;
     const struct dentry_operations *orig_dops = NULL;
@@ -829,28 +829,28 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
     if (!has_rule) orig_dops = nm_get_orig_dops(iop);
     rcu_read_unlock();
 
-    if (whiteout) return !inode;
+    if (whiteout) return weak ? (inode ? -ESTALE : 0) : !inode;
     if (match_rule) return 1;
     if (has_rule || nm_is_our_dops(iop, READ_ONCE(dentry->d_op)) || (inode && nm_inode_is_virtual(inode))) {
         if (flags & LOOKUP_RCU) return -ECHILD;
         d_drop(dentry);
-        return 0;
+        return weak ? -ESTALE : 0;
     }
     return nm_call_orig_revalidate(orig_dops, parent_inode, name, dentry, flags);
 }
 
 static int nm_d_weak_revalidate(struct dentry *dentry, unsigned int flags)
 {
-    return nm_d_revalidate_common(d_inode(READ_ONCE(dentry->d_parent)), &dentry->d_name, dentry, flags);
+    return nm_d_revalidate_common(d_inode(READ_ONCE(dentry->d_parent)), &dentry->d_name, dentry, flags, true);
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
 static int nm_d_revalidate(struct inode *parent_inode, const struct qstr *name, struct dentry *dentry, unsigned int flags) {
-    return nm_d_revalidate_common(parent_inode, name, dentry, flags);
+    return nm_d_revalidate_common(parent_inode, name, dentry, flags, false);
 }
 #else
 static int nm_d_revalidate(struct dentry *dentry, unsigned int flags) {
-    return nm_d_revalidate_common(d_inode(READ_ONCE(dentry->d_parent)), &dentry->d_name, dentry, flags);
+    return nm_d_revalidate_common(d_inode(READ_ONCE(dentry->d_parent)), &dentry->d_name, dentry, flags, false);
 }
 #endif
 
