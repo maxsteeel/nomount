@@ -117,6 +117,34 @@ static bool nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct 
     return true;
 }
 
+static int nm_rebind_path(struct path *path)
+{
+    struct dentry *parent, *new, *old = dget(path->dentry);
+    if (!d_unlinked(old)) {
+        dput(old);
+        return 0;
+    }
+
+    parent = dget_parent(old);
+    new = lookup_one_len_unlocked(old->d_name.name, parent, old->d_name.len);
+    dput(parent);
+
+    if (IS_ERR(new) || !d_is_positive(new) || d_is_symlink(new) || new->d_sb != old->d_sb) {
+        if (!IS_ERR(new)) dput(new);
+        dput(old);
+        return IS_ERR(new) ? PTR_ERR(new) : -ENOENT;
+    }
+
+    if (cmpxchg(&path->dentry, old, new) == old) {
+        dput(old);  /* our dget ref */
+        dput(old);  /* path's old ref, transferred to us */
+    } else {
+        dput(new);
+        dput(old);
+    }
+    return 0;
+}
+
 static void nm_dir_rcu_free(struct rcu_head *head)
 {
     struct nm_dir_node *dir = container_of(head, struct nm_dir_node, rcu);
@@ -460,6 +488,11 @@ static int nm_open(struct inode *inode, struct file *file)
     if (unlikely(!info->r_path.dentry)) {
         file->private_data = NULL;
         return 0;
+    }
+
+    if (unlikely(d_unlinked(info->r_path.dentry))) {
+        int err = nm_rebind_path(&info->r_path);
+        if (err) return err;
     }
 
     real_file = dentry_open(&info->r_path, (file->f_flags & ~(O_CREAT | O_EXCL | O_NOCTTY)), file->f_cred);
