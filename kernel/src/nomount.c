@@ -636,12 +636,17 @@ static int nm_getattr(IDMAP_ARG const struct path *path, struct kstat *stat, u32
 #else
         generic_fillattr(IDMAP_CALL v_inode, stat);
 #endif
-    else
+    else {
+        if (unlikely(d_unlinked(info->r_path.dentry))) {
+            int err = nm_rebind_path(&info->r_path);
+            if (err) return err;
+        }
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 0)
         res = vfs_getattr_nosec(&info->r_path, stat);
 #else
         res = vfs_getattr_nosec(&info->r_path, stat, request_mask, query_flags);
 #endif
+    }
 
     if (likely(res == 0)) {
         stat->ino = v_inode->i_ino;
