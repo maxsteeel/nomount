@@ -81,5 +81,7 @@
   "advanced_color": "高级颜色",
   "done": "完成",
   "modules_skip": "跳过注入",
-  "modules_unskip": "取消跳过"
+  "modules_unskip": "取消跳过",
+  "dump_rules": "Dump rules",
+  "dump_rules_desc": "Dump all rules into android log. Only enable for debugging."
 }

@@ -81,5 +81,7 @@
   "advanced_color": "ألوان متقدمة",
   "done": "تم",
   "modules_skip": "تخطي",
-  "modules_unskip": "إلغاء التخطي"
+  "modules_unskip": "إلغاء التخطي",
+  "dump_rules": "Dump rules",
+  "dump_rules_desc": "Dump all rules into android log. Only enable for debugging."
 }

@@ -81,5 +81,7 @@
   "advanced_color": "Gelişmiş Renk",
   "done": "Tamam",
   "modules_skip": "Skip",
-  "modules_unskip": "Unskip"
+  "modules_unskip": "Unskip",
+  "dump_rules": "Dump rules",
+  "dump_rules_desc": "Dump all rules into android log. Only enable for debugging."
 }

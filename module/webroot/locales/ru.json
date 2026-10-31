@@ -81,5 +81,7 @@
   "advanced_color": "Настройка цвета",
   "done": "Готово",
   "modules_skip": "Пропустить",
-  "modules_unskip": "Не пропустить"
+  "modules_unskip": "Не пропустить",
+  "dump_rules": "Dump rules",
+  "dump_rules_desc": "Dump all rules into android log. Only enable for debugging."
 }

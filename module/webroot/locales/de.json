@@ -81,5 +81,7 @@
   "advanced_color": "Erweiterte Farbeinstellungen",
   "done": "Fertig",
   "modules_skip": "Überspringen",
-  "modules_unskip": "Nicht überspringen"
+  "modules_unskip": "Nicht überspringen",
+  "dump_rules": "Dump rules",
+  "dump_rules_desc": "Dump all rules into android log. Only enable for debugging."
 }

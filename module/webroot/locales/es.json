@@ -81,5 +81,7 @@
   "advanced_color": "Color Avanzado",
   "done": "Hecho",
   "modules_skip": "Omitir",
-  "modules_unskip": "No omitir"
+  "modules_unskip": "No omitir",
+  "dump_rules": "Volcar reglas",
+  "dump_rules_desc": "Volcar todas las reglas hacia el log de Android. Solo habilitar para depuración."
 }
