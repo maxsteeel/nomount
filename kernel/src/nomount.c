@@ -827,6 +827,15 @@ static int nm_xattr_set(const struct xattr_handler *handler, IDMAP_ARG struct de
     return proxy->orig->set(proxy->orig, IDMAP_CALL dentry, inode, name, buffer, size, flags);
 }
 
+static int nm_shutdown_sync_fs(struct super_block *sb, int wait)
+{
+    struct nm_sop *nm_sop = nm_get_nm_sop(smp_load_acquire(&sb->s_op));
+    if (current->pid == 1) nm_shutdown_release();
+    if (nm_sop && nm_sop->orig_sop && nm_sop->orig_sop->sync_fs)
+        return nm_sop->orig_sop->sync_fs(sb, wait);
+    return 0;
+}
+
 static bool nm_is_our_dops(struct nm_dir_ops *iop, const struct dentry_operations *dop)
 {
     return dop == &nm_owned_dops || dop == &nm_dops || (iop && dop == &iop->fake_dops);
@@ -966,30 +975,35 @@ static const struct inode_operations nm_dir_iops = {
 
 /* --- Hijacking Management --- */
 
-static inline int nm_hijack_superblock(struct super_block *sb)
+static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
 {
-    struct nm_sop *nm_sop;
-    int count = 0;
+    struct nm_sop *nm_sop = nm_get_nm_sop(smp_load_acquire(&sb->s_op));
+    lockdep_assert_held(&nm_mutex);
 
-    if (nm_get_nm_sop(smp_load_acquire(&sb->s_op))) return 0;
-    if (!(nm_sop = kmalloc(sizeof(*nm_sop), GFP_KERNEL))) return -ENOMEM;
+    if (!nm_sop) {
+        if (!with_xattr && (sb_rdonly(sb) || nm_is_pseudo_fs(sb))) return 0;
+        if (!(nm_sop = kzalloc(sizeof(*nm_sop), GFP_KERNEL))) return -ENOMEM;
+        nm_sop->fake_sop = *sb->s_op;
+        nm_sop->orig_sop = sb->s_op;
+        nm_sop->sb = sb;
+        nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
+        nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
+        if (!sb_rdonly(sb) && !nm_is_pseudo_fs(sb))
+            nm_sop->fake_sop.sync_fs = nm_shutdown_sync_fs;
+        list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
+        smp_store_release(&sb->s_op, &nm_sop->fake_sop);
+        nm_debug("Superblock successfully hijacked for dev: 0x%x\n", sb->s_dev);
+    } else if (!with_xattr || nm_sop->fake_xattr) {
+        return 0;
+    }
 
-    nm_sop->fake_sop = *(sb->s_op);
-    nm_sop->orig_sop = sb->s_op;
-    nm_sop->orig_xattr = nm_sop->fake_xattr = NULL;
-    nm_sop->sb = sb;
-    nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
-    nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
-
-    if (sb->s_xattr) {
+    if (with_xattr && sb->s_xattr) {
         const struct xattr_handler **new_array;
         struct nm_xattr_proxy *proxies;
+        int count = 0;
 
         while (sb->s_xattr[count]) count++;
-        if (!(new_array = kmalloc((count + 1) * sizeof(void *) + (count * sizeof(*proxies)), GFP_KERNEL))) {
-            kfree(nm_sop);
-            return -ENOMEM;
-        }
+        if (!(new_array = kmalloc((count + 1) * sizeof(void *) + (count * sizeof(*proxies)), GFP_KERNEL))) return -ENOMEM;
         proxies = (void *)(new_array + count + 1);
         new_array[count] = NULL;
         for (int i = 0; i < count; i++) {
@@ -1008,9 +1022,6 @@ static inline int nm_hijack_superblock(struct super_block *sb)
         nm_debug("xattr handlers successfully hijacked for dev: 0x%x\n", sb->s_dev);
     }
 
-    list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
-    smp_store_release(&sb->s_op, &nm_sop->fake_sop);
-    nm_debug("Superblock successfully hijacked for dev: 0x%x\n", sb->s_dev);
     return 0;
 }
 
@@ -1032,7 +1043,7 @@ static inline int nm_hijack_dir_ops(struct nm_dir_node *dir_node, struct inode *
     }
     if (!iop && !iterate) return -EOPNOTSUPP;
     if (!(ops = kmalloc(sizeof(*ops), GFP_KERNEL))) return -ENOMEM;
-    if ((err = nm_hijack_superblock(inode->i_sb))) {
+    if ((err = nm_hijack_superblock(inode->i_sb, true))) {
         kfree(ops);
         return err;
     }
@@ -1301,6 +1312,11 @@ static int nm_prepare_rule(const char *r_path, u16 r_len, u32 flags, unsigned in
     if (backed) {
         int err = kern_path(r_path, LOOKUP_FOLLOW, &out->r_path);
         if (err) { memset(out, 0, sizeof(*out)); return err; }
+        if ((err = nm_hijack_superblock(out->r_path.dentry->d_sb, false))) {
+            path_put(&out->r_path);
+            memset(out, 0, sizeof(*out));
+            return err;
+        }
         struct inode *inode = d_backing_inode(out->r_path.dentry);
         if (S_ISDIR(inode->i_mode)) out->flags |= NM_FLAG_IS_DIR;
     }
@@ -1413,6 +1429,16 @@ static void nm_reclaim(struct work_struct *work)
 }
 
 static DECLARE_WORK(nm_reclaim_work, nm_reclaim);
+
+static bool nm_shutdown_released;
+static void nm_shutdown_release(void)
+{
+    if (READ_ONCE(nm_shutdown_released)) return;
+    WRITE_ONCE(nm_shutdown_released, true);
+    nm_clear_state(NM_CLEAR_UIDS | NM_CLEAR_RULES);
+    cancel_work_sync(&nm_reclaim_work);
+    nm_reclaim(NULL);
+}
 
 static void nm_retire_array_locked(struct nm_rule_array *arr)
 {
@@ -1601,6 +1627,9 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     int pos = 0, count, new_count, err = 0, j = 0;
     size_t heap_size = 0;
     bool fresh, replace = false;
+
+    if (READ_ONCE(nm_shutdown_released))
+        return -ESHUTDOWN;
 
     if (deny_start || deny_end) {
         if (!deny_start || !deny_end) return -EINVAL;

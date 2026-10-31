@@ -193,6 +193,8 @@ static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx);
 static void nm_hijacked_evict_inode(struct inode *inode);
 static void nm_hijack_dentry_ops(struct inode *dir, struct dentry *dentry, bool injected);
 static void nm_dir_put(struct nm_dir_node *dir_node);
+static void nm_shutdown_release(void);
+static void nm_clear_state(int clear_flags);
 
 /* =====================================================================
  * NoMount VFS Offset Protocol
