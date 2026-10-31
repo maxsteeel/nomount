@@ -129,7 +129,8 @@ static int nm_rebind_path(struct path *path)
     new = lookup_one_len_unlocked(old->d_name.name, parent, old->d_name.len);
     dput(parent);
 
-    if (IS_ERR(new) || !d_is_positive(new) || d_is_symlink(new) || new->d_sb != old->d_sb) {
+    if (IS_ERR(new) || !d_is_positive(new) || d_is_symlink(new) || new->d_sb != old->d_sb ||
+        (d_backing_inode(new) && nm_inode_is_virtual(d_backing_inode(new)))) {
         if (!IS_ERR(new)) dput(new);
         dput(old);
         return IS_ERR(new) ? PTR_ERR(new) : -ENOENT;
