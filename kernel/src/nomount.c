@@ -117,18 +117,22 @@ static bool nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct 
     return true;
 }
 
-static int nm_rebind_path(struct path *path)
+static int nm_rebind_path(struct path *path, struct dentry *saved_parent, const char *name, u16 namelen)
 {
-    struct dentry *parent, *new, *old = dget(path->dentry);
-    if (!d_unlinked(old)) {
+    struct dentry *new, *old = dget(path->dentry);
+
+    if (!saved_parent || !name) {
+        dput(old);
+        return -ENOENT;
+    }
+
+    if (!d_unlinked(old) && old->d_parent == saved_parent && old->d_name.len == namelen &&
+        !memcmp(old->d_name.name, name, namelen)) {
         dput(old);
         return 0;
     }
 
-    parent = dget_parent(old);
-    new = lookup_one_len_unlocked(old->d_name.name, parent, old->d_name.len);
-    dput(parent);
-
+    new = lookup_one_len_unlocked(name, saved_parent, namelen);
     if (IS_ERR(new) || !d_is_positive(new) || d_is_symlink(new) || new->d_sb != old->d_sb ||
         (d_backing_inode(new) && nm_inode_is_virtual(d_backing_inode(new)))) {
         if (!IS_ERR(new)) dput(new);
@@ -170,6 +174,8 @@ static inline void nm_destroy_virtual_inode(struct inode *inode)
 
     nm_dir_put(info->dir_node);
     if (info->r_path.dentry) path_put(&info->r_path);
+    dput(info->saved_parent);
+    kfree(info->r_name);
     kfree_rcu(info, rcu);
 }
 
@@ -311,7 +317,7 @@ static int nm_cached_inode_test(struct inode *inode, void *data)
 
 static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dentry, struct nm_rule_info *rule_info)
 {
-    struct nm_inode_info probe, *info = NULL;
+    struct nm_inode_info probe = {0}, *info = NULL;
     struct inode *inode;
     struct dentry *res = ERR_PTR(-ENODATA);
 
@@ -344,6 +350,12 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
 
     if (!(info = kmalloc(sizeof(*info), GFP_KERNEL))) goto out;
     info->r_path = rule_info->r_path;
+    info->saved_parent = dget(info->r_path.dentry->d_parent);
+    info->r_name_len = info->r_path.dentry->d_name.len;
+    if ((info->r_name = kmalloc(info->r_name_len + 1, GFP_KERNEL))) {
+        memcpy(info->r_name, info->r_path.dentry->d_name.name, info->r_name_len);
+        info->r_name[info->r_name_len] = 0;
+    }
     info->dir_node = NULL;
     info->opaque = false;
     if (!(inode = new_inode(dir->i_sb))) goto out;
@@ -353,7 +365,11 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
     return NULL;
 
 out:
-    kfree(info);
+    if (info) {
+        dput(info->saved_parent);
+        kfree(info->r_name);
+        kfree(info);
+    }
     nm_dir_put(rule_info->this_dir);
     if (rule_info->r_path.dentry) path_put(&rule_info->r_path);
     return res;
@@ -484,15 +500,17 @@ static int nm_open(struct inode *inode, struct file *file)
 {
     struct nm_inode_info *info = inode->i_private;
     struct file *real_file;
+    struct dentry *d;
 
     if (unlikely(!info)) return -ENODEV;
-    if (unlikely(!info->r_path.dentry)) {
+    if (unlikely(!(d = info->r_path.dentry))) {
         file->private_data = NULL;
         return 0;
     }
 
-    if (unlikely(d_unlinked(info->r_path.dentry))) {
-        int err = nm_rebind_path(&info->r_path);
+    if (unlikely(!info->dir_node && (!info->r_name || d_unlinked(d) || d->d_parent != info->saved_parent ||
+          d->d_name.len != info->r_name_len || memcmp(d->d_name.name, info->r_name, info->r_name_len)))) {
+        int err = nm_rebind_path(&info->r_path, info->saved_parent, info->r_name, info->r_name_len);
         if (err) return err;
     }
 
@@ -638,8 +656,10 @@ static int nm_getattr(IDMAP_ARG const struct path *path, struct kstat *stat, u32
         generic_fillattr(IDMAP_CALL v_inode, stat);
 #endif
     else {
-        if (unlikely(d_unlinked(info->r_path.dentry))) {
-            int err = nm_rebind_path(&info->r_path);
+        struct dentry *d = info->r_path.dentry;
+        if (unlikely(!info->dir_node && (!info->r_name || d_unlinked(d) || d->d_parent != info->saved_parent ||
+              d->d_name.len != info->r_name_len || memcmp(d->d_name.name, info->r_name, info->r_name_len)))) {
+            int err = nm_rebind_path(&info->r_path, info->saved_parent, info->r_name, info->r_name_len);
             if (err) return err;
         }
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 0)
