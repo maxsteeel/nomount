@@ -118,12 +118,22 @@ add_rule_and_log() {
 }
 
 dump_all_rules_logcat() {
-    local list
-    list=$("$LOADER" rule list 2>&1 | tr '\n' ';')
-    [ -n "$list" ] || list="(empty)"
-    log -t nomount -p i "rules dump start ($(printf '%s' "$list" | wc -c) bytes) $1"
-    printf '%s' "$list" | fold -w 3500 | while IFS= read -r chunk; do
-        log -t nomount -p i "$chunk"
-    done
-    log -t nomount -p i "rules dump end"
+    log -t nomount -p i "rules dump started (triggered $*)"
+
+    "$LOADER" rule list 2>&1 | {
+        buf=""
+        n=0
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            if [ -n "$buf" ] && [ $(( ${#buf} + ${#line} + 3 )) -gt 900 ]; then
+                log -t nomount -p i "$buf"
+                buf="$line"
+            else
+                buf="${buf:+$buf ; }$line"
+            fi
+            n=$((n + 1))
+        done
+        [ -n "$buf" ] && log -t nomount -p i "$buf"
+        log -t nomount -p i "rules dump end (total $n rules)"
+    }
 }

@@ -11,7 +11,7 @@ if [ -f "$BOOT_SEMAPHORE" ]; then
 fi
 
 if [ -f "$DUMP_RULES_FLAG" ]; then
-    dump_all_rules_logcat || true
+    dump_all_rules_logcat "on boot" || true
 fi
 
 exit 0

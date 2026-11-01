@@ -1150,6 +1150,11 @@ async function addExclusion(uid, label, pkg) {
 }
 
 // Options
+const setDumpNowVisible = on => {
+    const btn = document.getElementById('btn-dump-now');
+    if (btn) btn.style.display = on ? '' : 'none';
+};
+
 let optionsInitialized = false;
 async function loadOptions() {
     if (!optionsInitialized) initOptionsUI();
@@ -1162,8 +1167,10 @@ async function loadOptions() {
     if (swSafe)
         swSafe.checked = (await exec(`[ -f ${FILES.disable} ] && echo yes`)).stdout.includes('yes');
 
-    if (swDumpRules)
+    if (swDumpRules) {
         swDumpRules.checked = (await exec(`[ -f ${FILES.dump_rules} ] && echo yes`)).stdout.includes('yes');
+        setDumpNowVisible(swDumpRules.checked);
+    }
 
     if (swIso && swIsoCard) {
         const safeModeCard = document.getElementById('setting-safemode').closest('.segment-card');
@@ -1350,6 +1357,7 @@ function initOptionsUI() {
     const swDumpRules = document.querySelector('#setting-dumprule input');
     const swIso = document.querySelector('#setting-isolated input');
     const swIsoCard = document.getElementById('setting-isolated-card');
+    const btnDumpNow = document.getElementById('btn-dump-now');
     const btnClearRules = document.getElementById('btn-clear-rules-only');
     const btnClearUids = document.getElementById('btn-clear-uids-only');
     const btnClearAll = document.getElementById('btn-clear-all');
@@ -1358,7 +1366,23 @@ function initOptionsUI() {
         swSafe.onchange = e => exec(e.target.checked ? `touch ${FILES.disable}` : `rm ${FILES.disable}`);
 
     if (swDumpRules)
-        swDumpRules.onchange = e => exec(e.target.checked ? `touch ${FILES.dump_rules}` : `rm ${FILES.dump_rules}`);
+        swDumpRules.onchange = async e => {
+            const on = e.target.checked;
+            await exec(on ? `touch ${FILES.dump_rules}` : `rm ${FILES.dump_rules}`);
+            setDumpNowVisible(on);
+        };
+
+    if (btnDumpNow) {
+        btnDumpNow.onclick = async () => {
+            btnDumpNow.disabled = true;
+            try {
+                const r = await exec(`sh ${MOD_DIR}/nomount/dump_rules.sh by webui`);
+                if (r.errno !== 0) throw new Error(r.stderr || 'dump failed');
+                showToast(translate('dump_done'));
+            } catch { showToast(translate('dump_failed')); }
+            btnDumpNow.disabled = false;
+        };
+    }
 
     if (swIso && swIsoCard) {
         swIso.onchange = async (e) => {
