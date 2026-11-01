@@ -1155,7 +1155,7 @@ async function loadOptions() {
     if (!optionsInitialized) initOptionsUI();
 
     const swSafe = document.querySelector('#setting-safemode input');
-    const swDumpRules = document.querySelector('#settings-dumprule input');
+    const swDumpRules = document.querySelector('#setting-dumprule input');
     const swIso = document.querySelector('#setting-isolated input');
     const swIsoCard = document.getElementById('setting-isolated-card');
 
@@ -1347,7 +1347,7 @@ function initOptionsUI() {
     }
 
     const swSafe = document.querySelector('#setting-safemode input');
-    const swDumpRules = document.querySelector('#settings-dumprule input');
+    const swDumpRules = document.querySelector('#setting-dumprule input');
     const swIso = document.querySelector('#setting-isolated input');
     const swIsoCard = document.getElementById('setting-isolated-card');
     const btnClearRules = document.getElementById('btn-clear-rules-only');
