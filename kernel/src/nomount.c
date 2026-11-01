@@ -1025,14 +1025,12 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
         nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
         if (!sb_rdonly(sb) && !nm_is_pseudo_fs(sb))
             nm_sop->fake_sop.sync_fs = nm_shutdown_sync_fs;
-        list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
-        smp_store_release(&sb->s_op, &nm_sop->fake_sop);
         if (!atomic_inc_not_zero(&sb->s_active)) {
-            smp_store_release(&sb->s_op, nm_sop->orig_sop);
-            list_del_rcu(&nm_sop->list);
             kfree(nm_sop);
             return -ENODEV;
         }
+        list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
+        smp_store_release(&sb->s_op, &nm_sop->fake_sop);
         nm_debug("Superblock successfully hijacked for dev: 0x%x\n", sb->s_dev);
     } else if (!with_xattr || nm_sop->fake_xattr) {
         return 0;
@@ -1353,10 +1351,9 @@ static int nm_prepare_rule(const char *r_path, u16 r_len, u32 flags, unsigned in
     out->deny_end = deny_end;
     if (backed) {
         int err = kern_path(r_path, LOOKUP_FOLLOW, &out->r_path);
-        if (err) { memset(out, 0, sizeof(*out)); return err; }
+        if (err) return err;
         if ((err = nm_hijack_superblock(out->r_path.dentry->d_sb, false))) {
             path_put(&out->r_path);
-            memset(out, 0, sizeof(*out));
             return err;
         }
         struct inode *inode = d_backing_inode(out->r_path.dentry);
@@ -1367,7 +1364,6 @@ static int nm_prepare_rule(const char *r_path, u16 r_len, u32 flags, unsigned in
                 if (r_path[i] == '/') { off = i; break; }
             if (off < 0 || off + 1 == r_len) {
                 path_put(&out->r_path);
-                memset(out, 0, sizeof(*out));
                 return -EINVAL;
             }
             out->r_name_len = (u16)(r_len - off - 1);
@@ -1853,14 +1849,11 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
     for (int i = 0, j = 0; i < old->count; i++) {
         if (!stub_virtual && i == pos) { old_h += old->rules[i].r_len; continue; }
         if (stub_virtual && i == pos) {
-            memset(&array->rules[j], 0, sizeof(struct nm_rule));
-            array->rules[j].r_path = (struct path){ .mnt = NULL, .dentry = NULL };
-            array->rules[j].target_uid = uid;
-            array->rules[j].uid_end = uid_end;
-            array->rules[j].deny_start = 0;
-            array->rules[j].deny_end = 0;
-            array->rules[j].r_len = 0;
-            array->rules[j].flags = NM_FLAG_IS_DIR | NM_FLAG_VIRTUAL_DIR;
+            array->rules[j] = (struct nm_rule){
+                .target_uid = uid,
+                .uid_end = uid_end,
+                .flags = NM_FLAG_IS_DIR | NM_FLAG_VIRTUAL_DIR,
+            };
             j++; old_h += old->rules[i].r_len;
             continue;
         }
