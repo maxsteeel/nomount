@@ -107,11 +107,14 @@ struct nm_dir_node {
 
 struct nm_rule {
     struct path r_path;
+    struct dentry *r_parent;
+    const char *r_name;
     unsigned int target_uid;
     unsigned int uid_end;
     unsigned int deny_start;
     unsigned int deny_end;
     u16 r_len;
+    u16 r_name_len;
     u16 flags;
 };
 
@@ -141,6 +144,9 @@ struct nm_rule_info {
     unsigned long v_ino;
     struct path r_path;
     struct nm_dir_node *this_dir;
+    struct dentry *saved_parent;
+    char *r_name;
+    u16 r_name_len;
 };
 
 struct nm_uid_array {
