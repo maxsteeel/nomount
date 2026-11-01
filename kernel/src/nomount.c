@@ -1491,8 +1491,7 @@ static void nm_shutdown_release(void)
     if (READ_ONCE(nm_shutdown_released)) return;
     WRITE_ONCE(nm_shutdown_released, true);
     nm_clear_state(NM_CLEAR_UIDS | NM_CLEAR_RULES);
-    cancel_work_sync(&nm_reclaim_work);
-    nm_reclaim(NULL);
+    flush_work(&nm_reclaim_work);
 }
 
 static void nm_retire_array_locked(struct nm_rule_array *arr)
