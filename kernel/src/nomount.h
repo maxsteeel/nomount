@@ -378,6 +378,11 @@ struct nm_del_hdr {
     #define FLAGS_VAL /* Nothing */
 #endif
 
+#ifndef for_each_alias
+#define for_each_alias(dentry, inode) \
+    hlist_for_each_entry(dentry, &(inode)->i_dentry, d_u.d_alias)
+#endif
+
 #ifndef DCACHE_DONTCACHE
 # define DCACHE_DONTCACHE 0
 #endif

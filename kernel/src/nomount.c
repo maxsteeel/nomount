@@ -165,7 +165,11 @@ static int nm_rebind_path(struct path *path, struct dentry *saved_parent, const 
         return 0;
     }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
+    new = lookup_one_unlocked(&nop_mnt_idmap, &(struct qstr)QSTR_INIT(name, namelen), saved_parent);
+#else
     new = lookup_one_len_unlocked(name, saved_parent, namelen);
+#endif
     if (IS_ERR(new) || !d_is_positive(new) || d_is_symlink(new) || new->d_sb != old->d_sb ||
         (d_backing_inode(new) && nm_inode_is_virtual(d_backing_inode(new)))) {
         if (!IS_ERR(new)) dput(new);
@@ -1221,7 +1225,7 @@ static void nm_clear_dops_sb(struct super_block *sb)
     spin_lock(&sb->s_inode_list_lock);
     list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
         spin_lock(&inode->i_lock);
-        hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
+        for_each_alias(dentry, inode) {
             if (dentry->d_op && dentry->d_op->d_revalidate == nm_d_revalidate) {
                 spin_lock(&dentry->d_lock);
                 dentry->d_op = NULL;
