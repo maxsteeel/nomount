@@ -84,11 +84,11 @@ let cachedI18nNodes = null;
 async function setAppLocale(locale, refreshView = true) {
     activeLocale = locale in LOCALE_NAMES ? locale : 'en';
 
-    if (!translationsCache[activeLocale]) {
+    for (const loc of ['en', activeLocale]) if (!translationsCache[loc]) {
         try {
-            const response = await fetch(`./locales/${activeLocale}.json`);
-            translationsCache[activeLocale] = response.ok ? await response.json() : {};
-        } catch { translationsCache[activeLocale] = {}; }
+            const response = await fetch(`./locales/${loc}.json`);
+            translationsCache[loc] = response.ok ? await response.json() : {};
+        } catch { translationsCache[loc] = {}; }
     }
 
     translations = translationsCache[activeLocale];
@@ -98,9 +98,11 @@ async function setAppLocale(locale, refreshView = true) {
     if (!cachedI18nNodes) cachedI18nNodes = document.querySelectorAll('[data-i18n]');
 
     cachedI18nNodes.forEach(el => {
+        // if key even missing from en, keep the text hardcoded in the HTML instead of raw key
+        if (!(el.dataset.i18n in translations)) return;
         const text = translate(el.dataset.i18n);
         const targetAttr = el.dataset.i18nAttr;
-        
+
         if (targetAttr) el.setAttribute(targetAttr, text);
         else if ('placeholder' in el) el.placeholder = text;
         else el.textContent = text;
