@@ -370,6 +370,10 @@ struct nm_del_hdr {
     #define nm_inode_is_new(inode) (inode->i_state & I_NEW)
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
+#define sb_rdonly(sb) ((sb)->s_flags & MS_RDONLY)
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 12, 0) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
     #define FLAGS_ARG , int flags
     #define FLAGS_VAL , flags
