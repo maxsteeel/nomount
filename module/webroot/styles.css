@@ -348,6 +348,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 .custom-select-wrapper.open .dropdown-arrow { transform: rotate(180deg); color: var(--md-sys-color-primary); }
 .custom-select-menu {
     position: absolute; top: calc(100% + 4px); inset-inline-end: 0;
+    width: max-content; min-width: 100%; max-width: calc(100vw - 32px);
     background-color: var(--md-sys-color-surface-container); border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
     opacity: 0; visibility: hidden; transform: translate3d(0, -10px, 0);
@@ -365,15 +366,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
     background-color: var(--md-sys-color-secondary-container);
     color: var(--md-sys-color-on-secondary-container);
 }
-#lang-setting-card { position: relative; z-index: 1000; }
-#lang-select-wrapper .custom-select-menu {
-    top: auto; 
-    bottom: calc(100% + 4px);
-    transform: translate3d(0, 10px, 0);
-}
-#lang-select-wrapper.open .custom-select-menu {
-    transform: translate3d(0, 0, 0);
-}
+#lang-setting-card { position: relative; z-index: 1002; }
 
 .empty-state {
     flex: 1 1 auto; width: 100%; min-height: 46vh; gap: 14px; text-align: center;
