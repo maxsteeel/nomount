@@ -1077,6 +1077,12 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
             nm_sop->fake_sop.sync_fs = nm_shutdown_sync_fs;
         list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
         smp_store_release(&sb->s_op, &nm_sop->fake_sop);
+        if (!atomic_inc_not_zero(&sb->s_active)) {
+            smp_store_release(&sb->s_op, nm_sop->orig_sop);
+            list_del_rcu(&nm_sop->list);
+            kfree(nm_sop);
+            return -ENODEV;
+        }
         nm_debug("Superblock successfully hijacked for dev: 0x%x\n", sb->s_dev);
     } else if (!with_xattr || nm_sop->fake_xattr) {
         return 0;
@@ -1253,6 +1259,7 @@ static void nm_restore_superblocks(void)
                 kfree(nm_sop->fake_xattr); 
             }
             nm_debug("Successfully cured superblock for dev: 0x%x\n", nm_sop->sb->s_dev);
+            deactivate_super(nm_sop->sb);
         }
         list_del_rcu(&nm_sop->list);
         kfree_rcu(nm_sop, rcu);
