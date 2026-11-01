@@ -117,6 +117,23 @@ static bool nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct 
     return true;
 }
 
+static bool nm_path_unchanged(struct dentry *d, const struct dentry *saved_parent,
+                              const char *name, u16 namelen)
+{
+    bool unchanged;
+    unsigned seq;
+
+    rcu_read_lock();
+    do {
+        seq = raw_seqcount_begin(&d->d_seq);
+        unchanged = !d_unlinked(d) && d->d_parent == saved_parent &&
+                    d->d_name.len == namelen && !memcmp(d->d_name.name, name, namelen);
+    } while (read_seqcount_retry(&d->d_seq, seq));
+    rcu_read_unlock();
+
+    return unchanged;
+}
+
 static int nm_rebind_path(struct path *path, struct dentry *saved_parent, const char *name, u16 namelen)
 {
     struct dentry *new, *old = dget(path->dentry);
@@ -126,8 +143,7 @@ static int nm_rebind_path(struct path *path, struct dentry *saved_parent, const 
         return -ENOENT;
     }
 
-    if (!d_unlinked(old) && old->d_parent == saved_parent && old->d_name.len == namelen &&
-        !memcmp(old->d_name.name, name, namelen)) {
+    if (nm_path_unchanged(old, saved_parent, name, namelen)) {
         dput(old);
         return 0;
     }
@@ -319,6 +335,7 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
 {
     struct nm_inode_info probe = {0}, *info = NULL;
     struct inode *inode;
+    struct name_snapshot snap;
     struct dentry *res = ERR_PTR(-ENODATA);
 
     if (rule_info->flags & NM_FLAG_WHITEOUT) {
@@ -350,12 +367,15 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
 
     if (!(info = kmalloc(sizeof(*info), GFP_KERNEL))) goto out;
     info->r_path = rule_info->r_path;
-    info->saved_parent = dget(info->r_path.dentry->d_parent);
-    info->r_name_len = info->r_path.dentry->d_name.len;
-    if ((info->r_name = kmalloc(info->r_name_len + 1, GFP_KERNEL))) {
-        memcpy(info->r_name, info->r_path.dentry->d_name.name, info->r_name_len);
+    info->saved_parent = dget_parent(info->r_path.dentry);
+    take_dentry_name_snapshot(&snap, info->r_path.dentry);
+    info->r_name_len = snap.name.len;
+    info->r_name = kmalloc(info->r_name_len + 1, GFP_KERNEL);
+    if (info->r_name) {
+        memcpy(info->r_name, snap.name.name, info->r_name_len);
         info->r_name[info->r_name_len] = 0;
     }
+    release_dentry_name_snapshot(&snap);
     info->dir_node = NULL;
     info->opaque = false;
     if (!(inode = new_inode(dir->i_sb))) goto out;
@@ -508,8 +528,8 @@ static int nm_open(struct inode *inode, struct file *file)
         return 0;
     }
 
-    if (unlikely(!info->dir_node && (!info->r_name || d_unlinked(d) || d->d_parent != info->saved_parent ||
-          d->d_name.len != info->r_name_len || memcmp(d->d_name.name, info->r_name, info->r_name_len)))) {
+    if (unlikely(!info->dir_node &&
+          (!info->r_name || !nm_path_unchanged(d, info->saved_parent, info->r_name, info->r_name_len)))) {
         int err = nm_rebind_path(&info->r_path, info->saved_parent, info->r_name, info->r_name_len);
         if (err) return err;
     }
@@ -657,8 +677,8 @@ static int nm_getattr(IDMAP_ARG const struct path *path, struct kstat *stat, u32
 #endif
     else {
         struct dentry *d = info->r_path.dentry;
-        if (unlikely(!info->dir_node && (!info->r_name || d_unlinked(d) || d->d_parent != info->saved_parent ||
-              d->d_name.len != info->r_name_len || memcmp(d->d_name.name, info->r_name, info->r_name_len)))) {
+        if (unlikely(!info->dir_node &&
+              (!info->r_name || !nm_path_unchanged(d, info->saved_parent, info->r_name, info->r_name_len)))) {
             int err = nm_rebind_path(&info->r_path, info->saved_parent, info->r_name, info->r_name_len);
             if (err) return err;
         }
