@@ -28,13 +28,6 @@ fi
 mv "$MODPATH/bin/nm-$ARCH_BIN" "$MODPATH/bin/nm"
 set_perm "$MODPATH/bin/nm" 0 0 0755
 
-mkdir -p "/data/adb/$ROOT_IMP/bin"
-if ln -sf "/data/adb/modules/nomount/bin/nm" "/data/adb/$ROOT_IMP/bin/nm"; then
-  ui_print "- Symlink created."
-else
-  ui_print "! Failed to create 'nm' symlink, skipping.."
-fi
-
 mv "$MODPATH/bin/lkmloader-$ARCH_BIN" "$MODPATH/lkm/lkmloader"
 set_perm "$MODPATH/lkm/lkmloader" 0 0 0755
 rm -rf "$MODPATH"/bin/nm-* "$MODPATH"/bin/lkmloader-*
@@ -234,5 +227,12 @@ fi
 NOMOUNT_DATA="/data/adb/nomount"
 mkdir -p "$NOMOUNT_DATA"
 rm -f "$NOMOUNT_DATA/.booting"
+
+mkdir -p "/data/adb/$ROOT_IMP/bin"
+if ln -sf "/data/adb/modules/nomount/bin/nm" "/data/adb/$ROOT_IMP/bin/nm"; then
+  ui_print "- Symlink created."
+else
+  ui_print "! Failed to create 'nm' symlink, skipping.."
+fi
 
 ui_print "- Installation complete."
