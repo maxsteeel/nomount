@@ -881,7 +881,7 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
     struct inode *inode = READ_ONCE(dentry->d_inode);
     struct nm_dir_ops *iop = NULL;
     struct nm_rule *rule;
-    bool has_rule = false, whiteout = false, match_rule = false;
+    bool has_rule = false, whiteout = false, match_rule = false, uid_blocked = false;
     uid_t fsuid;
 
     if (unlikely(!parent_inode)) return 1;
@@ -897,7 +897,7 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
 
     struct nm_leaf *leaf = (parent_dir && rcu_access_pointer(parent_dir->children))
                             ? nm_find_leaf_in_dir(parent_dir, name->name, name->len) : NULL;
-    if (leaf && !nm_is_uid_blocked((fsuid = current_fsuid().val)) && (rule = nm_select_rule(leaf, fsuid))) {
+    if (leaf && !(uid_blocked = nm_is_uid_blocked((fsuid = current_fsuid().val))) && (rule = nm_select_rule(leaf, fsuid))) {
         has_rule = true;
         if (rule->flags & NM_FLAG_WHITEOUT)
             whiteout = true;
@@ -914,7 +914,7 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
 
     if (whiteout) return weak ? (inode ? -ESTALE : 0) : !inode;
     if (match_rule) return 1;
-    if (has_rule || nm_is_our_dops(iop, READ_ONCE(dentry->d_op)) || (inode && nm_inode_is_virtual(inode))) {
+    if (has_rule || (!uid_blocked && nm_is_our_dops(iop, READ_ONCE(dentry->d_op))) || (inode && nm_inode_is_virtual(inode))) {
         if (flags & LOOKUP_RCU) return -ECHILD;
         d_drop(dentry);
         return weak ? -ESTALE : 0;
