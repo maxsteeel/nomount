@@ -776,24 +776,25 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     struct nm_dir_node *dn;
     struct inode *r_dir;
     struct dentry *res;
-    uid_t fsuid = current_fsuid().val;
     int found = 0;
-    bool has_leaf = false;
+    uid_t fsuid;
+    bool uid_blocked, has_leaf = false;
 
-    if (unlikely(!info || nm_is_uid_blocked(fsuid)))
+    if (unlikely(!info))
         goto negative_dentry;
 
+    uid_blocked = nm_is_uid_blocked((fsuid = current_fsuid().val));
     rcu_read_lock();
     if (likely((dn = READ_ONCE(info->dir_node)) && rcu_access_pointer(dn->children))) {
         struct nm_leaf *leaf = nm_find_leaf_in_dir(dn, dentry->d_name.name, dentry->d_name.len);
         has_leaf = leaf != NULL;
-        if (leaf) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
+        if (leaf && !uid_blocked) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
     }
     rcu_read_unlock();
     if (found < 0) return ERR_PTR(found);
     if (found) return nm_materialize_rule(dir, dentry, &rule_info);
 
-    if (info->opaque)
+    if (info->opaque && !uid_blocked)
         goto negative_dentry;
 
     if (!info->r_path.dentry || !(r_dir = d_backing_inode(info->r_path.dentry)))
