@@ -1366,12 +1366,12 @@ static int nm_prepare_rule(const char *r_path, u16 r_len, u32 flags, unsigned in
                 seq = raw_seqcount_begin(&dentry->d_seq);
                 out->r_parent = dget_parent(dentry);
                 take_dentry_name_snapshot(name, dentry);
+                out->r_name_len = dentry->d_name.len;
                 if (!read_seqcount_retry(&dentry->d_seq, seq)) break;
                 dput(out->r_parent);
                 release_dentry_name_snapshot(name);
             }
-            out->r_name = name->name.name;
-            out->r_name_len = name->name.len;
+            out->r_name = name->name;
         }
     }
     return 0;
