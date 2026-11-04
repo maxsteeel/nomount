@@ -192,7 +192,6 @@ static const struct inode_operations nm_file_iops;
 static const struct file_operations nm_dir_fops;
 static const struct inode_operations nm_dir_iops;
 static const struct dentry_operations nm_dops;
-static const struct dentry_operations nm_owned_dops;
 
 /*** forward declarations ***/
 static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags);
