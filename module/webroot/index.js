@@ -798,46 +798,57 @@ async function loadModules() {
 async function loadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
     const script = `
-        cd "${modPath}" || exit 1
+        cd "${modPath}" || { echo "nm_load_status=1" >&2; exit 0; }
         valid_dirs=""
         for p in ${TARGET_PARTITIONS}; do [ -d "$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && valid_dirs="$valid_dirs $p"; done
-        [ -z "$valid_dirs" ] && exit 0
-        set -o pipefail
+        [ -z "$valid_dirs" ] && { echo "nm_load_status=0" >&2; exit 0; }
         status=0
 
-        find -L $valid_dirs \\( -type d -o -type c -o -name ".replace" -o -name ".remove" \\) \
-            -exec sh "${RULE_PATHS}" path "${modPath}" {} + 2>/dev/null \
-            | xargs -0 -r -n 200 ${NM_BIN} rule add --whiteout || status=1
+        find -L $valid_dirs '(' -type d -o -type c -o -name ".replace" -o -name ".remove" ')' \\
+            -exec sh "${RULE_PATHS}" path "${modPath}" {} + 2>/dev/null \\
+            | xargs -0 -r -n 200 ${NM_BIN} rule add --whiteout
+        st=$?; [ "$st" -ne 0 ] && status=$st
 
-        find -L $valid_dirs \\( -type d -o -name ".replace" \\) \
-            -exec sh "${RULE_PATHS}" opaque "${modPath}" {} + 2>/dev/null \
-            | xargs -0 -r -n 200 ${NM_BIN} rule add --opaque || status=1
+        find -L $valid_dirs '(' -type d -o -name ".replace" ')' \\
+            -exec sh "${RULE_PATHS}" opaque "${modPath}" {} + 2>/dev/null \\
+            | xargs -0 -r -n 200 ${NM_BIN} rule add --opaque
+        st=$?; [ "$st" -ne 0 ] && status=$st
 
-        find -L $valid_dirs \\( -type f -o -type l \\) ! -name ".replace" ! -name ".remove" \
-            -exec sh "${RULE_PATHS}" pair "${modPath}" {} + 2>/dev/null \
-            | xargs -0 -r -n 200 ${NM_BIN} rule add || status=1
-        exit "$status"
+        find -L $valid_dirs '(' -type f -o -type l ')' ! -name ".replace" ! -name ".remove" \\
+            -exec sh "${RULE_PATHS}" pair "${modPath}" {} + 2>/dev/null \\
+            | xargs -0 -r -n 200 ${NM_BIN} rule add
+        st=$?; [ "$st" -ne 0 ] && status=$st
+
+        echo "nm_load_status=$status" >&2
     `;
+
     const result = await exec(script);
-    if (result.errno !== 0) throw new Error(result.stderr || 'Failed to load module');
+    const m = (result.stderr || '').match(/nm_load_status=(\d+)/);
+    if (!m) throw new Error('load script did not report status');
+    if (parseInt(m[1], 10) !== 0) throw new Error(result.stderr || `load failed (status ${m[1]})`);
 }
 
 async function unloadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
     const script = `
-        cd "${modPath}" || exit 1
+        cd "${modPath}" || { echo "nm_unload_status=1" >&2; exit 0; }
         valid_dirs=""
         for p in ${TARGET_PARTITIONS}; do [ -d "$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && valid_dirs="$valid_dirs $p"; done
-        [ -z "$valid_dirs" ] && exit 0
-        set -o pipefail
+        [ -z "$valid_dirs" ] && { echo "nm_unload_status=0" >&2; exit 0; }
         status=0
-        find -L $valid_dirs \\( -type f -o -type l -o -type c -o -type d \\) \
-            -exec sh "${RULE_PATHS}" del "${modPath}" {} + 2>/dev/null \
-            | xargs -0 -r -n 200 ${NM_BIN} rule del || status=1
-        exit "$status"
+
+        find -L $valid_dirs '(' -type f -o -type l -o -type c -o -type d ')' \\
+            -exec sh "${RULE_PATHS}" del "${modPath}" {} + 2>/dev/null \\
+            | xargs -0 -r -n 200 ${NM_BIN} rule del
+        st=$?; [ "$st" -ne 0 ] && status=$st
+
+        echo "nm_unload_status=$status" >&2
     `;
+
     const result = await exec(script);
-    if (result.errno !== 0) throw new Error(result.stderr || 'Failed to unload module');
+    const m = (result.stderr || '').match(/nm_unload_status=(\d+)/);
+    if (!m) throw new Error('unload script did not report status');
+    if (parseInt(m[1], 10) !== 0) throw new Error(result.stderr || `unload failed (status ${m[1]})`);
 }
 
 // Apps & Exclusions
