@@ -542,6 +542,34 @@ do_real_unlink:
     return -EPERM;
 }
 
+static int nm_hijacked_rename(IDMAP_ARG struct inode *old_dir, struct dentry *old_dentry,
+                               struct inode *new_dir, struct dentry *new_dentry, unsigned int flags)
+{
+    struct inode *old_inode = d_inode(old_dentry);
+    struct inode *new_inode = d_inode(new_dentry);
+    struct nm_dir_ops *iop;
+
+    if ((old_inode && nm_inode_is_virtual(old_inode)) || (new_inode && nm_inode_is_virtual(new_inode)))
+        return -EPERM;
+
+    iop = nm_get_nm_iop(smp_load_acquire(&old_dir->i_op));
+    if (iop && iop->orig_iop && iop->orig_iop->rename)
+        return iop->orig_iop->rename(IDMAP_CALL old_dir, old_dentry, new_dir, new_dentry, flags);
+    return -EPERM;
+}
+
+static int nm_hijacked_rmdir(struct inode *dir, struct dentry *dentry)
+{
+    struct inode *inode = d_inode(dentry);
+    struct nm_dir_ops *iop;
+    if (inode && nm_inode_is_virtual(inode))
+        return -EPERM;
+    iop = nm_get_nm_iop(smp_load_acquire(&dir->i_op));
+    if (iop && iop->orig_iop && iop->orig_iop->rmdir)
+        return iop->orig_iop->rmdir(dir, dentry);
+    return -EPERM;
+}
+
 static int nm_hijacked_drop_inode(struct inode *inode)
 {
     struct nm_sop *nm_sop;
@@ -953,6 +981,8 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
     uid_t fsuid;
 
     if (unlikely(!parent_inode)) return 1;
+    if ((flags & LOOKUP_RENAME_TARGET) && inode && nm_inode_is_virtual(inode))
+        return (flags & LOOKUP_RCU) ? -ECHILD : -EPERM;
 
     rcu_read_lock();
     const struct inode_operations *parent_iop = rcu_dereference(parent_inode->i_op);
@@ -1155,6 +1185,8 @@ static inline int nm_hijack_dir_ops(struct nm_dir_node *dir_node, struct inode *
         ops->fake_iop = *iop;
         ops->fake_iop.lookup = nm_hijacked_lookup;
         ops->fake_iop.unlink = nm_hijacked_unlink;
+        ops->fake_iop.rename = nm_hijacked_rename;
+        ops->fake_iop.rmdir  = nm_hijacked_rmdir;
     }
     if (fop) {
         ops->fake_fop = *fop;
