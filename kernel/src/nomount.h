@@ -200,6 +200,7 @@ static void nm_hijacked_evict_inode(struct inode *inode);
 static void nm_hijack_dentry_ops(struct inode *dir, struct dentry *dentry, bool injected);
 static void nm_dir_put(struct nm_dir_node *dir_node);
 static void nm_shutdown_release(void);
+static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid, unsigned int uid_end, unsigned int deny_start, unsigned int deny_end);
 static void nm_clear_state(int clear_flags);
 
 /* =====================================================================

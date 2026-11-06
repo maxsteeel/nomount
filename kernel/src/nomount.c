@@ -499,6 +499,49 @@ do_real_iterate:
     return -ENOTDIR;
 }
 
+static int nm_hijacked_unlink(struct inode *dir, struct dentry *dentry)
+{
+    struct nm_dir_ops *nm_iop;
+    struct nm_dir_node *dir_node;
+    struct nm_leaf *leaf;
+    struct nm_rule *rule;
+    struct inode *inode = d_inode(dentry);
+    uid_t fsuid = current_fsuid().val;
+    int ret;
+
+    if (unlikely(!inode))
+        return -ENOENT;
+
+    if (unlikely(!(nm_iop = nm_get_nm_iop(smp_load_acquire(&dir->i_op))) || nm_is_uid_blocked(fsuid)))
+        goto do_real_unlink;
+
+    mutex_lock(&nm_mutex);
+    dir_node = rcu_dereference_protected(nm_iop->dir_node, lockdep_is_held(&nm_mutex));
+    if (unlikely(!dir_node || !rcu_access_pointer(dir_node->children))) {
+        mutex_unlock(&nm_mutex);
+        goto do_real_unlink;
+    }
+    leaf = nm_find_leaf_in_dir(dir_node, dentry->d_name.name, dentry->d_name.len);
+    if (unlikely(!leaf || !(rule = nm_select_rule(leaf, fsuid)))) {
+        mutex_unlock(&nm_mutex);
+        goto do_real_unlink;
+    }
+
+    ret = nm_del_rule_locked(leaf->paths, leaf->v_len, rule->target_uid, rule->uid_end, rule->deny_start, rule->deny_end);
+    mutex_unlock(&nm_mutex);
+    if (ret)
+        return ret;
+
+    d_drop(dentry);
+    return 0;
+
+do_real_unlink:
+    if (inode && nm_inode_is_virtual(inode)) return -ENOENT;
+    if (nm_iop && nm_iop->orig_iop && nm_iop->orig_iop->unlink)
+        return nm_iop->orig_iop->unlink(dir, dentry);
+    return -EPERM;
+}
+
 static int nm_hijacked_drop_inode(struct inode *inode)
 {
     struct nm_sop *nm_sop;
@@ -1111,6 +1154,7 @@ static inline int nm_hijack_dir_ops(struct nm_dir_node *dir_node, struct inode *
     if (iop) {
         ops->fake_iop = *iop;
         ops->fake_iop.lookup = nm_hijacked_lookup;
+        ops->fake_iop.unlink = nm_hijacked_unlink;
     }
     if (fop) {
         ops->fake_fop = *fop;
