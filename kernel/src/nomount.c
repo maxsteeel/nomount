@@ -555,7 +555,8 @@ static loff_t nm_llseek(struct file *file, loff_t offset, int whence)
     case SEEK_END: pos = i_size_read(file_inode(real_file)) + offset; break;
     case SEEK_DATA:
     case SEEK_HOLE:
-        return vfs_llseek(real_file, offset, whence);
+        if ((pos = vfs_llseek(real_file, offset, whence)) < 0) return pos;
+        break;
     default: return -EINVAL;
     }
     if (pos < 0) return -EINVAL;
