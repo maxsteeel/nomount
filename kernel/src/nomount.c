@@ -182,6 +182,7 @@ static inline void nm_destroy_virtual_inode(struct inode *inode)
     WRITE_ONCE(inode->i_private, NULL);
     smp_wmb();
 
+    if (info->r_file) fput(info->r_file);
     nm_dir_put(info->dir_node);
     if (info->r_path.dentry) path_put(&info->r_path);
     kfree_rcu(info, rcu);
@@ -298,7 +299,14 @@ static void nm_init_prealloc_inode(struct inode *inode, struct nm_inode_info *in
     else
         inode->i_fop = &nm_dir_fops;
 
-    if (r_inode) nm_sync_inode_times(inode, r_inode), inode->i_mapping = r_inode->i_mapping;
+    if (r_inode) {
+        if (S_ISREG(r_inode->i_mode) && r_inode->i_fop && r_inode->i_fop->read_iter) {
+            struct file *rf = dentry_open(&info->r_path, O_RDONLY | O_NONBLOCK, current_cred());
+            if (!IS_ERR(rf)) info->r_file = rf;
+        }
+        nm_sync_inode_times(inode, r_inode);
+        inode->i_mapping = r_inode->i_mapping;
+    }
     inode->i_flags |= S_PRIVATE | S_NOATIME | S_NOCMTIME | S_NOSEC;
     if (!S_ISLNK(inode->i_mode)) inode->i_opflags |= IOP_NOFOLLOW;
 }
@@ -379,6 +387,7 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
     info->r_path = rule_info->r_path;
     info->dir_node = NULL;
     info->opaque = false;
+    info->r_file = NULL;
     if (!(inode = new_inode(dir->i_sb))) goto out;
     nm_init_prealloc_inode(inode, info, rule_info->v_ino);
     d_add(dentry, inode);
@@ -527,6 +536,14 @@ static int nm_open(struct inode *inode, struct file *file)
     if (unlikely(!info)) return -ENODEV;
     if (unlikely(!info->r_path.dentry)) {
         file->private_data = NULL;
+        return 0;
+    }
+
+    if (likely(info->r_file != NULL && (file->f_flags & O_ACCMODE) == O_RDONLY &&
+           uid_eq(current_fsuid(), info->r_file->f_cred->fsuid) &&
+           current_cred()->security == info->r_file->f_cred->security)) {
+        real_file = get_file(info->r_file);
+        file->private_data = real_file;
         return 0;
     }
 

@@ -76,6 +76,7 @@ struct nm_sop {
 struct nm_inode_info {
     struct path r_path;
     struct nm_dir_node *dir_node;
+    struct file *r_file;
     bool opaque;
     struct rcu_head rcu;
 };
