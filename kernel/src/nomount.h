@@ -220,18 +220,18 @@ static inline bool nm_is_virtual_pos(loff_t pos) {
     return (pos & 0xFFFFFFFF00000000ULL) == (NM_SIG_16 << 48);
 }
 
-static inline loff_t nm_pack_pos(int id) {
+static inline loff_t nm_pack_pos(u32 id) {
 #ifdef CONFIG_COMPAT
     if (in_compat_syscall()) return (NM_SIG_16 << 16) | (id & 0xFFFF);
 #endif
-    return (NM_SIG_16 << 48) | (id & 0xFFFFFFFF);
+    return (NM_SIG_16 << 48) | id;
 }
 
-static inline int nm_unpack_pos(loff_t pos) {
+static inline u32 nm_unpack_pos(loff_t pos) {
 #ifdef CONFIG_COMPAT
-    if (in_compat_syscall()) return (int)(pos & 0xFFFF);
+    if (in_compat_syscall()) return pos & 0xFFFF;
 #endif
-    return (int)(pos & 0xFFFFFFFF);
+    return (u32)pos;
 }
 
 /* --- UIDs Array RCU Management --- */

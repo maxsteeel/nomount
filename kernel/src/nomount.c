@@ -148,8 +148,7 @@ static int nm_rebind_path(struct nm_rule_info *rule_info)
     if (IS_ERR(new)) return PTR_ERR(new);
 
     new_inode = d_backing_inode(new);
-    if (!d_is_positive(new) || d_is_symlink(new) || d_is_dir(new) || new->d_sb != rule_info->r_path.dentry->d_sb ||
-        !new_inode || nm_inode_is_virtual(new_inode) || !old_inode || ((new_inode->i_mode ^ old_inode->i_mode) & S_IFMT)) {
+    if (!d_is_positive(new) || new->d_sb != rule_info->r_path.dentry->d_sb || !new_inode || nm_inode_is_virtual(new_inode) || ((new_inode->i_mode ^ old_inode->i_mode) & S_IFMT)) {
         dput(new);
         return -ENOENT;
     }
@@ -242,7 +241,7 @@ static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_d
 	if (!dir_node) return;
 	if (!nm_is_virtual_pos(ctx->pos)) ctx->pos = nm_pack_pos(0);
 
-	for (int id = nm_unpack_pos(ctx->pos); ; id++) {
+	for (u32 id = nm_unpack_pos(ctx->pos); ; id++) {
 		char name_buf[NAME_MAX + 1];
 		int name_len = 0;
 		unsigned long v_ino = 0;
@@ -251,7 +250,7 @@ static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_d
 
 		rcu_read_lock();
 		struct nm_child_array *array = rcu_dereference(dir_node->children);
-		if (array && id >= 0 && id < array->count) {
+		if (array && id < (u32)array->count) {
 			struct nm_leaf *leaf = nm_entries(array)[id].leaf;
 			struct nm_rule *rule = nm_select_rule(leaf, fsuid);
 			has_more = true;
