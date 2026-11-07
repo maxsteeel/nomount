@@ -512,10 +512,10 @@ static int nm_hijacked_unlink(struct inode *dir, struct dentry *dentry)
     if (unlikely(!inode))
         return -ENOENT;
 
-    if (unlikely(!(nm_iop = nm_get_nm_iop(smp_load_acquire(&dir->i_op))) || nm_is_uid_blocked(fsuid)))
+    if (unlikely(!(nm_iop = nm_get_nm_iop(smp_load_acquire(&dir->i_op))) || !nm_inode_is_virtual(inode) || nm_is_uid_blocked(fsuid)))
         goto do_real_unlink;
 
-    mutex_lock(&nm_mutex);
+    if (!mutex_trylock(&nm_mutex)) return -EBUSY;
     dir_node = rcu_dereference_protected(nm_iop->dir_node, lockdep_is_held(&nm_mutex));
     if (unlikely(!dir_node || !rcu_access_pointer(dir_node->children))) {
         mutex_unlock(&nm_mutex);
