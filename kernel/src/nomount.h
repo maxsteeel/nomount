@@ -502,6 +502,24 @@ static bool nm_is_pseudo_fs(struct super_block *sb)
     }
 }
 
+static bool nm_is_kernfs(struct super_block *sb)
+{
+    switch (sb->s_magic) {
+    case SYSFS_MAGIC:
+    case CGROUP_SUPER_MAGIC:
+#ifdef CGROUP2_SUPER_MAGIC
+    case CGROUP2_SUPER_MAGIC:
+#endif
+    case TRACEFS_MAGIC:
+    case SECURITYFS_MAGIC:
+    case BPF_FS_MAGIC:
+    case DEBUGFS_MAGIC:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool nm_dir_lookup_tolerates_cross_sb(struct super_block *sb)
 {
     switch (sb->s_magic) {

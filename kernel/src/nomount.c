@@ -1115,9 +1115,13 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
     if (!nm_sop) {
         if (!with_xattr && (sb_rdonly(sb) || nm_is_pseudo_fs(sb))) return 0;
         if (!(nm_sop = kzalloc(sizeof(*nm_sop), GFP_KERNEL))) return -ENOMEM;
-        nm_sop->fake_sop = *sb->s_op;
         nm_sop->orig_sop = sb->s_op;
         nm_sop->sb = sb;
+        if (with_xattr && nm_is_kernfs(sb)) {
+            list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
+            return 0;
+        }
+        nm_sop->fake_sop = *sb->s_op;
         if (with_xattr) {
             nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
             nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
@@ -1295,10 +1299,12 @@ static void nm_restore_superblocks(void)
             list_for_each_entry(inode, &nm_sop->sb->s_inodes, i_sb_list)
                 nm_destroy_hijacked_inode(inode);
             spin_unlock(&nm_sop->sb->s_inode_list_lock);
-            smp_store_release(&nm_sop->sb->s_op, nm_sop->orig_sop);
-            if (nm_sop->fake_xattr) {
-                smp_store_release((const struct xattr_handler ***)&nm_sop->sb->s_xattr, nm_sop->orig_xattr);
-                kfree(nm_sop->fake_xattr); 
+            if (READ_ONCE(nm_sop->sb->s_op) == &nm_sop->fake_sop) {
+                smp_store_release(&nm_sop->sb->s_op, nm_sop->orig_sop);
+                if (nm_sop->fake_xattr) {
+                    smp_store_release((const struct xattr_handler ***)&nm_sop->sb->s_xattr, nm_sop->orig_xattr);
+                    kfree(nm_sop->fake_xattr); 
+                }
             }
             nm_debug("Successfully cured superblock for dev: 0x%x\n", nm_sop->sb->s_dev);
         }
