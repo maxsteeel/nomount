@@ -347,9 +347,9 @@ static int nm_cached_inode_test(struct inode *inode, void *data)
 
 static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dentry, struct nm_rule_info *rule_info)
 {
-    struct nm_inode_info probe = {0}, *info = NULL;
+    struct nm_inode_info probe, *info = NULL;
     struct inode *inode;
-    struct dentry *res = ERR_PTR(-ENODATA);
+    struct dentry *res = ERR_PTR(rule_info->backing_child ? -ENOMEM : -ENODATA);
 
     if (rule_info->r_name) {
         int err = nm_rebind_path(rule_info);
@@ -360,10 +360,12 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
 
     if (rule_info->flags & NM_FLAG_WHITEOUT) goto negative_dentry;
 
+    probe = (struct nm_inode_info){
+        .r_path = rule_info->r_path, .dir_node = rule_info->this_dir,
+        .opaque = rule_info->this_dir && (rule_info->flags & NM_FLAG_OPAQUE),
+        .backing_child = rule_info->backing_child,
+    };
     if (rule_info->this_dir) {
-        probe.r_path = rule_info->r_path;
-        probe.dir_node = rule_info->this_dir;
-        probe.opaque = rule_info->flags & NM_FLAG_OPAQUE;
         inode = iget5_locked(dir->i_sb, (unsigned long)rule_info->this_dir, nm_cached_inode_test, nm_cached_inode_set, &probe);
         if (!inode) goto out;
 
@@ -381,15 +383,13 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
     }
 
     if (!(info = kmalloc(sizeof(*info), GFP_KERNEL))) goto out;
-    info->r_path = rule_info->r_path;
-    info->dir_node = NULL;
-    info->opaque = false;
-    info->r_file = NULL;
+    *info = probe;
     if (!(inode = new_inode(dir->i_sb))) goto out;
     nm_init_prealloc_inode(inode, info, rule_info->v_ino);
-    d_add(dentry, inode);
-    nm_hijack_dentry_ops(dir, dentry, true);
-    return NULL;
+    res = d_splice_alias(inode, dentry);
+    if (!IS_ERR(res))
+        nm_hijack_dentry_ops(dir, res ? res : dentry, true);
+    return res;
 
 negative_dentry:
     nm_hijack_dentry_ops(dir, dentry, true);
@@ -895,8 +895,6 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
         goto negative_dentry;
 
     if (r_dir->i_sb != dir->i_sb && !nm_dir_lookup_tolerates_cross_sb(r_dir->i_sb)) {
-        struct nm_inode_info *child_info;
-        struct inode *inode;
         struct dentry *backing;
 
         if (IS_ERR((backing = nm_lookup_one_len_unlocked(dentry->d_name.name, info->r_path.dentry, dentry->d_name.len))))
@@ -909,22 +907,14 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
             dput(backing);
             return ERR_PTR(-ELOOP);
         }
-        if (!(inode = new_inode(dir->i_sb)) || !(child_info = kmalloc(sizeof(*child_info), GFP_KERNEL))) {
-            iput(inode);
-            dput(backing);
-            return ERR_PTR(-ENOMEM);
-        }
-        memset(child_info, 0, sizeof(*child_info));
-        struct path tmp = { .mnt = info->r_path.mnt, .dentry = NULL };
-        path_get(&tmp);
-        child_info->r_path.mnt = tmp.mnt;
-        child_info->r_path.dentry = backing;
-        child_info->backing_child = true;
-        nm_init_prealloc_inode(inode, child_info, d_inode(backing)->i_ino);
-        res = d_splice_alias(inode, dentry);
-        if (!IS_ERR(res))
-            nm_hijack_dentry_ops(dir, res ? res : dentry, true);
-        return res;
+        rule_info = (struct nm_rule_info){
+            .r_path = { .mnt = info->r_path.mnt },
+            .v_ino = d_inode(backing)->i_ino,
+            .backing_child = true,
+        };
+        path_get(&rule_info.r_path);
+        rule_info.r_path.dentry = backing;
+        return nm_materialize_rule(dir, dentry, &rule_info);
     }
 
     if (r_dir->i_op->lookup) {
