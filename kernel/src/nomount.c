@@ -144,11 +144,8 @@ static int nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct n
 static int nm_rebind_path(struct nm_rule_info *rule_info)
 {
     struct dentry *new;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
-    new = lookup_one_unlocked(&nop_mnt_idmap, &(struct qstr)QSTR_INIT(rule_info->r_name, rule_info->r_name_len), rule_info->saved_parent);
-#else
-    new = lookup_one_len_unlocked(rule_info->r_name, rule_info->saved_parent, rule_info->r_name_len);
-#endif
+
+    new = nm_lookup_one_len_unlocked(rule_info->r_name, rule_info->saved_parent, rule_info->r_name_len);
     if (IS_ERR(new)) return PTR_ERR(new);
     if (!d_is_positive(new) || d_is_symlink(new) || new->d_sb != rule_info->r_path.dentry->d_sb || (d_backing_inode(new) && nm_inode_is_virtual(d_backing_inode(new)))) {
         dput(new);
@@ -896,6 +893,39 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     if (!info->r_path.dentry || !(r_dir = d_backing_inode(info->r_path.dentry)))
         goto negative_dentry;
 
+    if (r_dir->i_sb != dir->i_sb && !nm_dir_lookup_tolerates_cross_sb(r_dir->i_sb)) {
+        struct nm_inode_info *child_info;
+        struct inode *inode;
+        struct dentry *backing;
+
+        if (IS_ERR((backing = nm_lookup_one_len_unlocked(dentry->d_name.name, info->r_path.dentry, dentry->d_name.len))))
+            return backing;
+        if (d_is_negative(backing)) {
+            dput(backing);
+            goto negative_dentry;
+        }
+        if (nm_inode_is_virtual(d_inode(backing))) {
+            dput(backing);
+            return ERR_PTR(-ELOOP);
+        }
+        if (!(inode = new_inode(dir->i_sb)) || !(child_info = kmalloc(sizeof(*child_info), GFP_KERNEL))) {
+            iput(inode);
+            dput(backing);
+            return ERR_PTR(-ENOMEM);
+        }
+        memset(child_info, 0, sizeof(*child_info));
+        struct path tmp = { .mnt = info->r_path.mnt, .dentry = NULL };
+        path_get(&tmp);
+        child_info->r_path.mnt = tmp.mnt;
+        child_info->r_path.dentry = backing;
+        child_info->backing_child = true;
+        nm_init_prealloc_inode(inode, child_info, d_inode(backing)->i_ino);
+        res = d_splice_alias(inode, dentry);
+        if (!IS_ERR(res))
+            nm_hijack_dentry_ops(dir, res ? res : dentry, true);
+        return res;
+    }
+
     if (r_dir->i_op->lookup) {
         res = r_dir->i_op->lookup(r_dir, dentry, flags);
         if (!IS_ERR(res ? res : dentry) && has_leaf && !nm_is_pseudo_fs(r_dir->i_sb))
@@ -984,6 +1014,31 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
     if ((flags & LOOKUP_RENAME_TARGET) && inode && nm_inode_is_virtual(inode))
         return (flags & LOOKUP_RCU) ? -ECHILD : -EPERM;
 
+    if (inode && nm_inode_is_virtual(inode)) {
+        struct nm_inode_info *info = READ_ONCE(inode->i_private);
+        if (info && info->backing_child) {
+            struct nm_inode_info *pinfo;
+            struct dentry *backing, *backing_parent = NULL;;
+            bool valid;
+
+            if (flags & LOOKUP_RCU) return -ECHILD;
+            rcu_read_lock();
+            pinfo = READ_ONCE(parent_inode->i_private);
+            if (pinfo && pinfo->r_path.dentry)
+                backing_parent = dget(pinfo->r_path.dentry);
+            rcu_read_unlock();
+            if (!backing_parent)
+                return nm_drop_dentry(dentry, flags, weak);
+
+            backing = nm_lookup_one_len_unlocked(name->name, backing_parent, name->len);
+            dput(backing_parent);
+            if (IS_ERR(backing)) return PTR_ERR(backing);
+            valid = (backing == info->r_path.dentry && d_is_positive(backing) && d_inode(backing)->i_mode == inode->i_mode);
+            dput(backing);
+            return valid ? 1 : 0;
+        }
+    }
+
     rcu_read_lock();
     const struct inode_operations *parent_iop = rcu_dereference(parent_inode->i_op);
     if (parent_iop == &nm_dir_iops) {
@@ -1012,11 +1067,8 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
 
     if (whiteout) return weak ? (inode ? -ESTALE : 0) : !inode;
     if (match_rule) return 1;
-    if (has_rule || (!uid_blocked && nm_is_our_dops(iop, READ_ONCE(dentry->d_op))) || (inode && nm_inode_is_virtual(inode))) {
-        if (flags & LOOKUP_RCU) return -ECHILD;
-        d_drop(dentry);
-        return weak ? -ESTALE : 0;
-    }
+    if (has_rule || (!uid_blocked && nm_is_our_dops(iop, READ_ONCE(dentry->d_op))) || (inode && nm_inode_is_virtual(inode)))
+        return nm_drop_dentry(dentry, flags, weak);
     return nm_call_orig_revalidate(orig_dops, parent_inode, name, dentry, flags);
 }
 

@@ -78,6 +78,7 @@ struct nm_inode_info {
     struct nm_dir_node *dir_node;
     struct file *r_file;
     bool opaque;
+    bool backing_child;
     struct rcu_head rcu;
 };
 
@@ -380,6 +381,12 @@ struct nm_del_hdr {
     #define FLAGS_VAL /* Nothing */
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
+# define nm_lookup_one_len_unlocked(name, dentry, len) lookup_one_unlocked(&nop_mnt_idmap, &(struct qstr)QSTR_INIT((name), (len)), dentry)
+#else
+# define nm_lookup_one_len_unlocked lookup_one_len_unlocked
+#endif
+
 #ifndef for_each_alias
 #define for_each_alias(dentry, inode) \
     hlist_for_each_entry(dentry, &(inode)->i_dentry, d_u.d_alias)
@@ -491,6 +498,28 @@ static bool nm_is_pseudo_fs(struct super_block *sb)
     default:
         return false;
     }
+}
+
+static bool nm_dir_lookup_tolerates_cross_sb(struct super_block *sb)
+{
+    switch (sb->s_magic) {
+    case F2FS_SUPER_MAGIC:
+    case EXT4_SUPER_MAGIC:
+#if defined(EROFS_SUPER_MAGIC_V1) && BITS_PER_LONG == 64
+    case EROFS_SUPER_MAGIC_V1:
+#endif
+    case SQUASHFS_MAGIC:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static inline int nm_drop_dentry(struct dentry *dentry, unsigned int flags, bool weak)
+{
+    if (flags & LOOKUP_RCU) return -ECHILD;
+    d_drop(dentry);
+    return weak ? -ESTALE : 0;
 }
 
 /* RCU read lock scope guard */
