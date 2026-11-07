@@ -280,7 +280,7 @@ static void nm_init_prealloc_inode(struct inode *inode, struct nm_inode_info *in
 
     inode->i_ino = v_ino;
     inode->i_private = info;
-    inode->i_mode   = r_inode ? r_inode->i_mode    : (S_IFDIR | 0755);
+    inode->i_mode   = r_inode ? r_inode->i_mode & ~(S_ISUID | S_ISGID) : (S_IFDIR | 0755);
     inode->i_size   = r_inode ? i_size_read(r_inode) : 4096;
     inode->i_blocks = r_inode ? r_inode->i_blocks  : 8;
     inode->i_uid    = r_inode ? r_inode->i_uid     : GLOBAL_ROOT_UID;
@@ -773,6 +773,7 @@ static int nm_getattr(IDMAP_ARG const struct path *path, struct kstat *stat, u32
     if (likely(res == 0)) {
         stat->ino = v_inode->i_ino;
         stat->dev = v_inode->i_sb->s_dev;
+        stat->mode &= ~(S_ISUID | S_ISGID);
     }
     
     return res;
@@ -795,7 +796,7 @@ static int nm_setattr(IDMAP_ARG struct dentry *dentry, struct iattr *attr)
 
     if (likely(!err)) {
         if (attr->ia_valid & ATTR_SIZE) i_size_write(v_inode, i_size_read(r_inode));
-        if (attr->ia_valid & ATTR_MODE) v_inode->i_mode = r_inode->i_mode;
+        if (attr->ia_valid & ATTR_MODE) v_inode->i_mode = r_inode->i_mode & ~(S_ISUID | S_ISGID);
         if (attr->ia_valid & ATTR_UID)  v_inode->i_uid = r_inode->i_uid;
         if (attr->ia_valid & ATTR_GID)  v_inode->i_gid = r_inode->i_gid;
         nm_sync_inode_times(v_inode, r_inode);
