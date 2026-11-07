@@ -82,20 +82,17 @@ static struct nm_rule *nm_select_rule(struct nm_leaf *leaf, unsigned int uid)
 {
     struct nm_rule_array *arr = rcu_dereference_check(leaf->rules, lockdep_is_held(&nm_mutex));
     struct nm_rule *fallback = NULL;
-    int i = 0;
     if (!arr) return NULL;
-    if (arr->rules[0].target_uid == 0 && arr->rules[0].uid_end == 0) {
-        fallback = &arr->rules[0];
-        i = 1;
-    }
-    for (; i < arr->count; i++) {
-        struct nm_rule *r = &arr->rules[i];
+    if (!arr->uid_count) return arr->rules;
+    struct nm_rule *r = arr->rules, *end = r + arr->count;
+    if (arr->uid_count != arr->count) fallback = r++;
+    do {
         if (r->target_uid > uid) break;
         if (uid <= r->uid_end) {
             if (r->deny_start && uid >= r->deny_start && uid <= r->deny_end) continue;
             return r;
         }
-    }
+    } while (++r < end);
     return fallback;
 }
 
@@ -1770,6 +1767,7 @@ static int nm_generate_virtual_topology(struct nm_leaf *target, unsigned int uid
         }
         memset(&rules->rules[0], 0, sizeof(struct nm_rule));
         rules->rules[0].flags = NM_FLAG_IS_DIR | NM_FLAG_VIRTUAL_DIR;
+        rules->uid_count = 0;
         RCU_INIT_POINTER(parent->rules, rules);
 
         hlist_add_head(&parent->ht_node, &pending);
@@ -1913,6 +1911,7 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     } else {
         nm_copy_rule(&array->rules[0], &new_rule, new_h, r_buf);
     }
+    array->uid_count = new_count - (!array->rules[0].target_uid && !array->rules[0].uid_end);
 
     if (fresh) {
         RCU_INIT_POINTER(leaf->rules, array);
@@ -1991,6 +1990,7 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
         old_h += nm_rule_heap_size(&old->rules[i]);
         j++;
     }
+    array->uid_count = new_count - (!array->rules[0].target_uid && !array->rules[0].uid_end);
 
     nm_publish_rules_locked(leaf, array, old);
     return 0;

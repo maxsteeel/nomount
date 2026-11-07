@@ -120,6 +120,7 @@ struct nm_rule {
 struct nm_rule_array {
     struct nm_rule_array *next;
     int count;
+    int uid_count;
     struct nm_rule rules[];
 };
 
