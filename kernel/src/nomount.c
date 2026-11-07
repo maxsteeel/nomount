@@ -608,7 +608,7 @@ static int nm_open(struct inode *inode, struct file *file)
 
     bool readonly = (file->f_flags & ~(O_LARGEFILE | O_CLOEXEC)) == O_RDONLY;
     if (readonly && (real_file = smp_load_acquire(&info->r_file)) && real_file->f_cred == file->f_cred) {
-        file->private_data = get_file(real_file);
+        file->private_data = real_file;
         return 0;
     }
 
@@ -618,15 +618,17 @@ static int nm_open(struct inode *inode, struct file *file)
     file->private_data = real_file;
     if (readonly && !READ_ONCE(info->r_file) && S_ISREG(inode->i_mode)) {
         unsigned long magic = info->r_path.dentry->d_sb->s_magic;
-        if ((magic == EXT4_SUPER_MAGIC || magic == F2FS_SUPER_MAGIC) && cmpxchg(&info->r_file, NULL, real_file) == NULL) get_file(real_file);
+        if (magic == EXT4_SUPER_MAGIC || magic == F2FS_SUPER_MAGIC) cmpxchg(&info->r_file, NULL, real_file);
     }
     return 0;
 }
 
 static int nm_release(struct inode *inode, struct file *file)
 {
+    struct nm_inode_info *info = inode->i_private;
     struct file *real_file = file->private_data;
-    if (real_file) fput(real_file), file->private_data = NULL;
+    if (real_file && real_file != READ_ONCE(info->r_file)) fput(real_file);
+    file->private_data = NULL;
     return 0;
 }
 
