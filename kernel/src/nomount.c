@@ -596,8 +596,6 @@ static int nm_open(struct inode *inode, struct file *file)
 {
     struct nm_inode_info *info = inode->i_private;
     struct file *real_file;
-    unsigned long magic;
-    bool cacheable;
 
     if (unlikely(!info)) return -ENODEV;
     if (unlikely(!info->r_path.dentry)) {
@@ -605,9 +603,8 @@ static int nm_open(struct inode *inode, struct file *file)
         return 0;
     }
 
-    magic = info->r_path.dentry->d_sb->s_magic;
-    cacheable = S_ISREG(inode->i_mode) && (file->f_flags & ~(O_LARGEFILE | O_CLOEXEC)) == O_RDONLY && (magic == EXT4_SUPER_MAGIC || magic == F2FS_SUPER_MAGIC);
-    if (cacheable && (real_file = smp_load_acquire(&info->r_file)) && real_file->f_cred == file->f_cred) {
+    bool readonly = (file->f_flags & ~(O_LARGEFILE | O_CLOEXEC)) == O_RDONLY;
+    if (readonly && (real_file = smp_load_acquire(&info->r_file)) && real_file->f_cred == file->f_cred) {
         file->private_data = get_file(real_file);
         return 0;
     }
@@ -616,7 +613,10 @@ static int nm_open(struct inode *inode, struct file *file)
     if (IS_ERR(real_file)) return PTR_ERR(real_file);
 
     file->private_data = real_file;
-    if (cacheable && !READ_ONCE(info->r_file) && cmpxchg(&info->r_file, NULL, real_file) == NULL) get_file(real_file);
+    if (readonly && !READ_ONCE(info->r_file) && S_ISREG(inode->i_mode)) {
+        unsigned long magic = info->r_path.dentry->d_sb->s_magic;
+        if ((magic == EXT4_SUPER_MAGIC || magic == F2FS_SUPER_MAGIC) && cmpxchg(&info->r_file, NULL, real_file) == NULL) get_file(real_file);
+    }
     return 0;
 }
 
