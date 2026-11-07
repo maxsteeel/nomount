@@ -63,13 +63,14 @@ static struct nm_rule *nm_select_rule(struct nm_leaf *leaf, unsigned int uid)
 {
     struct nm_rule_array *arr = rcu_dereference_check(leaf->rules, lockdep_is_held(&nm_mutex));
     struct nm_rule *fallback = NULL;
+    int i = 0;
     if (!arr) return NULL;
-    for (int i = 0; i < arr->count; i++) {
+    if (arr->rules[0].target_uid == 0 && arr->rules[0].uid_end == 0) {
+        fallback = &arr->rules[0];
+        i = 1;
+    }
+    for (; i < arr->count; i++) {
         struct nm_rule *r = &arr->rules[i];
-        if (r->target_uid == 0 && r->uid_end == 0) {
-            fallback = r;
-            continue;
-        }
         if (r->target_uid > uid) break;
         if (uid <= r->uid_end) {
             if (r->deny_start && uid >= r->deny_start && uid <= r->deny_end) continue;
@@ -1843,13 +1844,7 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     count = (old = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex))) ? old->count : 0;
 
     if (uid == 0 && uid_end == 0) {
-        for (int i = 0; i < count; i++) {
-            if (old->rules[i].target_uid == 0 && old->rules[i].uid_end == 0) {
-                pos = i; replace = true;
-                break;
-            }
-        }
-        if (!replace) pos = 0;
+        replace = count && old->rules[0].target_uid == 0 && old->rules[0].uid_end == 0;
     } else {
         while (pos < count && (old->rules[pos].target_uid < uid || (old->rules[pos].target_uid == uid && old->rules[pos].uid_end < uid_end))) pos++;
         replace = pos < count && old->rules[pos].target_uid == uid && old->rules[pos].uid_end == uid_end;
