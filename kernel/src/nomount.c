@@ -141,11 +141,15 @@ static int nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct n
 
 static int nm_rebind_path(struct nm_rule_info *rule_info)
 {
+    struct inode *old_inode = d_backing_inode(rule_info->r_path.dentry), *new_inode;
     struct dentry *new;
 
     new = nm_lookup_one_len_unlocked(rule_info->r_name, rule_info->saved_parent, rule_info->r_name_len);
     if (IS_ERR(new)) return PTR_ERR(new);
-    if (!d_is_positive(new) || d_is_symlink(new) || new->d_sb != rule_info->r_path.dentry->d_sb || (d_backing_inode(new) && nm_inode_is_virtual(d_backing_inode(new)))) {
+
+    new_inode = d_backing_inode(new);
+    if (!d_is_positive(new) || d_is_symlink(new) || d_is_dir(new) || new->d_sb != rule_info->r_path.dentry->d_sb ||
+        !new_inode || nm_inode_is_virtual(new_inode) || !old_inode || ((new_inode->i_mode ^ old_inode->i_mode) & S_IFMT)) {
         dput(new);
         return -ENOENT;
     }
@@ -247,7 +251,7 @@ static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_d
 
 		rcu_read_lock();
 		struct nm_child_array *array = rcu_dereference(dir_node->children);
-		if (array && id < array->count) {
+		if (array && id >= 0 && id < array->count) {
 			struct nm_leaf *leaf = nm_entries(array)[id].leaf;
 			struct nm_rule *rule = nm_select_rule(leaf, fsuid);
 			has_more = true;
@@ -991,7 +995,7 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
     if (!has_rule) orig_dops = nm_get_orig_dops(iop);
     rcu_read_unlock();
 
-    if (whiteout) return weak ? (inode ? -ESTALE : 0) : !inode;
+    if (whiteout && !inode) return weak ? 0 : 1;
     if (match_rule) return 1;
     if (!has_rule && inode && nm_inode_is_virtual(inode)) {
         struct nm_inode_info *info = READ_ONCE(inode->i_private);
