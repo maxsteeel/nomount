@@ -2104,6 +2104,7 @@ static int nm_process_payload(unsigned long user_addr)
             break;
 
         case NM_CMD_GET_LIST: {
+            if (payload->arg1 == ~0U) { payload->data_size = 0; break; }
             int current_idx = 0;
             int bkt;
             buf_ptr = payload->buffer;
@@ -2130,6 +2131,7 @@ static int nm_process_payload(unsigned long user_addr)
                     heap += nm_rule_heap_size(r);
                 }
             }
+            current_idx = -1;
         list_done:
             payload->data_size = buf_ptr - payload->buffer;
             payload->arg1 = current_idx;
@@ -2149,7 +2151,7 @@ static int nm_process_payload(unsigned long user_addr)
                 }
             }
             payload->data_size = count * sizeof(*out);
-            payload->arg1 = start_idx;
+            payload->arg1 = arr && start_idx < arr->count ? start_idx : ~0U;
             break;
         }
     }
