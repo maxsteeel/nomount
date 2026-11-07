@@ -1040,20 +1040,16 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
         struct nm_inode_info *info = READ_ONCE(inode->i_private);
         if (info && info->backing_child) {
             struct nm_inode_info *pinfo;
-            struct dentry *backing, *backing_parent = NULL;
+            struct dentry *backing, *backing_parent;
             bool valid;
 
             if (flags & LOOKUP_RCU) return -ECHILD;
-            rcu_read_lock();
             pinfo = READ_ONCE(parent_inode->i_private);
-            if (pinfo && pinfo->r_path.dentry)
-                backing_parent = dget(pinfo->r_path.dentry);
-            rcu_read_unlock();
+            backing_parent = pinfo ? pinfo->r_path.dentry : NULL;
             if (!backing_parent)
                 return nm_drop_dentry(dentry, flags, weak);
 
             backing = nm_lookup_one_len_unlocked(name->name, backing_parent, name->len);
-            dput(backing_parent);
             if (IS_ERR(backing)) return PTR_ERR(backing);
             valid = (backing == info->r_path.dentry && d_is_positive(backing) && nm_inode_matches_attrs(inode, d_inode(backing)));
             dput(backing);
@@ -1741,7 +1737,8 @@ static int nm_generate_virtual_topology(struct nm_leaf *target, unsigned int uid
                 err = -ENOTDIR;
             } else if (virtual) {
                 dir = ((struct nm_inode_info *)inode->i_private)->dir_node;
-                atomic_inc(&dir->refs);
+                if (dir) atomic_inc(&dir->refs);
+                else err = -EOPNOTSUPP;
             } else {
                 struct nm_dir_ops *iop = nm_get_nm_iop(smp_load_acquire(&inode->i_op));
                 struct nm_dir_ops *fop = nm_get_nm_fop(smp_load_acquire(&inode->i_fop));
