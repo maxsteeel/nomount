@@ -274,13 +274,15 @@ static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_d
 	}
 }
 
+static inline umode_t nm_visible_mode(umode_t mode) { return mode & ~(S_ISUID | S_ISGID); }
+
 static void nm_init_prealloc_inode(struct inode *inode, struct nm_inode_info *info, unsigned long v_ino)
 {
     struct inode *r_inode = info->r_path.dentry ? d_backing_inode(info->r_path.dentry) : NULL;
 
     inode->i_ino = v_ino;
     inode->i_private = info;
-    inode->i_mode   = r_inode ? r_inode->i_mode & ~(S_ISUID | S_ISGID) : (S_IFDIR | 0755);
+    inode->i_mode   = r_inode ? nm_visible_mode(r_inode->i_mode) : (S_IFDIR | 0755);
     inode->i_size   = r_inode ? i_size_read(r_inode) : 4096;
     inode->i_blocks = r_inode ? r_inode->i_blocks  : 8;
     inode->i_uid    = r_inode ? r_inode->i_uid     : GLOBAL_ROOT_UID;
@@ -308,6 +310,11 @@ static void nm_init_prealloc_inode(struct inode *inode, struct nm_inode_info *in
     if (!S_ISLNK(inode->i_mode)) inode->i_opflags |= IOP_NOFOLLOW;
 }
 
+static bool nm_inode_matches_attrs(struct inode *inode, struct inode *r_inode)
+{
+    return !r_inode || nm_inode_is_new(inode) || (inode->i_mode == nm_visible_mode(r_inode->i_mode) && uid_eq(inode->i_uid, r_inode->i_uid) && gid_eq(inode->i_gid, r_inode->i_gid));
+}
+
 static bool nm_inode_matches_binding(struct inode *inode, const struct path *path, struct nm_dir_node *dir_node, bool opaque)
 {
     struct nm_inode_info *info = READ_ONCE(inode->i_private);
@@ -316,9 +323,7 @@ static bool nm_inode_matches_binding(struct inode *inode, const struct path *pat
     if (!info || info->dir_node != dir_node || !path_equal(&info->r_path, path) || (dir_node && info->opaque != opaque))
         return false;
     r_inode = path->dentry ? d_backing_inode(path->dentry) : NULL;
-    return !r_inode || nm_inode_is_new(inode) ||
-           (inode->i_mode == r_inode->i_mode && uid_eq(inode->i_uid, r_inode->i_uid) &&
-            gid_eq(inode->i_gid, r_inode->i_gid));
+    return nm_inode_matches_attrs(inode, r_inode);
 }
 
 static bool nm_binding_matches_rule(struct inode *inode, const struct nm_rule *rule)
@@ -327,15 +332,13 @@ static bool nm_binding_matches_rule(struct inode *inode, const struct nm_rule *r
     struct dentry *d;
     struct inode *r_inode;
 
-    if (!info || info->dir_node || info->opaque)
+    if (!info || info->backing_child || info->dir_node || info->opaque)
         return false;
     d = READ_ONCE(info->r_path.dentry);
     if (!d || !nm_path_unchanged(d, rule->r_parent, rule->r_name, rule->r_name_len))
         return false;
     r_inode = d_backing_inode(d);
-    return !r_inode || nm_inode_is_new(inode) ||
-           (inode->i_mode == r_inode->i_mode && uid_eq(inode->i_uid, r_inode->i_uid) &&
-            gid_eq(inode->i_gid, r_inode->i_gid));
+    return nm_inode_matches_attrs(inode, r_inode);
 }
 
 static int nm_cached_inode_set(struct inode *inode, void *data) { return 0; }
@@ -773,7 +776,7 @@ static int nm_getattr(IDMAP_ARG const struct path *path, struct kstat *stat, u32
     if (likely(res == 0)) {
         stat->ino = v_inode->i_ino;
         stat->dev = v_inode->i_sb->s_dev;
-        stat->mode &= ~(S_ISUID | S_ISGID);
+        stat->mode = nm_visible_mode(stat->mode);
     }
     
     return res;
@@ -796,7 +799,7 @@ static int nm_setattr(IDMAP_ARG struct dentry *dentry, struct iattr *attr)
 
     if (likely(!err)) {
         if (attr->ia_valid & ATTR_SIZE) i_size_write(v_inode, i_size_read(r_inode));
-        if (attr->ia_valid & ATTR_MODE) v_inode->i_mode = r_inode->i_mode & ~(S_ISUID | S_ISGID);
+        if (attr->ia_valid & ATTR_MODE) v_inode->i_mode = nm_visible_mode(r_inode->i_mode);
         if (attr->ia_valid & ATTR_UID)  v_inode->i_uid = r_inode->i_uid;
         if (attr->ia_valid & ATTR_GID)  v_inode->i_gid = r_inode->i_gid;
         nm_sync_inode_times(v_inode, r_inode);
@@ -1005,31 +1008,6 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
     if ((flags & LOOKUP_RENAME_TARGET) && inode && nm_inode_is_virtual(inode))
         return (flags & LOOKUP_RCU) ? -ECHILD : -EPERM;
 
-    if (inode && nm_inode_is_virtual(inode)) {
-        struct nm_inode_info *info = READ_ONCE(inode->i_private);
-        if (info && info->backing_child) {
-            struct nm_inode_info *pinfo;
-            struct dentry *backing, *backing_parent = NULL;;
-            bool valid;
-
-            if (flags & LOOKUP_RCU) return -ECHILD;
-            rcu_read_lock();
-            pinfo = READ_ONCE(parent_inode->i_private);
-            if (pinfo && pinfo->r_path.dentry)
-                backing_parent = dget(pinfo->r_path.dentry);
-            rcu_read_unlock();
-            if (!backing_parent)
-                return nm_drop_dentry(dentry, flags, weak);
-
-            backing = nm_lookup_one_len_unlocked(name->name, backing_parent, name->len);
-            dput(backing_parent);
-            if (IS_ERR(backing)) return PTR_ERR(backing);
-            valid = (backing == info->r_path.dentry && d_is_positive(backing) && d_inode(backing)->i_mode == inode->i_mode);
-            dput(backing);
-            return valid ? 1 : 0;
-        }
-    }
-
     rcu_read_lock();
     const struct inode_operations *parent_iop = rcu_dereference(parent_inode->i_op);
     if (parent_iop == &nm_dir_iops) {
@@ -1058,6 +1036,31 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
 
     if (whiteout) return weak ? (inode ? -ESTALE : 0) : !inode;
     if (match_rule) return 1;
+    if (!has_rule && inode && nm_inode_is_virtual(inode)) {
+        struct nm_inode_info *info = READ_ONCE(inode->i_private);
+        if (info && info->backing_child) {
+            struct nm_inode_info *pinfo;
+            struct dentry *backing, *backing_parent = NULL;
+            bool valid;
+
+            if (flags & LOOKUP_RCU) return -ECHILD;
+            rcu_read_lock();
+            pinfo = READ_ONCE(parent_inode->i_private);
+            if (pinfo && pinfo->r_path.dentry)
+                backing_parent = dget(pinfo->r_path.dentry);
+            rcu_read_unlock();
+            if (!backing_parent)
+                return nm_drop_dentry(dentry, flags, weak);
+
+            backing = nm_lookup_one_len_unlocked(name->name, backing_parent, name->len);
+            dput(backing_parent);
+            if (IS_ERR(backing)) return PTR_ERR(backing);
+            valid = (backing == info->r_path.dentry && d_is_positive(backing) && nm_inode_matches_attrs(inode, d_inode(backing)));
+            dput(backing);
+            return valid ? 1 : 0;
+        }
+    }
+
     if (has_rule || (!uid_blocked && nm_is_our_dops(iop, READ_ONCE(dentry->d_op))) || (inode && nm_inode_is_virtual(inode)))
         return nm_drop_dentry(dentry, flags, weak);
     return nm_call_orig_revalidate(orig_dops, parent_inode, name, dentry, flags);
