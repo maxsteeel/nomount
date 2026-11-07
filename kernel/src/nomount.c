@@ -1513,6 +1513,11 @@ static int nm_prepare_rule(const char *r_path, u16 r_len, u32 flags, unsigned in
                 out->r_name = (const char *)name->name;
                 out->r_name_len = dentry->d_name.len;
 #endif
+                if (unlikely(!out->r_name)) {
+                    dput(out->r_parent);
+                    path_put(&out->r_path);
+                    return -ENOMEM;
+                }
                 if (!read_seqcount_retry(&dentry->d_seq, seq)) break;
                 dput(out->r_parent);
                 release_dentry_name_snapshot(name);
