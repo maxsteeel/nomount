@@ -1157,8 +1157,10 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
         nm_sop->fake_sop = *sb->s_op;
         nm_sop->orig_sop = sb->s_op;
         nm_sop->sb = sb;
-        nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
-        nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
+        if (with_xattr) {
+            nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
+            nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
+        }
         if (!sb_rdonly(sb) && !nm_is_pseudo_fs(sb))
             nm_sop->fake_sop.sync_fs = nm_shutdown_sync_fs;
         list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
@@ -1166,6 +1168,9 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
         nm_debug("Superblock successfully hijacked for dev: 0x%x\n", sb->s_dev);
     } else if (!with_xattr || nm_sop->fake_xattr) {
         return 0;
+    } else {
+        WRITE_ONCE(nm_sop->fake_sop.drop_inode, nm_hijacked_drop_inode);
+        WRITE_ONCE(nm_sop->fake_sop.evict_inode, nm_hijacked_evict_inode);
     }
 
     if (with_xattr && sb->s_xattr) {
