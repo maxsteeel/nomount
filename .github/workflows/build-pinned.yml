@@ -15,8 +15,43 @@ on:
         type: string
       build_all:
         description: 'Build all KMIs'
-        required: true
+        required: false
+        default: false
+        type: boolean
+      kmi_android12_5_10:
+        description: 'android12-5.10'
+        required: false
+        default: false
+        type: boolean
+      kmi_android13_5_10:
+        description: 'android13-5.10'
+        required: false
+        default: false
+        type: boolean
+      kmi_android13_5_15:
+        description: 'android13-5.15'
+        required: false
+        default: false
+        type: boolean
+      kmi_android14_5_15:
+        description: 'android14-5.15'
+        required: false
+        default: false
+        type: boolean
+      kmi_android14_6_1:
+        description: 'android14-6.1'
+        required: false
         default: true
+        type: boolean
+      kmi_android15_6_6:
+        description: 'android15-6.6'
+        required: false
+        default: false
+        type: boolean
+      kmi_android16_6_12:
+        description: 'android16-6.12'
+        required: false
+        default: false
         type: boolean
 
 concurrency:
@@ -29,6 +64,13 @@ jobs:
     with:
       build_all: ${{ github.event.inputs.build_all == 'true' }}
       commit: ${{ github.event.inputs.commit }}
+      kmi_android12_5_10: ${{ github.event.inputs.kmi_android12_5_10 == 'true' }}
+      kmi_android13_5_10: ${{ github.event.inputs.kmi_android13_5_10 == 'true' }}
+      kmi_android13_5_15: ${{ github.event.inputs.kmi_android13_5_15 == 'true' }}
+      kmi_android14_5_15: ${{ github.event.inputs.kmi_android14_5_15 == 'true' }}
+      kmi_android14_6_1: ${{ github.event.inputs.kmi_android14_6_1 == 'true' }}
+      kmi_android15_6_6: ${{ github.event.inputs.kmi_android15_6_6 == 'true' }}
+      kmi_android16_6_12: ${{ github.event.inputs.kmi_android16_6_12 == 'true' }}
 
   prepare-module:
     runs-on: ubuntu-latest
@@ -116,7 +158,7 @@ jobs:
 
           curl -fsSL "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.1.tgz" \
             | tar -xz -C /tmp --strip-components=2 package/bin/esbuild && chmod +x /tmp/esbuild
-          /tmp/esbuild module/webroot/index.js --bundle --format=esm --minify --charset=utf8 --outfile="$WEBUI_BUILD/index.js"
+          /tmp/esbuild module/webroot/index.js --bundle --format=esm --minify --charset=utf-8 --outfile="$WEBUI_BUILD/index.js"
           /tmp/esbuild module/webroot/styles.css --minify --outfile="$WEBUI_BUILD/styles.css"
           tr '\n' ' ' < module/webroot/index.html | sed 's/  */ /g' | sed 's/> </></g' > "$WEBUI_BUILD/index.html"
 
