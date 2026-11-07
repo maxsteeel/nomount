@@ -37,6 +37,10 @@ on:
         description: android16-6.12
         default: false
         type: boolean
+      kmi_android17_6_18:
+        description: android17-6.18
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -60,6 +64,7 @@ jobs:
           KMI_ANDROID14_6_1: ${{ inputs.kmi_android14_6_1 }}
           KMI_ANDROID15_6_6: ${{ inputs.kmi_android15_6_6 }}
           KMI_ANDROID16_6_12: ${{ inputs.kmi_android16_6_12 }}
+          KMI_ANDROID17_6_18: ${{ inputs.kmi_android17_6_18 }}
         run: |
           set -euo pipefail
           matrix="$(jq -cn '
@@ -71,7 +76,8 @@ jobs:
               {kmi: "android14-5.15", enabled: (if $force_all then true else (env.KMI_ANDROID14_5_15 == "true") end)},
               {kmi: "android14-6.1",  enabled: (if $force_all then true else (env.KMI_ANDROID14_6_1 == "true") end)},
               {kmi: "android15-6.6",  enabled: (if $force_all then true else (env.KMI_ANDROID15_6_6 == "true") end)},
-              {kmi: "android16-6.12", enabled: (if $force_all then true else (env.KMI_ANDROID16_6_12 == "true") end)}
+              {kmi: "android16-6.12", enabled: (if $force_all then true else (env.KMI_ANDROID16_6_12 == "true") end)},
+              {kmi: "android17-6.18", enabled: (if $force_all then true else (env.KMI_ANDROID17_6_18 == "true") end)}
             ] | map(select(.enabled).kmi) as $selected
               | (if $selected == [] then map(.kmi) else $selected end) as $kmis
               | {include: ( ($kmis | map({kmi: ., arch: "arm64"})) + ($kmis | map({kmi: ., arch: "x86_64"})) )}')"
