@@ -1541,8 +1541,13 @@ static int nm_resolve_anchor_locked(struct nm_leaf *leaf)
     struct inode *inode;
     struct nm_dir_ops *ops;
     struct nm_dir_node *dir;
+    int err = kern_path(leaf->paths, LOOKUP_FOLLOW, &anchor);
 
-    if (kern_path(leaf->paths, LOOKUP_FOLLOW, &anchor)) {
+    if (!err && !S_ISDIR(d_backing_inode(anchor.dentry)->i_mode)) {
+        path_put(&anchor);
+        err = -ENOTDIR;
+    }
+    if (err) {
         leaf->this_dir = nm_alloc_dir_node();
         if (!leaf->this_dir) return -ENOMEM;
         leaf->this_dir->owner = leaf;
@@ -1550,11 +1555,6 @@ static int nm_resolve_anchor_locked(struct nm_leaf *leaf)
     }
 
     inode = d_backing_inode(anchor.dentry);
-    if (!S_ISDIR(inode->i_mode)) {
-        path_put(&anchor);
-        return 0;
-    }
-
     leaf->v_ino = inode->i_ino;
     d_drop(anchor.dentry);
     leaf->anchor = anchor;
@@ -1918,6 +1918,10 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     }
     array->uid_count = new_count - (!array->rules[0].target_uid && !array->rules[0].uid_end);
 
+    if (new_dir) {
+        leaf->this_dir = new_dir;
+        new_dir->owner = leaf;
+    }
     if (fresh) {
         RCU_INIT_POINTER(leaf->rules, array);
         if ((err = nm_generate_virtual_topology(leaf, uid))) {
@@ -1927,7 +1931,6 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
         }
         hash_add_rcu(nm_leaves_ht, &leaf->ht_node, leaf->v_hash);
     } else {
-        if (new_dir) { leaf->this_dir = new_dir; new_dir->owner = leaf; }
         nm_publish_rules_locked(leaf, array, old);
     }
 
