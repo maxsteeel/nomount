@@ -1549,26 +1549,20 @@ static struct nm_leaf *nm_alloc_leaf(const char *path, u16 len)
     return leaf;
 }
 
-static int nm_resolve_anchor_locked(struct nm_leaf *leaf)
+static void nm_resolve_anchor_locked(struct nm_leaf *leaf)
 {
     struct path anchor;
     struct inode *inode;
     struct nm_dir_ops *ops;
     struct nm_dir_node *dir;
-    int err = kern_path(leaf->paths, LOOKUP_FOLLOW, &anchor);
 
-    if (!err && !S_ISDIR(d_backing_inode(anchor.dentry)->i_mode)) {
-        path_put(&anchor);
-        err = -ENOTDIR;
-    }
-    if (err) {
-        leaf->this_dir = nm_alloc_dir_node();
-        if (!leaf->this_dir) return -ENOMEM;
-        leaf->this_dir->owner = leaf;
-        return 0;
-    }
-
+    if (kern_path(leaf->paths, LOOKUP_FOLLOW, &anchor)) return;
     inode = d_backing_inode(anchor.dentry);
+    if (!S_ISDIR(inode->i_mode)) {
+        path_put(&anchor);
+        return;
+    }
+
     leaf->v_ino = inode->i_ino;
     d_drop(anchor.dentry);
     leaf->anchor = anchor;
@@ -1581,14 +1575,8 @@ static int nm_resolve_anchor_locked(struct nm_leaf *leaf)
             leaf->this_dir = dir;
             atomic_inc(&dir->refs);
             dir->owner = leaf;
-            return 0;
         }
     }
-
-    leaf->this_dir = nm_alloc_dir_node();
-    if (!leaf->this_dir) return -ENOMEM;
-    leaf->this_dir->owner = leaf;
-    return 0;
 }
 
 static void nm_free_leaf(struct nm_leaf *leaf)
@@ -1870,12 +1858,8 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
         goto out_rule;
     }
 
-    if (fresh && (new_rule.flags & NM_FLAG_IS_DIR)) {
-        if ((err = nm_resolve_anchor_locked(leaf))) {
-            nm_free_leaf(leaf);
-            goto out_rule;
-        }
-    }
+    if (fresh && (new_rule.flags & NM_FLAG_IS_DIR))
+        nm_resolve_anchor_locked(leaf);
 
     count = (old = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex))) ? old->count : 0;
 
