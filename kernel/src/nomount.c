@@ -1803,7 +1803,12 @@ static int nm_prune_empty_virtual_dirs_locked(struct nm_dir_node *dir)
     struct nm_leaf *leaf;
     while (dir && !rcu_access_pointer(dir->children) && (leaf = dir->owner)) {
         struct nm_rule_array *rules = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex));
-        if (rules && (rules->count != 1 || !(rules->rules[0].flags & NM_FLAG_VIRTUAL_DIR))) break;
+        int i;
+
+        if (!rules) break;
+        for (i = 0; i < rules->count; i++)
+            if (!(rules->rules[i].flags & NM_FLAG_VIRTUAL_DIR)) break;
+        if (i < rules->count) break;
         dir = nm_detach_leaf_locked(leaf);
         if (IS_ERR(dir)) return PTR_ERR(dir);
     }
