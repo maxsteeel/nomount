@@ -75,7 +75,7 @@ static struct nm_leaf *nm_find_leaf_in_dir(struct nm_dir_node *dir_node, const c
     struct nm_leaf **entries;
     u32 bucket, i;
 
-    if (!dir_node || !(children = rcu_dereference(dir_node->children)))
+    if (!dir_node || !(children = rcu_dereference_check(dir_node->children, lockdep_is_held(&nm_mutex))))
         return NULL;
     entries = nm_entries(children);
     if (!children->bucket_count) {
