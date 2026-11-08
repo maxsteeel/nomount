@@ -59,6 +59,25 @@ static __always_inline struct nm_leaf *nm_bsearch_child(struct nm_child_array *a
 	return NULL;
 }
 
+static bool nm_rules_overlap(const struct nm_rule *a, const struct nm_rule *b)
+{
+    const struct nm_rule *r[2] = { a, b };
+    unsigned int lo = max(a->target_uid, b->target_uid), hi = min(a->uid_end, b->uid_end);
+    bool moved = true;
+    if (lo > hi) return false;
+    while (moved) {
+        moved = false;
+        for (int i = 0; i < 2; i++) {
+            if (r[i]->deny_start && r[i]->deny_start <= lo && lo <= r[i]->deny_end) {
+                if (r[i]->deny_end >= hi) return false;
+                lo = r[i]->deny_end + 1;
+                moved = true;
+            }
+        }
+    }
+    return true;
+}
+
 static struct nm_rule *nm_select_rule(struct nm_leaf *leaf, unsigned int uid)
 {
     struct nm_rule_array *arr = rcu_dereference_check(leaf->rules, lockdep_is_held(&nm_mutex));
@@ -1849,10 +1868,10 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
         while (pos < count && (old->rules[pos].target_uid < uid || (old->rules[pos].target_uid == uid && old->rules[pos].uid_end < uid_end))) pos++;
         replace = pos < count && old->rules[pos].target_uid == uid && old->rules[pos].uid_end == uid_end;
         if (!replace) {
-            struct nm_rule *prev = (pos > 0) ? &old->rules[pos - 1] : NULL,
-                           *next = (pos < count) ? &old->rules[pos] : NULL;
-            if (prev && prev->target_uid != 0 && prev->uid_end >= uid) { err = -EEXIST; goto out_leaf; }
-            if (next && next->target_uid != 0 && next->target_uid <= uid_end) { err = -EEXIST; goto out_leaf; }
+            for (int i = 0; i < count; i++) {
+                if (old->rules[i].target_uid == 0 && old->rules[i].uid_end == 0) continue;
+                if (nm_rules_overlap(&old->rules[i], &new_rule)) { err = -EEXIST; goto out_leaf; }
+            }
         }
     }
 
@@ -1935,8 +1954,8 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
             old->rules[pos].deny_start != deny_start || old->rules[pos].deny_end != deny_end)) pos++;
     if (pos == old->count) return 0;
 
-    if (leaf->this_dir && rcu_access_pointer(leaf->this_dir->children) &&
-        ((old->rules[pos].flags & NM_FLAG_IS_DIR) || !uid || old->rules[0].target_uid)) {
+    if (leaf->this_dir && rcu_access_pointer(leaf->this_dir->children) && ((old->rules[pos].flags & NM_FLAG_IS_DIR) ||
+      (old->rules[pos].target_uid == 0 && old->rules[pos].uid_end == 0) || !(old->rules[0].target_uid == 0 && old->rules[0].uid_end == 0))) {
         if (old->rules[pos].flags & NM_FLAG_VIRTUAL_DIR) return 0;
         stub_virtual = true;
     }
@@ -1961,8 +1980,8 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
         if (!stub_virtual && i == pos) { old_h += nm_rule_heap_size(&old->rules[i]); continue; }
         if (stub_virtual && i == pos) {
             array->rules[j] = (struct nm_rule){
-                .target_uid = uid,
-                .uid_end = uid_end,
+                .target_uid = uid, .uid_end = uid_end,
+                .deny_start = deny_start, .deny_end = deny_end,
                 .flags = NM_FLAG_IS_DIR | NM_FLAG_VIRTUAL_DIR,
             };
             j++; old_h += nm_rule_heap_size(&old->rules[i]);
