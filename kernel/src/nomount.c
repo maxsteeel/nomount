@@ -80,7 +80,7 @@ static struct nm_leaf *nm_find_leaf_in_dir(struct nm_dir_node *dir_node, const c
     entries = nm_entries(children);
     if (!children->bucket_count) {
         for (i = 0; i < children->count; i++)
-            if (entries[i]->child_len == len && nm_child_matches(entries[i], name, len))
+            if (nm_child_matches(entries[i], name, len))
                 return entries[i];
         return NULL;
     }
@@ -1429,18 +1429,23 @@ static struct nm_dir_node *nm_delete_child_locked(struct nm_leaf *leaf, bool cle
 {
     struct nm_dir_node *dir_node = leaf->parent_dir;
     struct nm_child_array *old, *array = NULL;
-    int pos;
 
     if (!dir_node) return NULL;
     if (!(old = rcu_dereference_protected(dir_node->children, lockdep_is_held(&nm_mutex)))) return dir_node;
     if (!clear) {
-        for (pos = 0; pos < old->count && nm_entries(old)[pos] != leaf; pos++) {}
-        if (pos == old->count) return dir_node;
+        u32 bucket = 0;
+        int pos = 0, end = old->count;
+        if (old->bucket_count) {
+            bucket = nm_child_bucket(old, leaf->child_hash);
+            pos = old->starts[bucket];
+            end = old->starts[bucket + 1];
+        }
+        for (; pos < end && nm_entries(old)[pos] != leaf; pos++) {}
+        if (pos == end) return dir_node;
         if (old->count > 1) {
             int new_count = old->count - 1;
             if (!(array = nm_alloc_child_array(new_count))) return ERR_PTR(-ENOMEM);
             if (array->bucket_count && array->bucket_count == old->bucket_count) {
-                u32 bucket = nm_child_bucket(array, leaf->child_hash);
                 u16 i;
                 for (i = 0; i <= bucket; i++) array->starts[i] = old->starts[i];
                 for (; i <= array->bucket_count; i++) array->starts[i] = old->starts[i] - 1;
