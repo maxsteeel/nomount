@@ -86,8 +86,7 @@ struct nm_child_array {
     struct rcu_head rcu;
     int count;
     u16 bucket_count;
-    bool full_hash;
-    u64 buckets[] __aligned(8);
+    u32 starts[] __aligned(4);   /* bucket_count + 1 u32 */
 };
 
 struct nm_dir_node {
@@ -155,7 +154,8 @@ struct nm_uid_array {
 
 static inline struct nm_leaf **nm_entries(struct nm_child_array *arr)
 {
-    return (struct nm_leaf **)(arr->buckets + arr->bucket_count + 1);
+    uintptr_t p = (uintptr_t)arr->starts + (arr->bucket_count + 1) * sizeof(u32);
+    return (struct nm_leaf **)((p + 7) & ~(uintptr_t)7);
 }
 
 static inline u16 nm_child_buckets_for(int count)
@@ -171,19 +171,6 @@ static inline u16 nm_child_buckets_for(int count)
 static inline u32 nm_child_bucket(struct nm_child_array *arr, u32 hash)
 {
     return (hash >> 5) & (arr->bucket_count - 1);
-}
-
-static __always_inline u32 nm_qhash(const char *name, size_t len)
-{
-    u32 h = (u8)name[0] ^ (u32)len;
-    h = (h << 5) + (u8)name[len - 1];
-    h = (h << 5) + (u8)name[len >> 1];
-    return h;
-}
-
-static inline u32 nm_child_hash(struct nm_leaf *leaf, bool full)
-{
-    return full ? leaf->child_hash : nm_qhash(nm_get_child_name(leaf), leaf->child_len);
 }
 
 /*** Operaction Vectors ***/

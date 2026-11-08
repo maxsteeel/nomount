@@ -72,28 +72,21 @@ static struct nm_rule *nm_select_rule(struct nm_leaf *leaf, unsigned int uid)
 static struct nm_leaf *nm_find_leaf_in_dir(struct nm_dir_node *dir_node, const char *name, size_t len)
 {
     struct nm_child_array *children;
+    struct nm_leaf **entries;
+    u32 bucket, i;
 
-    if (!dir_node || !(children = rcu_dereference_check(dir_node->children, lockdep_is_held(&nm_mutex))))
+    if (!dir_node || !(children = rcu_dereference(dir_node->children)))
         return NULL;
-    u32 hash = nm_qhash(name, len);
+    entries = nm_entries(children);
     if (!children->bucket_count) {
-        u32 *hashes = (u32 *)children->buckets;
-        for (int i = 0; i < children->count; i++) {
-            if (hashes[i] == hash && nm_child_matches(nm_entries(children)[i], name, len)) return nm_entries(children)[i];
-        }
+        for (i = 0; i < children->count; i++)
+            if (entries[i]->child_len == len && nm_child_matches(entries[i], name, len))
+                return entries[i];
         return NULL;
     }
-    if (children->full_hash) {
-        if (!((u32)children->buckets[children->bucket_count] & (1U << (hash & 31)))) return NULL;
-        hash = full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, name, len);
-    }
-    u32 bucket = nm_child_bucket(children, hash);
-    u64 entry = children->buckets[bucket];
-    if (!((u32)entry & (1U << (hash & 31)))) return NULL;
-    u32 end = children->buckets[bucket + 1] >> 32;
-    for (u32 i = entry >> 32; i < end; i++) {
-        if (nm_child_matches(nm_entries(children)[i], name, len)) return nm_entries(children)[i];
-    }
+    bucket = nm_child_bucket(children, full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, name, len));
+    for (i = children->starts[bucket]; i < children->starts[bucket + 1]; i++)
+        if (nm_child_matches(entries[i], name, len)) return entries[i];
     return NULL;
 }
 
@@ -1339,72 +1332,47 @@ static struct nm_dir_node *nm_alloc_dir_node(void)
     return dir_node;
 }
 
-static struct nm_child_array *nm_alloc_child_array(int count, bool full_hash)
+static struct nm_child_array *nm_alloc_child_array(int count)
 {
     u16 buckets = nm_child_buckets_for(count);
-    size_t sz = sizeof(struct nm_child_array) + (buckets + 1) * sizeof(u64) + count * sizeof(struct nm_leaf *);
+    size_t sz = sizeof(struct nm_child_array) + (buckets + 1) * sizeof(u32) + 8 + count * sizeof(struct nm_leaf *);
     struct nm_child_array *array = kmalloc(sz, GFP_KERNEL);
     if (array) {
         array->count = count;
         array->bucket_count = buckets;
-        array->full_hash = buckets && full_hash;
     }
     return array;
-}
-
-static inline void nm_fill_child(struct nm_child_array *array, struct nm_leaf *leaf)
-{
-    u32 hash = nm_child_hash(leaf, array->full_hash);
-    u32 bucket = nm_child_bucket(array, hash);
-    array->buckets[bucket + 1] -= 1ULL << 32;
-    nm_entries(array)[array->buckets[bucket + 1] >> 32] = leaf;
-    array->buckets[bucket] |= 1U << (hash & 31);
-    if (array->full_hash) array->buckets[array->bucket_count] |= 1U << (nm_child_hash(leaf, false) & 31);
 }
 
 static void nm_rebuild_children(struct nm_child_array *array, struct nm_child_array *old, struct nm_leaf *extra, int skip)
 {
     int count = old ? old->count : 0;
+    struct nm_leaf **entries = nm_entries(array);
+    u16 b;
+
     if (!array->bucket_count) {
         int at = 0;
-        for (int i = 0; i < count; i++) {
-            if (i == skip) continue;
-            struct nm_leaf *leaf = nm_entries(old)[i];
-            nm_entries(array)[at] = leaf;
-            ((u32 *)array->buckets)[at++] = nm_child_hash(leaf, false);
-        }
-        if (extra) {
-            nm_entries(array)[at] = extra;
-            ((u32 *)array->buckets)[at] = nm_child_hash(extra, false);
-        }
+        for (int i = 0; i < count; i++)
+            if (i != skip) entries[at++] = nm_entries(old)[i];
+        if (extra) entries[at] = extra;
         return;
     }
-    for (;;) {
-        memset(array->buckets, 0, (array->bucket_count + 1) * sizeof(u64));
-        for (int i = 0; i < count; i++) {
-            if (i == skip) continue;
-            u32 hash = nm_child_hash(nm_entries(old)[i], array->full_hash);
-            array->buckets[nm_child_bucket(array, hash) + 1] += 1ULL << 32;
-        }
-        if (extra) array->buckets[nm_child_bucket(array, nm_child_hash(extra, array->full_hash)) + 1] += 1ULL << 32;
-        if (!array->full_hash) {
-            for (u16 i = 0; i < array->bucket_count; i++) {
-                if ((array->buckets[i + 1] >> 32) > 16) {
-                    array->full_hash = true;
-                    break;
-                }
-            }
-            if (array->full_hash) continue;
-        }
-        for (u16 i = 1; i <= array->bucket_count; i++) array->buckets[i] += array->buckets[i - 1] & ~0xffffffffULL;
-        for (int i = count - 1; i >= 0; i--) {
-            if (i != skip) nm_fill_child(array, nm_entries(old)[i]);
-        }
-        if (extra) nm_fill_child(array, extra);
-        for (u16 i = 0; i < array->bucket_count; i++) array->buckets[i] = (u32)array->buckets[i] | (array->buckets[i + 1] & ~0xffffffffULL);
-        array->buckets[array->bucket_count] = ((u64)array->count << 32) | (u32)array->buckets[array->bucket_count];
-        return;
+
+    memset(array->starts, 0, (array->bucket_count + 1) * sizeof(u32));
+    for (int i = 0; i < count; i++)
+        if (i != skip) array->starts[nm_child_bucket(array, nm_entries(old)[i]->child_hash)]++;
+    if (extra) array->starts[nm_child_bucket(array, extra->child_hash)]++;
+
+    for (b = 1; b <= array->bucket_count; b++)
+        array->starts[b] += array->starts[b - 1];
+
+    for (int i = count - 1; i >= 0; i--) {
+        if (i == skip) continue;
+        struct nm_leaf *leaf = nm_entries(old)[i];
+        entries[--array->starts[nm_child_bucket(array, leaf->child_hash)]] = leaf;
     }
+    if (extra)
+        entries[--array->starts[nm_child_bucket(array, extra->child_hash)]] = extra;
 }
 
 static bool nm_rules_need_readdir(struct nm_leaf *leaf, struct nm_rule_array *rules)
@@ -1433,27 +1401,22 @@ static int nm_inject_child_locked(struct nm_dir_node *dir_node, struct nm_leaf *
 {
     struct nm_child_array *array, *old = rcu_dereference_protected(dir_node->children, lockdep_is_held(&nm_mutex));
     int count = old ? old->count : 0;
+
     if (nm_find_leaf_in_dir(dir_node, name, name_len)) return -EEXIST;
-    if (!(array = nm_alloc_child_array(count + 1, old && old->full_hash))) return -ENOMEM;
     leaf->child_len = name_len;
     leaf->child_hash = full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, name, name_len);
+
+    if (!(array = nm_alloc_child_array(count + 1))) return -ENOMEM;
     if (old && old->bucket_count && array->bucket_count == old->bucket_count) {
-        u32 hash = nm_child_hash(leaf, array->full_hash);
-        u32 bucket = nm_child_bucket(array, hash), pos = old->buckets[bucket + 1] >> 32;
-        if (!array->full_hash && pos - (old->buckets[bucket] >> 32) >= 16) {
-            array->full_hash = true;
-            nm_rebuild_children(array, old, leaf, -1);
-        } else {
-            u16 i = 0;
-            for (; i <= bucket; i++) array->buckets[i] = old->buckets[i];
-            for (; i <= array->bucket_count; i++) array->buckets[i] = old->buckets[i] + (1ULL << 32);
-            array->buckets[bucket] |= 1U << (hash & 31);
-            if (array->full_hash) array->buckets[array->bucket_count] |= 1U << (nm_child_hash(leaf, false) & 31);
-            memcpy(nm_entries(array), nm_entries(old), pos * sizeof(struct nm_leaf *));
-            nm_entries(array)[pos] = leaf;
-            memcpy(nm_entries(array) + pos + 1, nm_entries(old) + pos, (count - pos) * sizeof(struct nm_leaf *));
-        }
+        u32 bucket = nm_child_bucket(array, leaf->child_hash), pos = old->starts[bucket + 1];
+        u16 i;
+        for (i = 0; i <= bucket; i++) array->starts[i] = old->starts[i];
+        for (; i <= array->bucket_count; i++) array->starts[i] = old->starts[i] + 1;
+        memcpy(nm_entries(array), nm_entries(old), pos * sizeof(struct nm_leaf *));
+        nm_entries(array)[pos] = leaf;
+        memcpy(nm_entries(array) + pos + 1, nm_entries(old) + pos, (count - pos) * sizeof(struct nm_leaf *));
     } else nm_rebuild_children(array, old, leaf, -1);
+
     leaf->parent_dir = dir_node;
     atomic_inc(&dir_node->refs);
     if (nm_rules_need_readdir(leaf, rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex))))
@@ -1475,21 +1438,14 @@ static struct nm_dir_node *nm_delete_child_locked(struct nm_leaf *leaf, bool cle
         if (pos == old->count) return dir_node;
         if (old->count > 1) {
             int new_count = old->count - 1;
-            if (!(array = nm_alloc_child_array(new_count, old->full_hash))) return ERR_PTR(-ENOMEM);
+            if (!(array = nm_alloc_child_array(new_count))) return ERR_PTR(-ENOMEM);
             if (array->bucket_count && array->bucket_count == old->bucket_count) {
-                u32 bucket = nm_child_bucket(array, nm_child_hash(leaf, array->full_hash));
-                u16 i = 0;
-                for (; i <= bucket; i++) array->buckets[i] = old->buckets[i];
-                for (; i <= array->bucket_count; i++) array->buckets[i] = old->buckets[i] - (1ULL << 32);
+                u32 bucket = nm_child_bucket(array, leaf->child_hash);
+                u16 i;
+                for (i = 0; i <= bucket; i++) array->starts[i] = old->starts[i];
+                for (; i <= array->bucket_count; i++) array->starts[i] = old->starts[i] - 1;
                 memcpy(nm_entries(array), nm_entries(old), pos * sizeof(struct nm_leaf *));
                 memcpy(nm_entries(array) + pos, nm_entries(old) + pos + 1, (new_count - pos) * sizeof(struct nm_leaf *));
-                array->buckets[bucket] &= ~0xffffffffULL;
-                u32 end = array->buckets[bucket + 1] >> 32;
-                for (u32 j = array->buckets[bucket] >> 32; j < end; j++) array->buckets[bucket] |= 1U << (nm_child_hash(nm_entries(array)[j], array->full_hash) & 31);
-                if (array->full_hash) {
-                    array->buckets[array->bucket_count] &= ~0xffffffffULL;
-                    for (int j = 0; j < new_count; j++) array->buckets[array->bucket_count] |= 1U << (nm_child_hash(nm_entries(array)[j], false) & 31);
-                }
             } else nm_rebuild_children(array, old, NULL, pos);
         }
     }
