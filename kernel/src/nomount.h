@@ -82,17 +82,12 @@ struct nm_inode_info {
     struct rcu_head rcu;
 };
 
-struct nm_child {
-    u32 hash;
-    u32 bloom_hash;
-    struct nm_leaf *leaf;
-};
-
 struct nm_child_array {
     struct rcu_head rcu;
     int count;
-    u32 bloom_words;
-    u64 bloom[] __aligned(8);
+    u16 bucket_count;
+    bool full_hash;
+    u64 buckets[] __aligned(8);
 };
 
 struct nm_dir_node {
@@ -134,6 +129,7 @@ struct nm_leaf {
     u16 v_len;
     u16 child_len;
     bool native_file;
+    u32 child_hash;
     struct hlist_node ht_node;
     struct nm_leaf *next;
     char paths[];
@@ -157,26 +153,25 @@ struct nm_uid_array {
     uid_t uids[];
 };
 
-static inline struct nm_child *nm_entries(struct nm_child_array *arr)
+static inline struct nm_leaf **nm_entries(struct nm_child_array *arr)
 {
-    return (struct nm_child *)(arr->bloom + arr->bloom_words);
+    return (struct nm_leaf **)(arr->buckets + arr->bucket_count + 1);
 }
 
-static inline int nm_bloom_words_for(int count)
+static inline u16 nm_child_buckets_for(int count)
 {
     if (count <= 2)   return 0;
-    if (count <= 16)  return 4;
-    if (count <= 64)  return 16;
-    if (count <= 256) return 64;
-    if (count <= 1024) return 128;
-    return 256;
+    if (count <= 16)  return 8;
+    if (count <= 64)  return 32;
+    if (count <= 256) return 128;
+    if (count <= 1024) return 256;
+    return 512;
 }
 
-#define nm_bloom_set(arr, hash) \
-    ((arr)->bloom[((hash) >> 6) & ((arr)->bloom_words - 1)] |= 1ULL << ((hash) & 63))
-
-#define nm_bloom_test(arr, hash) \
-    (!!((arr)->bloom[((hash) >> 6) & ((arr)->bloom_words - 1)] & (1ULL << ((hash) & 63))))
+static inline u32 nm_child_bucket(struct nm_child_array *arr, u32 hash)
+{
+    return (hash >> 5) & (arr->bucket_count - 1);
+}
 
 static __always_inline u32 nm_qhash(const char *name, size_t len)
 {
@@ -184,6 +179,11 @@ static __always_inline u32 nm_qhash(const char *name, size_t len)
     h = (h << 5) + (u8)name[len - 1];
     h = (h << 5) + (u8)name[len >> 1];
     return h;
+}
+
+static inline u32 nm_child_hash(struct nm_leaf *leaf, bool full)
+{
+    return full ? leaf->child_hash : nm_qhash(nm_get_child_name(leaf), leaf->child_len);
 }
 
 /*** Operaction Vectors ***/
