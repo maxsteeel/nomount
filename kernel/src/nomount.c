@@ -1132,10 +1132,15 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
 
     if (!nm_sop) {
         if (!with_xattr && (sb_rdonly(sb) || nm_is_pseudo_fs(sb))) return 0;
+        bool kernfs = with_xattr && nm_is_kernfs(sb);
+        if (kernfs) {
+            list_for_each_entry(nm_sop, &nm_sb_list, list)
+                if (nm_sop->sb == sb) return 0;
+        }
         if (!(nm_sop = kzalloc(sizeof(*nm_sop), GFP_KERNEL))) return -ENOMEM;
         nm_sop->orig_sop = sb->s_op;
         nm_sop->sb = sb;
-        if (with_xattr && nm_is_kernfs(sb)) {
+        if (kernfs) {
             list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
             return 0;
         }
@@ -1441,7 +1446,7 @@ static struct nm_leaf *nm_find_leaf(const char *path, u16 len)
     struct nm_leaf *leaf;
     u32 hash = full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, path, len);
     hash_for_each_possible(nm_leaves_ht, leaf, ht_node, hash) {
-        if (leaf->v_len == len && !memcmp(leaf->paths, path, len)) return leaf;
+        if (leaf->v_hash == hash && leaf->v_len == len && !memcmp(leaf->paths, path, len)) return leaf;
     }
     return NULL;
 }
