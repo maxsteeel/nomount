@@ -515,7 +515,7 @@ static int nm_hijacked_unlink(struct inode *dir, struct dentry *dentry)
     return 0;
 
 do_real_unlink:
-    if (inode && nm_inode_is_virtual(inode)) return -ENOENT;
+    if (nm_inode_is_virtual(inode)) return -ENOENT;
     if (nm_iop && nm_iop->orig_iop && nm_iop->orig_iop->unlink)
         return nm_iop->orig_iop->unlink(dir, dentry);
     return -EPERM;
@@ -1326,7 +1326,7 @@ static struct nm_dir_node *nm_alloc_dir_node(void)
 static struct nm_child_array *nm_alloc_child_array(int count)
 {
     u16 buckets = nm_child_buckets_for(count);
-    size_t sz = sizeof(struct nm_child_array) + (buckets + 1) * sizeof(u32) + 8 + count * sizeof(struct nm_leaf *);
+    size_t sz = ALIGN(sizeof(struct nm_child_array) + (buckets + 1) * sizeof(u32), 8) + count * sizeof(struct nm_leaf *);
     struct nm_child_array *array = kmalloc(sz, GFP_KERNEL);
     if (array) {
         array->count = count;
@@ -1468,13 +1468,11 @@ static struct nm_rule_array *nm_alloc_rule_array(int count, size_t heap_size)
     return arr;
 }
 
-static int nm_prepare_rule(const char *r_path, u16 r_len, u32 flags, unsigned int uid, unsigned int uid_end,
+static int nm_prepare_rule(const char *r_path, u32 flags, unsigned int uid, unsigned int uid_end,
                            unsigned int deny_start, unsigned int deny_end, struct nm_rule *out, struct name_snapshot *name)
 {
     bool backed = !(flags & (NM_FLAG_WHITEOUT | NM_FLAG_VIRTUAL_DIR));
     if (backed && !r_path) return -EINVAL;
-    if (backed) while (r_len > 1 && r_path[r_len - 1] == '/') r_len--;
-    else r_len = 0;
 
     memset(out, 0, sizeof(*out));
     out->flags = flags;
@@ -1835,13 +1833,9 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     }
 
     char *r_buf = NULL;
-    if (r_path && r_len) {
-        if (!(r_buf = kmalloc(r_len + 1, GFP_KERNEL))) return -ENOMEM;
-        memcpy(r_buf, r_path, r_len);
-        r_buf[r_len] = '\0';
-    }
+    if (r_path && r_len && !(r_buf = kmemdup_nul(r_path, r_len, GFP_KERNEL))) return -ENOMEM;
 
-    err = nm_prepare_rule(r_buf, r_len, flags, uid, uid_end, deny_start, deny_end, &new_rule, &name);
+    err = nm_prepare_rule(r_buf, flags, uid, uid_end, deny_start, deny_end, &new_rule, &name);
     if (err) { kfree(r_buf); return err; }
 
     while (v_len > 1 && v_path[v_len - 1] == '/') v_len--;
@@ -1876,11 +1870,9 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
         goto out_leaf;
     }
 
-    if (old) {
-        for (int i = 0; i < count; i++) {
-            if (replace && i == pos) continue;
-            heap_size += old->rules[i].r_name_len;
-        }
+    for (int i = 0; i < count; i++) {
+        if (replace && i == pos) continue;
+        heap_size += old->rules[i].r_name_len;
     }
     heap_size += new_rule.r_name_len;
 
@@ -1890,13 +1882,9 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     }
 
     char *new_h = nm_rule_heap(array);
-    if (old) {
-        for (int i = 0; i < pos; i++, j++) new_h = nm_copy_rule(&array->rules[j], &old->rules[i], new_h);
-        new_h = nm_copy_rule(&array->rules[j++], &new_rule, new_h);
-        for (int i = pos + replace; i < count; i++, j++) new_h = nm_copy_rule(&array->rules[j], &old->rules[i], new_h);
-    } else {
-        nm_copy_rule(&array->rules[0], &new_rule, new_h);
-    }
+    for (int i = 0; i < pos; i++, j++) new_h = nm_copy_rule(&array->rules[j], &old->rules[i], new_h);
+    new_h = nm_copy_rule(&array->rules[j++], &new_rule, new_h);
+    for (int i = pos + replace; i < count; i++, j++) new_h = nm_copy_rule(&array->rules[j], &old->rules[i], new_h);
     array->uid_count = new_count - (!array->rules[0].target_uid && !array->rules[0].uid_end);
 
     if (new_dir) {
@@ -1947,7 +1935,7 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
         stub_virtual = true;
     }
 
-    if (!stub_virtual && old->count == 1 && (!leaf->this_dir || !rcu_access_pointer(leaf->this_dir->children))) {
+    if (!stub_virtual && old->count == 1) {
         struct nm_dir_node *parent = nm_detach_leaf_locked(leaf);
         if (IS_ERR(parent)) return PTR_ERR(parent);
         return parent ? nm_prune_empty_virtual_dirs_locked(parent) : 0;
