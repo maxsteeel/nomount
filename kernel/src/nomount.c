@@ -2136,29 +2136,21 @@ static int nm_process_payload(unsigned long user_addr)
                     char *p = NULL;
                     int r_len_str = 0;
                     if (current_idx++ < payload->arg1) continue;
+
                     size_t head_len = sizeof(struct nm_rule_hdr) + leaf->v_len;
-                    u16 name_len = r->r_parent && r->r_path.dentry != r->r_path.mnt->mnt_root ? r->r_name_len : 0;
-                    if (head_len + name_len > (size_t)(buf_end - buf_ptr)) goto list_full;
+                    if (head_len > (size_t)(buf_end - buf_ptr)) goto list_full;
                     if (r->r_path.dentry) {
-                        struct path path = r->r_path;
-                        char *end = buf_end - name_len;
-                        if (name_len) path.dentry = r->r_parent;
-                        p = d_path(&path, buf_ptr, end - buf_ptr);
+                        p = d_path(&r->r_path, buf_ptr + head_len, buf_end - (buf_ptr + head_len));
                         if (IS_ERR(p)) {
                             if (PTR_ERR(p) == -ENAMETOOLONG) goto list_full;
                             payload->status = PTR_ERR(p);
                             goto list_done;
                         }
-                        r_len_str = strnlen(p, end - p - 1);
-                        if (name_len) {
-                            if (r_len_str == 1 && p[0] == '/') r_len_str = 0;
-                            p[r_len_str++] = '/';
-                            memcpy(p + r_len_str, r->r_name, name_len);
-                            r_len_str += name_len;
-                        }
+                        r_len_str = strnlen(p, buf_end - p);
                     }
+
                     if (head_len + r_len_str > (size_t)(buf_end - buf_ptr)) goto list_full;
-                    if (p) memmove(buf_ptr + head_len, p, r_len_str);
+                    if (p && p != buf_ptr + head_len) memmove(buf_ptr + head_len, p, r_len_str);
                     *(struct nm_rule_hdr *)buf_ptr = (struct nm_rule_hdr){
                         .flags = r->flags, .v_len = leaf->v_len, .r_len = r_len_str,
                         .uid = r->target_uid, .uid_end = r->uid_end,
@@ -2172,7 +2164,7 @@ static int nm_process_payload(unsigned long user_addr)
             goto list_done;
         list_full:
             current_idx--;
-            if (buf_ptr == payload->buffer) payload->status = -ENAMETOOLONG;
+            if (current_idx == (int)payload->arg1) payload->status = -ENAMETOOLONG;
         list_done:
             payload->data_size = buf_ptr - payload->buffer;
             payload->arg1 = current_idx;
