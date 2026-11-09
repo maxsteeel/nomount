@@ -84,12 +84,13 @@ let cachedI18nNodes = null;
 async function setAppLocale(locale, refreshView = true) {
     activeLocale = locale in LOCALE_NAMES ? locale : 'en';
 
-    for (const loc of ['en', activeLocale]) if (!translationsCache[loc]) {
+    await Promise.all(Array.from(new Set(['en', activeLocale]), async loc => {
+        if (translationsCache[loc]) return;
         try {
             const response = await fetch(`./locales/${loc}.json`);
             translationsCache[loc] = response.ok ? await response.json() : {};
         } catch { translationsCache[loc] = {}; }
-    }
+    }));
 
     translations = translationsCache[activeLocale];
     document.documentElement.lang = activeLocale;
@@ -629,12 +630,14 @@ async function loadHome(readModuleInfo = readModules) {
 
     const script = `
         uname -r; echo "|||"
-        getprop ro.product.vendor.model; [ -z "$(getprop ro.product.vendor.model)" ] && getprop ro.product.model; echo "|||"
+        model=$(getprop ro.product.vendor.model)
+        [ -n "$model" ] || model=$(getprop ro.product.model)
+        printf '%s\\n' "$model"; echo "|||"
         getprop ro.build.version.release; echo "|||"
         getprop ro.build.version.sdk; echo "|||"
-        grep "version=" ${MOD_DIR}/nomount/module.prop | cut -d= -f2; echo "|||"
-        ${NM_BIN} version; echo "|||"
-        if ${NM_BIN} version > /dev/null 2>&1; then lsmod | grep -q nomount && echo lkm || echo built-in; fi
+        sed -n 's/^version=\\([^=]*\\).*/\\1/p' ${MOD_DIR}/nomount/module.prop; echo "|||"
+        ${NM_BIN} version; driver_status=$?; echo "|||"
+        if [ "$driver_status" -eq 0 ]; then lsmod | grep -q nomount && echo lkm || echo built-in; fi
     `;
 
     try {
