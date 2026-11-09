@@ -716,35 +716,57 @@ async function loadModules() {
     const renderId = ++currentRenderId;
 
     try {
+        const partitionFilter = TARGET_PARTITIONS.split(' ').filter(Boolean).map(p => `-path "*/${p}/*"`).join(' -o ');
         const script = `
             ${NM_BIN} rule list --json; echo "|||"
             cd ${MOD_DIR}
+            MODS=""
             for mod in *; do
-                [ ! -d "$mod" ] || [ "$mod" = "nomount" ] || [ ! -f "$mod/module.prop" ] && continue
+                [ ! -d "$mod" ] && continue
+                [ "$mod" = "nomount" ] && continue
+                [ ! -f "$mod/module.prop" ] && continue
                 has_injectable=0
                 for p in ${TARGET_PARTITIONS}; do [ -d "$mod/$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && has_injectable=1 && break; done
                 [ $has_injectable -eq 0 ] && continue
-                echo "$mod|$(grep "^name=" "$mod/module.prop" | head -n1 | cut -d= -f2-)|$([ -f "$mod/disable" ] && echo true || echo false)|$([ -f "$mod/skip_mount" ] && echo true || echo false)"
+                name=""
+                while IFS='=' read -r k v; do case "$k" in name) name="$v"; break;; esac; done < "$mod/module.prop"
+                disable=false; [ -f "$mod/disable" ] && disable=true
+                skip=false; [ -f "$mod/skip_mount" ] && skip=true
+                printf '@@M\\t%s\\t%s\\t%s\\t%s\\n' "$mod" "$name" "$disable" "$skip"
+                [ "$disable" = "false" ] && [ "$skip" = "false" ] && MODS="$MODS $mod"
             done
+            [ -n "$MODS" ] && find $MODS -type l \\( ${partitionFilter} \\) -exec sh -c 'for f; do
+                rest=\${f#"${MOD_DIR}"/}; m=\${rest%%/*}
+                r=\$(readlink -f "\$f")
+                [ -n "\$r" ] && printf "@@S\\t%s\\t%s\\n" "\$m" "\$r"
+            done' _ {} +
         `;
 
         const { stdout } = await exec(script);
         const [jsonPart, modulesPart] = stdout.split('|||');
-        
         const activeRules = JSON.parse(jsonPart?.trim() || "[]");
-        const lines = (modulesPart || '').split('\n').filter(Boolean);
-        
+        const activeReal = new Set(activeRules.map(r => r?.real).filter(Boolean));
         const ruleCountByMod = {};
+        const moduleInfo = [];
+
         activeRules.forEach(r => {
             if (r?.real?.startsWith(MOD_DIR)) {
                 const parts = r.real.split('/');
-                if (parts[4] && parts[4] !== 'nomount') ruleCountByMod[parts[4]] = (ruleCountByMod[parts[4]] || 0) + 1;
+                if (parts[4] && parts[4] !== 'nomount')
+                    ruleCountByMod[parts[4]] = (ruleCountByMod[parts[4]] || 0) + 1;
             }
         });
 
-        const htmlArr = lines.map(line => {
-            const [modId, realName, disableStr, skipStr] = line.split('|');
-            const hasDisable = disableStr === 'true', hasSkipMount = skipStr === 'true';
+        (modulesPart || '').split('\n').filter(Boolean).forEach(line => {
+            const parts = line.split('\t');
+            if (parts[0] === '@@M' && parts.length === 5) {
+                moduleInfo.push({ modId: parts[1], realName: parts[2], disable: parts[3] === 'true', skipMount: parts[4] === 'true' });
+            } else if (parts[0] === '@@S' && parts.length === 3 && activeReal.has(parts[2])) {
+                ruleCountByMod[parts[1]] = (ruleCountByMod[parts[1]] || 0) + 1;
+            }
+        });
+
+        const htmlArr = moduleInfo.map(({ modId, realName, disable: hasDisable, skipMount: hasSkipMount }) => {
             const fileCount = ruleCountByMod[modId] || 0;
             const isLoaded = fileCount > 0;
             const statusKey = isLoaded ? ((hasDisable || hasSkipMount) ? 'status_loaded' : 'status_active') : (hasDisable ? 'status_disabled' : (hasSkipMount ? 'status_skipped' : 'status_inactive'));
@@ -788,7 +810,7 @@ async function loadModules() {
         });
 
         if (renderId === currentRenderId) {
-            lines.length === 0 ? renderEmptyState(listContainer, '(._.)', translate('no_modules_found')) : listContainer.innerHTML = htmlArr.join('');
+            moduleInfo.length === 0 ? renderEmptyState(listContainer, '(._.)', translate('no_modules_found')) : listContainer.innerHTML = htmlArr.join('');
         }
     } catch (e) {
         renderTextState(listContainer, 'error-message', `Error: ${e.message}`);
@@ -1565,10 +1587,18 @@ function getManualUid() {
 
 function initDelegationAndAttach() {
     const updateModuleCardDOM = async (card, modId) => {
-        const { stdout } = await exec(`${NM_BIN} rule list --json 2>/dev/null`);
-        const activeRules = JSON.parse(stdout.trim() || "[]");
+        const prefix = `${MOD_DIR}/${modId}/`;
+        const [rulesRes, symRes] = await Promise.all([
+            exec(`${NM_BIN} rule list --json 2>/dev/null`),
+            exec(`find "${MOD_DIR}/${modId}" -type l -exec readlink -f {} + 2>/dev/null`)
+        ]);
+        const activeRules = JSON.parse(rulesRes.stdout.trim() || "[]");
+        const activeReal = new Set(activeRules.map(r => r?.real).filter(Boolean));
         let newFileCount = 0;
-        activeRules.forEach(r => { if (r?.real?.startsWith(`${MOD_DIR}/${modId}/`)) newFileCount++; });
+        activeRules.forEach(r => { if (r?.real?.startsWith(prefix)) newFileCount++; });
+        symRes.stdout.split('\n').filter(Boolean).forEach(r => {
+            if (activeReal.has(r)) newFileCount++;
+        });
         const nowLoaded = newFileCount > 0;
         const toggleChecked = card.querySelector('.switch-input').checked;
         const hasSkipMount = card.querySelector('.btn-skip-action')?.classList.contains('unskip');
