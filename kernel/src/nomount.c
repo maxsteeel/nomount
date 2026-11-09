@@ -2133,25 +2133,46 @@ static int nm_process_payload(unsigned long user_addr)
                 if (!rules) continue;
                 for (int i = 0; i < rules->count; i++) {
                     struct nm_rule *r = &rules->rules[i];
-                    char path_buf[PATH_MAX / 4], *p = NULL;
+                    char *p = NULL;
                     int r_len_str = 0;
                     if (current_idx++ < payload->arg1) continue;
+                    size_t head_len = sizeof(struct nm_rule_hdr) + leaf->v_len;
+                    u16 name_len = r->r_parent && r->r_path.dentry != r->r_path.mnt->mnt_root ? r->r_name_len : 0;
+                    if (head_len + name_len > (size_t)(buf_end - buf_ptr)) goto list_full;
                     if (r->r_path.dentry) {
-                        if (!IS_ERR((p = d_path(&r->r_path, path_buf, sizeof(path_buf))))) r_len_str = strlen(p);
-                        else p = NULL;
+                        struct path path = r->r_path;
+                        char *end = buf_end - name_len;
+                        if (name_len) path.dentry = r->r_parent;
+                        p = d_path(&path, buf_ptr, end - buf_ptr);
+                        if (IS_ERR(p)) {
+                            if (PTR_ERR(p) == -ENAMETOOLONG) goto list_full;
+                            payload->status = PTR_ERR(p);
+                            goto list_done;
+                        }
+                        r_len_str = strnlen(p, end - p - 1);
+                        if (name_len) {
+                            if (r_len_str == 1 && p[0] == '/') r_len_str = 0;
+                            p[r_len_str++] = '/';
+                            memcpy(p + r_len_str, r->r_name, name_len);
+                            r_len_str += name_len;
+                        }
                     }
-                    if ((sizeof(struct nm_rule_hdr) + leaf->v_len + r_len_str) > (size_t)(buf_end - buf_ptr)) { current_idx--; goto list_done; }
+                    if (head_len + r_len_str > (size_t)(buf_end - buf_ptr)) goto list_full;
+                    if (p) memmove(buf_ptr + head_len, p, r_len_str);
                     *(struct nm_rule_hdr *)buf_ptr = (struct nm_rule_hdr){
                         .flags = r->flags, .v_len = leaf->v_len, .r_len = r_len_str,
                         .uid = r->target_uid, .uid_end = r->uid_end,
                         .deny_start = r->deny_start, .deny_end = r->deny_end
                     };
                     buf_ptr += sizeof(struct nm_rule_hdr);
-                    memcpy(buf_ptr, leaf->paths, leaf->v_len); buf_ptr += leaf->v_len;
-                    if (p) { memcpy(buf_ptr, p, r_len_str); buf_ptr += r_len_str; }
+                    memcpy(buf_ptr, leaf->paths, leaf->v_len); buf_ptr += leaf->v_len + r_len_str;
                 }
             }
             current_idx = -1;
+            goto list_done;
+        list_full:
+            current_idx--;
+            if (buf_ptr == payload->buffer) payload->status = -ENAMETOOLONG;
         list_done:
             payload->data_size = buf_ptr - payload->buffer;
             payload->arg1 = current_idx;
