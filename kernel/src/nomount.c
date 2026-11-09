@@ -1486,7 +1486,6 @@ static int nm_prepare_rule(const char *r_path, u16 r_len, u32 flags, unsigned in
     else r_len = 0;
 
     memset(out, 0, sizeof(*out));
-    out->r_len = r_len;
     out->flags = flags;
     out->target_uid = uid;
     out->uid_end = uid_end;
@@ -1529,22 +1528,16 @@ static int nm_prepare_rule(const char *r_path, u16 r_len, u32 flags, unsigned in
     return 0;
 }
 
-static inline size_t nm_rule_heap_size(const struct nm_rule *rule)
-{
-    return rule->r_len + rule->r_name_len;
-}
-
-static inline char *nm_copy_rule(struct nm_rule *dst, const struct nm_rule *src, char *dst_h, const char *src_h)
+static inline char *nm_copy_rule(struct nm_rule *dst, const struct nm_rule *src, char *dst_h)
 {
     *dst = *src;
     if (dst->r_path.dentry) path_get(&dst->r_path);
     if (dst->r_parent) dget(dst->r_parent);
-    memcpy(dst_h, src_h, src->r_len);
     if (src->r_name) {
-        dst->r_name = dst_h + src->r_len;
-        memcpy(dst_h + src->r_len, src->r_name, src->r_name_len);
+        dst->r_name = dst_h;
+        memcpy(dst_h, src->r_name, src->r_name_len);
     }
-    return dst_h + nm_rule_heap_size(src);
+    return dst_h + src->r_name_len;
 }
 
 static struct nm_leaf *nm_alloc_leaf(const char *path, u16 len)
@@ -1895,10 +1888,10 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     if (old) {
         for (int i = 0; i < count; i++) {
             if (replace && i == pos) continue;
-            heap_size += nm_rule_heap_size(&old->rules[i]);
+            heap_size += old->rules[i].r_name_len;
         }
     }
-    heap_size += nm_rule_heap_size(&new_rule);
+    heap_size += new_rule.r_name_len;
 
     if (!(array = nm_alloc_rule_array(new_count, heap_size))) {
         err = -ENOMEM;
@@ -1907,21 +1900,11 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
 
     char *new_h = nm_rule_heap(array);
     if (old) {
-        const char *old_h = nm_rule_heap(old);
-        for (int i = 0; i < pos; i++, j++) {
-            new_h = nm_copy_rule(&array->rules[j], &old->rules[i], new_h, old_h);
-            old_h += nm_rule_heap_size(&old->rules[i]);
-        }
-        if (replace) old_h += nm_rule_heap_size(&old->rules[pos]);
-
-        new_h = nm_copy_rule(&array->rules[j++], &new_rule, new_h, r_buf);
-
-        for (int i = pos + replace; i < count; i++, j++) {
-            new_h = nm_copy_rule(&array->rules[j], &old->rules[i], new_h, old_h);
-            old_h += nm_rule_heap_size(&old->rules[i]);
-        }
+        for (int i = 0; i < pos; i++, j++) new_h = nm_copy_rule(&array->rules[j], &old->rules[i], new_h);
+        new_h = nm_copy_rule(&array->rules[j++], &new_rule, new_h);
+        for (int i = pos + replace; i < count; i++, j++) new_h = nm_copy_rule(&array->rules[j], &old->rules[i], new_h);
     } else {
-        nm_copy_rule(&array->rules[0], &new_rule, new_h, r_buf);
+        nm_copy_rule(&array->rules[0], &new_rule, new_h);
     }
     array->uid_count = new_count - (!array->rules[0].target_uid && !array->rules[0].uid_end);
 
@@ -1982,26 +1965,24 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
     new_count = stub_virtual ? old->count : old->count - 1;
     for (int i = 0; i < old->count; i++) {
         if (i == pos) continue;
-        heap_size += nm_rule_heap_size(&old->rules[i]);
+        heap_size += old->rules[i].r_name_len;
     }
 
     if (!(array = nm_alloc_rule_array(new_count, heap_size))) return -ENOMEM;
 
     char *new_h = nm_rule_heap(array);
-    const char *old_h = nm_rule_heap(old);
     for (int i = 0, j = 0; i < old->count; i++) {
-        if (!stub_virtual && i == pos) { old_h += nm_rule_heap_size(&old->rules[i]); continue; }
+        if (!stub_virtual && i == pos) continue;
         if (stub_virtual && i == pos) {
             array->rules[j] = (struct nm_rule){
                 .target_uid = uid, .uid_end = uid_end,
                 .deny_start = deny_start, .deny_end = deny_end,
                 .flags = NM_FLAG_IS_DIR | NM_FLAG_VIRTUAL_DIR,
             };
-            j++; old_h += nm_rule_heap_size(&old->rules[i]);
+            j++;
             continue;
         }
-        new_h = nm_copy_rule(&array->rules[j], &old->rules[i], new_h, old_h);
-        old_h += nm_rule_heap_size(&old->rules[i]);
+        new_h = nm_copy_rule(&array->rules[j], &old->rules[i], new_h);
         j++;
     }
     array->uid_count = new_count - (!array->rules[0].target_uid && !array->rules[0].uid_end);
@@ -2150,20 +2131,24 @@ static int nm_process_payload(unsigned long user_addr)
             hash_for_each_rcu(nm_leaves_ht, bkt, leaf, ht_node) {
                 struct nm_rule_array *rules = rcu_dereference(leaf->rules);
                 if (!rules) continue;
-                const char *heap = nm_rule_heap(rules);
                 for (int i = 0; i < rules->count; i++) {
                     struct nm_rule *r = &rules->rules[i];
-                    if (current_idx++ < payload->arg1) { heap += nm_rule_heap_size(r); continue; }
-                    if ((sizeof(struct nm_rule_hdr) + leaf->v_len + r->r_len) > (size_t)(buf_end - buf_ptr)) { current_idx--; goto list_done; }
+                    char path_buf[PATH_MAX / 4], *p = NULL;
+                    int r_len_str = 0;
+                    if (current_idx++ < payload->arg1) continue;
+                    if (r->r_path.dentry) {
+                        if (!IS_ERR((p = d_path(&r->r_path, path_buf, sizeof(path_buf))))) r_len_str = strlen(p);
+                        else p = NULL;
+                    }
+                    if ((sizeof(struct nm_rule_hdr) + leaf->v_len + r_len_str) > (size_t)(buf_end - buf_ptr)) { current_idx--; goto list_done; }
                     *(struct nm_rule_hdr *)buf_ptr = (struct nm_rule_hdr){
-                        .flags = r->flags, .v_len = leaf->v_len, .r_len = r->r_len,
+                        .flags = r->flags, .v_len = leaf->v_len, .r_len = r_len_str,
                         .uid = r->target_uid, .uid_end = r->uid_end,
                         .deny_start = r->deny_start, .deny_end = r->deny_end
                     };
                     buf_ptr += sizeof(struct nm_rule_hdr);
                     memcpy(buf_ptr, leaf->paths, leaf->v_len); buf_ptr += leaf->v_len;
-                    if (r->r_len > 0) { memcpy(buf_ptr, heap, r->r_len); buf_ptr += r->r_len; }
-                    heap += nm_rule_heap_size(r);
+                    if (p) { memcpy(buf_ptr, p, r_len_str); buf_ptr += r_len_str; }
                 }
             }
             current_idx = -1;

@@ -106,7 +106,6 @@ struct nm_rule {
     unsigned int uid_end;
     unsigned int deny_start;
     unsigned int deny_end;
-    u16 r_len;
     u16 r_name_len;
     u16 flags;
 };
