@@ -1,5 +1,10 @@
-kind=$1; mod=$2; shift 2
+kind=$1; shift
+case "$kind" in links|scan) ;; *) mod=$1; shift;; esac
 for f do
+    case "$kind" in links|scan)
+        [ -L "$f" ] || continue
+        mod=${f%%/*}
+    ;; esac
     case "$f" in
         "$mod"/*) v="${f#"$mod"/}";;
         *) v="$f"; f="$mod/$f";;
@@ -10,7 +15,14 @@ for f do
             v="$p${v#system/$p}" ;;
         esac
     ;; esac
-    if [ "$kind" = pair ]; then
+    if [ "$kind" = links ] || [ "$kind" = scan ]; then
+        r=$(readlink -f "$f") || continue
+        dir=false; [ -d "$f" ] && dir=true
+        printf '@@S\t%s\t/%s\t%s\t%s\n' "${mod##*/}" "$v" "$r" "$dir"
+        if [ "$kind" = scan ] && [ "$dir" = true ]; then
+            find -L "$f" -mindepth 1 -exec sh "$0" links {} + || exit 1
+        fi
+    elif [ "$kind" = pair ]; then
         printf "/%s\0%s\0" "$v" "$f"
     elif [ "$kind" = del ]; then
         case "${f##*/}" in

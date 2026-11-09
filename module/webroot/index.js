@@ -624,7 +624,7 @@ function initNavigation() {
 }
 
 // Home
-async function loadHome() {
+async function loadHome(readModuleInfo = readModules) {
     try { applyHomeData(JSON.parse(localStorage.getItem('nm_home_cache'))); } catch (e) { console.error("Error loading cache:", e); }
 
     const script = `
@@ -634,53 +634,49 @@ async function loadHome() {
         getprop ro.build.version.sdk; echo "|||"
         grep "version=" ${MOD_DIR}/nomount/module.prop | cut -d= -f2; echo "|||"
         ${NM_BIN} version; echo "|||"
-        ${NM_BIN} rule list --json; echo "|||"
         if ${NM_BIN} version > /dev/null 2>&1; then lsmod | grep -q nomount && echo lkm || echo built-in; fi
     `;
 
     try {
-        const parts = (await exec(script)).stdout.split('|||').map(s => s.trim());
-        if (!parts[6]) parts[6] = "[]";
-        let activeModulesCount = 0;
-        try {
-            const rules = JSON.parse(parts[6]);
-            const modCounts = {};
-            rules.forEach(r => {
-                if (r?.real?.startsWith(MOD_DIR)) {
-                    const modName = r.real.split('/')[4];
-                    if (modName && modName !== 'nomount') modCounts[modName] = 1;
-                }
-            });
-            activeModulesCount = Object.keys(modCounts).length;
-        } catch (e) { console.error("Error parsing rules:", e); }
+        await Promise.all([
+            exec(script).then(({ stdout }) => {
+                const parts = stdout.split('|||').map(s => s.trim());
+                const unk = translate('unknown_value');
+                const raw = parts.slice(0, 6);
+                const kVer = raw[0] || unk,
+                      model = raw[1] || unk,
+                      aRel = raw[2] || unk,
+                      aSdk = raw[3] || unk,
+                      mVer = raw[4] || unk,
+                      dVer = raw[5] || unk;
 
-        const unk = translate('unknown_value');
-        const raw = parts.slice(0, 6);
-        const kVer = raw[0] || unk,
-              model = raw[1] || unk,
-              aRel = raw[2] || unk,
-              aSdk = raw[3] || unk,
-              mVer = raw[4] || unk,
-              dVer = raw[5] || unk;
+                const nmMode = (parts[6] || '').toLowerCase();
+                const homeData = {
+                    kernelVer: kVer, deviceModel: model,
+                    androidInfo: `Android ${aRel} (API ${aSdk})`,
+                    driverVersion: `${dVer}`,
+                    moduleVersion: `${mVer}`,
+                    active: dVer !== unk,
+                    nmMode
+                };
 
-        const nmMode = (parts[7] || '').toLowerCase();
-        const homeData = {
-            kernelVer: kVer, deviceModel: model,
-            androidInfo: `Android ${aRel} (API ${aSdk})`,
-            driverVersion: `${dVer}`,
-            moduleVersion: `${mVer}`,
-            active: dVer !== unk,
-            nmMode
-        };
-
-        requestAnimationFrame(() => {
-            applyHomeData(homeData, activeModulesCount === 1 ? translate('module_injected_count') : translate('modules_injected_count', { count: activeModulesCount }));
-            localStorage.setItem('nm_home_cache', JSON.stringify(homeData));
-        });
+                requestAnimationFrame(() => {
+                    applyHomeData(homeData);
+                    localStorage.setItem('nm_home_cache', JSON.stringify(homeData));
+                });
+            }),
+            readModuleInfo().then(modules => {
+                const count = modules.filter(mod => mod.fileCount > 0).length;
+                requestAnimationFrame(() => {
+                    const stats = getHomeElements().stats;
+                    if (stats) stats.textContent = count === 1 ? translate('module_injected_count') : translate('modules_injected_count', { count });
+                });
+            })
+        ]);
     } catch (e) { console.error("Delayed Home update error:", e); }
 }
 
-function applyHomeData(data, statsText) {
+function applyHomeData(data) {
     const el = getHomeElements();
     if (el.kernel) el.kernel.textContent = data.kernelVer || translate('unknown_value');
     if (el.device) el.device.textContent = data.deviceModel || translate('unknown_value');
@@ -691,7 +687,6 @@ function applyHomeData(data, statsText) {
     if (el.statusLabel) el.statusLabel.textContent = translate('status_version', {
         version: (data.driverVersion || translate('unknown_value')).replace(/^v(?=\d)/i, '')
     });
-    if (statsText && el.stats) el.stats.textContent = statsText;
 
     if (el.statusTitle) el.statusTitle.textContent = translate(data.active ? 'status_active' : 'status_inactive');
     [el.statusLabel, el.statusCard].forEach(e => {
@@ -710,66 +705,82 @@ function applyHomeData(data, statsText) {
 // Modules
 let currentRenderId = 0;
 const TARGET_PARTITIONS = "system system_ext vendor odm product apex oem optics prism mi_ext my_bigball my_carrier my_company my_engineering my_heytap my_manifest my_preload my_product my_region my_reserve my_stock";
-async function loadModules() {
+async function readModules(onlyMods = null) {
+    const filter = onlyMods ? `case " ${onlyMods.join(' ')} " in *" $mod "*) ;; *) continue ;; esac` : '';
+    const script = `
+        ${NM_BIN} rule list --json || exit $?; echo "|||"
+        cd -P ${MOD_DIR} || exit 1
+        set --
+        for mod in *; do
+            [ ! -d "$mod" ] && continue
+            [ "$mod" = "nomount" ] && continue
+            [ ! -f "$mod/module.prop" ] && continue
+            ${filter}
+            count=$#
+            for p in ${TARGET_PARTITIONS}; do [ -d "$mod/$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && set -- "$@" "$mod/$p"; done
+            [ "$#" -eq "$count" ] && continue
+            name=""
+            while IFS='=' read -r k v; do case "$k" in name) name="$v"; break;; esac; done < "$mod/module.prop"
+            disable=false; [ -f "$mod/disable" ] && disable=true
+            skip=false; [ -f "$mod/skip_mount" ] && skip=true
+            root="\${PWD%/}/$mod"
+            if [ -L "$mod" ]; then root=$(readlink -f "$mod") || exit 1; fi
+            printf '@@M\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$mod" "$name" "$disable" "$skip" "$root"
+        done
+        if [ "$#" -gt 0 ]; then
+            sh "${RULE_PATHS}" links "$@" || exit 1
+            find -H "$@" -type l -exec sh "${RULE_PATHS}" scan {} + || exit 1
+        fi
+    `;
+    const { errno, stdout, stderr } = await exec(script);
+    if (errno) throw new Error(stderr || 'Failed to read modules');
+    const [jsonPart, modulesPart = ''] = stdout.split('|||');
+    const rules = JSON.parse(jsonPart.trim() || '[]');
+    const modules = new Map(), roots = new Map(), links = new Map();
+    for (const line of modulesPart.split('\n')) {
+        const [kind, modId, ...fields] = line.split('\t');
+        if (kind === '@@M') {
+            const [realName, disable, skipMount, root] = fields;
+            const mod = { modId, realName, disable: disable === 'true', skipMount: skipMount === 'true', fileCount: 0 };
+            modules.set(modId, mod);
+            if (!roots.has(root)) roots.set(root, []);
+            roots.get(root).push(mod);
+        } else if (kind === '@@S') {
+            const [virtual, real, dir] = fields;
+            if (!links.has(virtual)) links.set(virtual, []);
+            links.get(virtual).push({ mod: modules.get(modId), real, dir: dir === 'true' });
+        }
+    }
+    for (const { virtual, real } of rules) {
+        if (!real) continue;
+        const owners = new Set();
+        for (let path = real; path; path = path.slice(0, path.lastIndexOf('/'))) {
+            for (const mod of roots.get(path) || []) owners.add(mod);
+        }
+        for (let path = virtual; path; path = path.slice(0, path.lastIndexOf('/'))) {
+            const suffix = virtual.slice(path.length);
+            for (const link of links.get(path) || []) {
+                if ((link.dir || !suffix) && real === (suffix ? link.real.replace(/\/$/, '') + suffix : link.real)) owners.add(link.mod);
+            }
+        }
+        for (const mod of owners) mod.fileCount++;
+    }
+    for (const mod of modules.values()) {
+        const { fileCount, disable, skipMount } = mod;
+        mod.statusKey = fileCount > 0 ? ((disable || skipMount) ? 'status_loaded' : 'status_active') : (disable ? 'status_disabled' : (skipMount ? 'status_skipped' : 'status_inactive'));
+    }
+    return [...modules.values()];
+}
+
+async function loadModules(readModuleInfo = readModules) {
     const listContainer = document.getElementById('modules-list');
     if (!listContainer) return;
     const renderId = ++currentRenderId;
 
     try {
-        const partitionFilter = TARGET_PARTITIONS.split(' ').filter(Boolean).map(p => `-path "*/${p}/*"`).join(' -o ');
-        const script = `
-            ${NM_BIN} rule list --json; echo "|||"
-            cd ${MOD_DIR}
-            MODS=""
-            for mod in *; do
-                [ ! -d "$mod" ] && continue
-                [ "$mod" = "nomount" ] && continue
-                [ ! -f "$mod/module.prop" ] && continue
-                has_injectable=0
-                for p in ${TARGET_PARTITIONS}; do [ -d "$mod/$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && has_injectable=1 && break; done
-                [ $has_injectable -eq 0 ] && continue
-                name=""
-                while IFS='=' read -r k v; do case "$k" in name) name="$v"; break;; esac; done < "$mod/module.prop"
-                disable=false; [ -f "$mod/disable" ] && disable=true
-                skip=false; [ -f "$mod/skip_mount" ] && skip=true
-                printf '@@M\\t%s\\t%s\\t%s\\t%s\\n' "$mod" "$name" "$disable" "$skip"
-                [ "$disable" = "false" ] && [ "$skip" = "false" ] && MODS="$MODS $mod"
-            done
-            [ -n "$MODS" ] && find $MODS -type l \\( ${partitionFilter} \\) -exec sh -c 'for f; do
-                rest=\${f#"${MOD_DIR}"/}; m=\${rest%%/*}
-                r=\$(readlink -f "\$f")
-                [ -n "\$r" ] && printf "@@S\\t%s\\t%s\\n" "\$m" "\$r"
-            done' _ {} +
-        `;
-
-        const { stdout } = await exec(script);
-        const [jsonPart, modulesPart] = stdout.split('|||');
-        const activeRules = JSON.parse(jsonPart?.trim() || "[]");
-        const activeReal = new Set(activeRules.map(r => r?.real).filter(Boolean));
-        const ruleCountByMod = {};
-        const moduleInfo = [];
-
-        activeRules.forEach(r => {
-            if (r?.real?.startsWith(MOD_DIR)) {
-                const parts = r.real.split('/');
-                if (parts[4] && parts[4] !== 'nomount')
-                    ruleCountByMod[parts[4]] = (ruleCountByMod[parts[4]] || 0) + 1;
-            }
-        });
-
-        (modulesPart || '').split('\n').filter(Boolean).forEach(line => {
-            const parts = line.split('\t');
-            if (parts[0] === '@@M' && parts.length === 5) {
-                moduleInfo.push({ modId: parts[1], realName: parts[2], disable: parts[3] === 'true', skipMount: parts[4] === 'true' });
-            } else if (parts[0] === '@@S' && parts.length === 3 && activeReal.has(parts[2])) {
-                ruleCountByMod[parts[1]] = (ruleCountByMod[parts[1]] || 0) + 1;
-            }
-        });
-
-        const htmlArr = moduleInfo.map(({ modId, realName, disable: hasDisable, skipMount: hasSkipMount }) => {
-            const fileCount = ruleCountByMod[modId] || 0;
+        const moduleInfo = await readModuleInfo();
+        const htmlArr = moduleInfo.map(({ modId, realName, disable: hasDisable, skipMount: hasSkipMount, fileCount, statusKey }) => {
             const isLoaded = fileCount > 0;
-            const statusKey = isLoaded ? ((hasDisable || hasSkipMount) ? 'status_loaded' : 'status_active') : (hasDisable ? 'status_disabled' : (hasSkipMount ? 'status_skipped' : 'status_inactive'));
             return `
                 <div class="card module-card" data-module-id="${modId}">
                     <div class="module-header">
@@ -816,6 +827,10 @@ async function loadModules() {
         renderTextState(listContainer, 'error-message', `Error: ${e.message}`);
     }
 }
+
+let initialModulesPromise;
+const readInitialModules = () => initialModulesPromise ||= readModules().catch(e => { initialModulesPromise = null; throw e; });
+readInitialModules();
 
 async function loadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
@@ -1587,22 +1602,10 @@ function getManualUid() {
 
 function initDelegationAndAttach() {
     const updateModuleCardDOM = async (card, modId) => {
-        const prefix = `${MOD_DIR}/${modId}/`;
-        const [rulesRes, symRes] = await Promise.all([
-            exec(`${NM_BIN} rule list --json 2>/dev/null`),
-            exec(`find "${MOD_DIR}/${modId}" -type l -exec readlink -f {} + 2>/dev/null`)
-        ]);
-        const activeRules = JSON.parse(rulesRes.stdout.trim() || "[]");
-        const activeReal = new Set(activeRules.map(r => r?.real).filter(Boolean));
-        let newFileCount = 0;
-        activeRules.forEach(r => { if (r?.real?.startsWith(prefix)) newFileCount++; });
-        symRes.stdout.split('\n').filter(Boolean).forEach(r => {
-            if (activeReal.has(r)) newFileCount++;
-        });
+        const mod = (await readModules([modId])).find(m => m.modId === modId);
+        const newFileCount = mod?.fileCount ?? 0;
+        const statusKey = mod?.statusKey ?? 'status_inactive';
         const nowLoaded = newFileCount > 0;
-        const toggleChecked = card.querySelector('.switch-input').checked;
-        const hasSkipMount = card.querySelector('.btn-skip-action')?.classList.contains('unskip');
-        const statusKey = nowLoaded ? ((!toggleChecked || hasSkipMount) ? 'status_loaded' : 'status_active') : (!toggleChecked ? 'status_disabled' : (hasSkipMount ? 'status_skipped' : 'status_inactive'));
 
         const filesChip = card.querySelector('.files-chip');
         if (newFileCount > 0) {
@@ -1878,7 +1881,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initScrollListener();
     updateTopAppBar();
     viewLoadState['view-home'] = true;
-    loadHome();
+    loadHome(readInitialModules);
     restoreThemeFromDisk();
     document.body.classList.remove('loading');
     if ('requestIdleCallback' in window) {
@@ -1888,7 +1891,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     try {
-        if (!viewLoadState['view-modules']) loadModules();
+        if (!viewLoadState['view-modules']) loadModules(readInitialModules);
         if (!viewLoadState['view-exclusions']) loadExclusions();
         if (!viewLoadState['view-options']) loadOptions();
     } catch {}
