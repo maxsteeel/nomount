@@ -925,23 +925,14 @@ static int nm_xattr_set(const struct xattr_handler *handler, IDMAP_ARG struct de
     struct nm_xattr_proxy *proxy = container_of(handler, struct nm_xattr_proxy, fake);
     if (nm_inode_is_virtual(inode)) {
         struct nm_inode_info *info = inode->i_private;
-        const char *full_name = xattr_full_name(handler, name);
-        struct inode *r_inode;
-        bool same_sb;
-        int err;
+        const char *full_name;
 
         if (unlikely(!info || !info->r_path.dentry)) return -ENODATA;
-        r_inode = d_backing_inode(info->r_path.dentry);
-        same_sb = r_inode->i_sb == inode->i_sb;
-        if (sb_rdonly(r_inode->i_sb)) return -EROFS;
-        if (!same_sb) sb_start_write(r_inode->i_sb);
+        if (sb_rdonly(d_backing_inode(info->r_path.dentry)->i_sb)) return -EROFS;
+        full_name = xattr_full_name(handler, name);
         if (buffer)
-            err = vfs_setxattr(IDMAP_PATH(info->r_path) info->r_path.dentry, full_name, buffer, size, flags);
-        else
-            err = vfs_removexattr(IDMAP_PATH(info->r_path) info->r_path.dentry, full_name);
-
-        if (!same_sb) sb_end_write(r_inode->i_sb);
-        return err;
+            return vfs_setxattr(IDMAP_PATH(info->r_path) info->r_path.dentry, full_name, buffer, size, flags);
+        return vfs_removexattr(IDMAP_PATH(info->r_path) info->r_path.dentry, full_name);
     }
     return proxy->orig->set(proxy->orig, IDMAP_CALL dentry, inode, name, buffer, size, flags);
 }
