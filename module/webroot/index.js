@@ -459,6 +459,15 @@ function applyAppearance() {
             }
         });
     }
+
+    const surfaceContainer = palette['--md-sys-color-surface-container'];
+    if (surfaceContainer) {
+        const r = parseInt(surfaceContainer.slice(1, 3), 16);
+        const g = parseInt(surfaceContainer.slice(3, 5), 16);
+        const b = parseInt(surfaceContainer.slice(5, 7), 16);
+        const alpha = scheme === 'amoled' ? 0.80 : 0.75;
+        root.style.setProperty('--nm-nav-background', `rgba(${r}, ${g}, ${b}, ${alpha})`);
+    }
 }
 // Apply immediately to prevent flashes
 applyAppearance();
