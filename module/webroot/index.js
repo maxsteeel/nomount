@@ -1102,6 +1102,14 @@ async function ensureAppsCache(force = false) {
             } catch (e) {
                 console.warn("Failed to save apps cache to LocalStorage. Data might be too large.", e);
             }
+            
+            setTimeout(() => {
+                for (const app of allAppsCache.slice(0, 50)) {
+                    const img = new Image();
+                    img.decoding = 'async';
+                    img.src = `ksu://icon/${app.packageName}`;
+                }
+            }, 100);
 
         } catch (e) {
             console.error("Error in ensureAppsCache:", e);
@@ -1127,7 +1135,6 @@ function openAppSelector() {
     const modal = document.getElementById('app-selector-modal'), 
           container = document.getElementById('app-list-container'), 
           searchInput = document.getElementById('app-search-input');
-          
     const switchWrapper = document.getElementById('switch-system-apps');
     const sysSwitch = switchWrapper ? (switchWrapper.tagName === 'INPUT' ? switchWrapper : switchWrapper.querySelector('input')) : null;
     if (!modal) return;
@@ -1145,37 +1152,53 @@ function openAppSelector() {
     searchInput.value = '';
     if (sysSwitch) sysSwitch.checked = showSystemApps;
 
-    container.replaceChildren(el('div', { class: 'loading-spinner' }, translate('loading') || 'Loading apps...'));
-    listObserver = new IntersectionObserver((entries) => { 
-        if (entries[0].isIntersecting) renderNextAppBatch(); 
-    }, { root: container, rootMargin: '200px' });
+    listObserver = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) renderNextAppBatch();
+    }, { root: container, rootMargin: '400px' });
 
+    const bindHandlers = () => {
+        searchInput.oninput = (e) => filterAndRender(e.target.value);
+        document.getElementById('btn-filter-toggle').onclick = () => document.getElementById('filter-menu').classList.toggle('active');
+        if (sysSwitch) sysSwitch.onchange = (e) => { 
+            showSystemApps = e.target.checked;
+            localStorage.setItem('nm_show_system_apps', showSystemApps);
+            filterAndRender(searchInput.value);
+        };
+    };
+
+    if (allAppsCache.length > 0) {
+        renderFilteredApps('');
+        bindHandlers();
+        return;
+    }
+
+    container.replaceChildren(el('div', { class: 'loading-spinner' }, translate('loading') || 'Loading apps...'));
     setTimeout(async () => {
         try {
             await ensureAppsCache();
-            filterAndRender();
-            searchInput.oninput = (e) => filterAndRender(e.target.value);
-            document.getElementById('btn-filter-toggle').onclick = () => document.getElementById('filter-menu').classList.toggle('active');
-            if (sysSwitch) sysSwitch.onchange = (e) => { 
-                showSystemApps = e.target.checked;
-                localStorage.setItem('nm_show_system_apps', showSystemApps);
-                filterAndRender(searchInput.value);
-            };
+            renderFilteredApps('');
+            bindHandlers();
         } catch (e) { 
             renderTextState(container, 'error-message', `${translate('load_failed') || 'Failed'}`); 
         }
     }, 250);
 }
 
+function renderFilteredApps(searchTerm = '') {
+    const container = document.getElementById('app-list-container');
+    const term = searchTerm.toLowerCase();
+    currentlyDisplayedApps = allAppsCache.filter(app => app._search.includes(term) && (showSystemApps || !app.isSystem));
+    container.replaceChildren();
+    container.scrollTop = 0;
+    appListRenderIndex = 0;
+    renderNextAppBatch();
+}
+
 function filterAndRender(searchTerm = '') {
     return new Promise(resolve => {
         clearTimeout(filterTimeout);
         filterTimeout = setTimeout(() => {
-            const term = searchTerm.toLowerCase();
-            currentlyDisplayedApps = allAppsCache.filter(app => app._search.includes(term) && (showSystemApps || !app.isSystem));
-            document.getElementById('app-list-container').replaceChildren();
-            appListRenderIndex = 0;
-            renderNextAppBatch();
+            renderFilteredApps(searchTerm);
             resolve();
         }, 200);
     });
@@ -1183,7 +1206,7 @@ function filterAndRender(searchTerm = '') {
 
 function renderNextAppBatch() {
     const container = document.getElementById('app-list-container');
-    const batch = currentlyDisplayedApps.slice(appListRenderIndex, appListRenderIndex + 50);
+    const batch = currentlyDisplayedApps.slice(appListRenderIndex, appListRenderIndex + 25);
 
     if (batch.length === 0) {
         if (listObserver) listObserver.disconnect();
@@ -1202,7 +1225,7 @@ function renderNextAppBatch() {
             class: `app-item segment-card${selectedAppsMap.has(app.uid) ? ' selected' : ''}`,
             dataset: { uid: String(app.uid), label: app.appLabel, pkg: app.packageName },
         },
-            el('img', { class: 'app-icon-img', src: `ksu://icon/${app.packageName}`, loading: 'lazy' }),
+            el('img', { class: 'app-icon-img', src: `ksu://icon/${app.packageName}`, loading: 'lazy', decoding: 'async', fetchpriority: 'low' }),
             el('div', { class: 'app-details' }, el('div', { class: 'app-name' }, app.appLabel), el('div', { class: 'app-pkg' }, app.packageName)),
             meta
         ));
@@ -1211,6 +1234,13 @@ function renderNextAppBatch() {
     container.appendChild(frag);
     appListRenderIndex += batch.length;
     if (listObserver && last) listObserver.observe(last);
+
+    const nextBatch = currentlyDisplayedApps.slice(appListRenderIndex, appListRenderIndex + 25);
+    for (const app of nextBatch) {
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = `ksu://icon/${app.packageName}`;
+    }
 }
 
 async function removeExclusion(uid, name, domItem) {

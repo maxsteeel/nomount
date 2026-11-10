@@ -136,7 +136,6 @@ body.loading { opacity: 0; visibility: hidden; }
 .app-item {
     grid-template-columns: 40px minmax(0, 1fr) auto;
     min-height: 72px; cursor: pointer;
-    content-visibility: auto; contain-intrinsic-size: 0 72px;
 }
 
 .status-text-col h2, .module-info h3, .setting-text h3, .info-label, .search-box input {
@@ -385,7 +384,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 
 .modal-overlay {
-    position: fixed; inset: 0; background: var(--nm-scrim); z-index: 2000;
+    position: fixed; inset: 0; background: var(--nm-scrim-mix); z-index: 2000;
     display: none; align-items: flex-end;
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
