@@ -160,9 +160,34 @@ const FILES = { disable: `${NM_DATA}/disable`, exclusions: `${NM_DATA}/.exclusio
 const APP_ICON_FALLBACK = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
 const viewLoadState = { 'view-home': false, 'view-modules': false, 'view-exclusions': false, 'view-options': false };
 
-const renderTextState = (el, cls, text) => { el.className = cls; el.textContent = text; };
-const renderEmptyState = (el, face, text) => el.innerHTML = `<div class="empty-list-placeholder empty-state"><div class="empty-face">${face}</div><div class="empty-text">${text}</div></div>`;
 const delay = ms => new Promise(r => setTimeout(r, ms));
+
+function el(tag, props, ...children) {
+    const node = document.createElement(tag);
+    if (props) for (const k in props) {
+        const v = props[k];
+        if (v == null || v === false) continue;
+        if (k === 'class') node.className = v;
+        else if (k === 'style' && typeof v === 'object') Object.assign(node.style, v);
+        else if (k === 'dataset') Object.assign(node.dataset, v);
+        else if (k === 'checked' || k === 'disabled') node[k] = !!v;
+        else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v);
+        else node.setAttribute(k, v);
+    }
+    for (const c of children.flat(Infinity)) {
+        if (c == null || c === false) continue;
+        node.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+    }
+    return node;
+}
+
+const renderTextState = (container, cls, text) => { container.className = cls; container.textContent = text; };
+function renderEmptyState(container, face, text) {
+    container.replaceChildren(
+        el('div', { class: 'empty-list-placeholder empty-state' }, el('div', { class: 'empty-face' }, face), el('div', { class: 'empty-text' }, text)
+        )
+    );
+}
 
 // Icons
 customElements.define('md-icon', class extends HTMLElement {});
@@ -195,6 +220,8 @@ const FILLED_ICON_PATHS = {
     settings: 'M433-80q-27 0-46.5-18T363-142l-9-66q-13-5-24.5-12T307-235l-62 26q-25 11-50 2t-39-32l-47-82q-14-23-8-49t27-43l53-40q-1-7-1-13.5v-27q0-6.5 1-13.5l-53-40q-21-17-27-43t8-49l47-82q14-23 39-32t50 2l62 26q11-8 23-15t24-12l9-66q4-26 23.5-44t46.5-18h94q27 0 46.5 18t23.5 44l9 66q13 5 24.5 12t22.5 15l62-26q25-11 50-2t39 32l47 82q14 23 8 49t-27 43l-53 40q1 7 1 13.5v27q0 6.5-2 13.5l53 40q21 17 27 43t-8 49l-48 82q-14 23-39 32t-50-2l-60-26q-11 8-23 15t-24 12l-9 66q-4 26-23.5 44T527-80h-94Zm49-260q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Z',
     shield: 'M467-85q-6-1-12-3-135-45-215-166.5T160-516v-189q0-25 14.5-45t37.5-29l240-90q14-5 28-5t28 5l240 90q23 9 37.5 29t14.5 45v189q0 140-80 261.5T505-88q-6 2-12 3t-13 1q-7 0-13-1Z'
 };
+
+const SYRINGE_SVG = '<svg viewBox="0 0 48 48" aria-hidden="true" style="width:1.2em;height:1.2em;fill:currentColor;transform:scaleX(-1)"><path d="M45.4,10.3,37.7,2.6a2.1,2.1,0,0,0-2.9,0,2.1,2.1,0,0,0,0,2.8l2.5,2.5-3.4,3.4L28.5,5.8h0a2,2,0,1,0-2.8,2.9L9.9,24.4a6.3,6.3,0,0,0-1.7,5.2l1.1,6.3L4.6,40.6a1.9,1.9,0,0,0,0,2.8,1.9,1.9,0,0,0,2.8,0l4.7-4.7,6.3,1.1a6,6,0,0,0,5.2-1.7L39.4,22.3a2,2,0,1,0,2.9-2.7l-5.6-5.5,3.4-3.4,2.5,2.5a2,2,0,0,0,1.4.6A2.1,2.1,0,0,0,45.4,10.3Zm-24.6,25a2.3,2.3,0,0,1-1.8.5l-5.8-1-1-5.8a2.3,2.3,0,0,1,.5-1.8l2.6-2.5,3.2,3.2a2.1,2.1,0,0,0,2.9,0,1.9,1.9,0,0,0,0-2.8l-3.3-3.3,3.4-3.3,3.3,3.2a2,2,0,0,0,2.8-2.8l-3.3-3.3,4.2-4.1,8,8Z"/></svg>';
 
 const svgCache = {};
 function setIcon(icon, name, variant = 'outline') {
@@ -775,6 +802,43 @@ async function readModules(onlyMods = null) {
     return [...modules.values()];
 }
 
+function buildModuleCard({ modId, realName, disable, skipMount, fileCount, statusKey }) {
+    const isLoaded = fileCount > 0;
+    const syringeIcon = el('md-icon', { dataset: { icon: 'syringe' } });
+    syringeIcon.innerHTML = SYRINGE_SVG;
+    const filesChip = el('span', { class: 'files-chip md-chip', style: { display: fileCount > 0 ? '' : 'none' } },
+        syringeIcon,
+        el('span', { class: 'files-count-text' }, fileCount > 0 ? translate('modules_injected_files', { count: fileCount }) : '')
+    );
+
+    return el('div', { class: 'card module-card', dataset: { moduleId: modId } },
+        el('div', { class: 'module-header' },
+            el('div', { class: 'module-info' },
+                el('h3', {}, realName || modId),
+                el('div', { class: 'module-chips' },
+                    el('span', { class: `status-chip md-chip status-${statusKey.replace('status_', '')}` }, translate(statusKey)),
+                    filesChip
+                )
+            ),
+            el('label', { class: 'custom-switch' },
+                el('input', { type: 'checkbox', class: 'switch-input', 'aria-label': 'Toggle module', checked: !disable }),
+                el('span', { class: 'switch-track' },
+                    el('span', { class: 'switch-thumb' })
+                )
+            )
+        ),
+        el('div', { class: 'module-divider' }),
+        el('div', { class: 'module-extension' },
+            el('button', { class: `btn-skip-action ${skipMount ? 'unskip' : ''}` },
+                el('span', {}, translate(skipMount ? 'modules_unskip' : 'modules_skip'))
+            ),
+            el('button', { class: `btn-hot-action ${isLoaded ? 'unload' : ''}` },
+                el('span', {}, translate(isLoaded ? 'modules_hot_unload' : 'modules_hot_load'))
+            )
+        )
+    );
+}
+
 async function loadModules(readModuleInfo = readModules) {
     const listContainer = document.getElementById('modules-list');
     if (!listContainer) return;
@@ -782,50 +846,14 @@ async function loadModules(readModuleInfo = readModules) {
 
     try {
         const moduleInfo = await readModuleInfo();
-        const htmlArr = moduleInfo.map(({ modId, realName, disable: hasDisable, skipMount: hasSkipMount, fileCount, statusKey }) => {
-            const isLoaded = fileCount > 0;
-            return `
-                <div class="card module-card" data-module-id="${modId}">
-                    <div class="module-header">
-                        <div class="module-info">
-                            <h3>${realName || modId}</h3>
-                            <div class="module-chips">
-                                <span class="status-chip md-chip status-${statusKey.replace('status_', '')}">
-                                    ${translate(statusKey)}
-                                </span>
-                                <span class="files-chip md-chip" style="${fileCount > 0 ? '' : 'display: none;'}">
-                                    <md-icon data-icon="syringe">
-                                        <svg viewBox="0 0 48 48" aria-hidden="true" style="width: 1.2em; height: 1.2em; fill: currentColor; transform: scaleX(-1);">
-                                            <path d="M45.4,10.3,37.7,2.6a2.1,2.1,0,0,0-2.9,0,2.1,2.1,0,0,0,0,2.8l2.5,2.5-3.4,3.4L28.5,5.8h0a2,2,0,1,0-2.8,2.9L9.9,24.4a6.3,6.3,0,0,0-1.7,5.2l1.1,6.3L4.6,40.6a1.9,1.9,0,0,0,0,2.8,1.9,1.9,0,0,0,2.8,0l4.7-4.7,6.3,1.1a6,6,0,0,0,5.2-1.7L39.4,22.3a2,2,0,1,0,2.9-2.7l-5.6-5.5,3.4-3.4,2.5,2.5a2,2,0,0,0,1.4.6A2.1,2.1,0,0,0,45.4,10.3Zm-24.6,25a2.3,2.3,0,0,1-1.8.5l-5.8-1-1-5.8a2.3,2.3,0,0,1,.5-1.8l2.6-2.5,3.2,3.2a2.1,2.1,0,0,0,2.9,0,1.9,1.9,0,0,0,0-2.8l-3.3-3.3,3.4-3.3,3.3,3.2a2,2,0,0,0,2.8-2.8l-3.3-3.3,4.2-4.1,8,8Z"/>
-                                        </svg>
-                                    </md-icon>
-                                    <span class="files-count-text">${fileCount > 0 ? translate('modules_injected_files', { count: fileCount }) : ''}</span>
-                                </span>
-                            </div>
-                        </div>
-                        <label class="custom-switch" id="switch-${modId}">
-                            <input type="checkbox" class="switch-input" aria-label="Toggle module" ${!hasDisable ? 'checked' : ''}>
-                            <span class="switch-track">
-                                <span class="switch-thumb"></span>
-                            </span>
-                        </label>
-                    </div>
-                    <div class="module-divider"></div>
-                    <div class="module-extension">
-                        <button class="btn-skip-action ${hasSkipMount ? 'unskip' : ''}" id="btn-skip-${modId}">
-                            <span>${translate(hasSkipMount ? 'modules_unskip' : 'modules_skip')}</span>
-                        </button>
-                        <button class="btn-hot-action ${isLoaded ? 'unload' : ''}" id="btn-hot-${modId}">
-                            <span>${translate(isLoaded ? 'modules_hot_unload' : 'modules_hot_load')}</span>
-                        </button>
-                    </div>
-                </div>
-            `;
-        });
-
-        if (renderId === currentRenderId) {
-            moduleInfo.length === 0 ? renderEmptyState(listContainer, '(._.)', translate('no_modules_found')) : listContainer.innerHTML = htmlArr.join('');
+        if (renderId !== currentRenderId) return;
+        if (moduleInfo.length === 0) {
+            renderEmptyState(listContainer, '(._.)', translate('no_modules_found'));
+            return;
         }
+        const frag = document.createDocumentFragment();
+        for (const mod of moduleInfo) frag.appendChild(buildModuleCard(mod));
+        listContainer.replaceChildren(frag);
     } catch (e) {
         renderTextState(listContainer, 'error-message', `Error: ${e.message}`);
     }
@@ -911,6 +939,25 @@ async function writeExclusionsJson(dataArray) {
     return await exec(cmd);
 }
 
+function buildExclusionCard(uid, app) {
+    const label = app ? app.label : `UID: ${uid}`;
+    const pkg = app ? app.pkg : 'System/Unknown';
+    const userId = Math.floor(Number(uid) / 100000);
+    const deleteIcon = el('md-icon');
+    setIcon(deleteIcon, 'delete', 'outline');
+
+    return el('div', { class: 'card setting-item', dataset: { uid, label } },
+        el('div', { class: 'exclusion-app' },
+            el('img', { class: 'app-icon-img', src: `ksu://icon/${pkg}` }),
+            el('div', { class: 'setting-text' },
+                el('h3', {}, label, userId !== 0 ? [' ', el('span', { class: 'system-chip' }, `User ${userId}`)] : null),
+                el('p', {}, pkg)
+            )
+        ),
+        el('md-icon-button', { class: 'btn-delete', 'aria-label': 'Remove exclusion' }, deleteIcon)
+    );
+}
+
 async function loadExclusions() {
     const listContainer = document.getElementById('exclusions-list');
     if (!listContainer) return;
@@ -927,32 +974,15 @@ async function loadExclusions() {
         const savedData = await readExclusionsJson();
         const appsMap = new Map(savedData.map(app => [String(app.uid), app]));
 
-        const htmlArr = blockedUids.map(uid => {
-            const app = appsMap.get(uid);
-            const label = app ? app.label : `UID: ${uid}`;
-            const pkg = app ? app.pkg : 'System/Unknown';
-            const userId = Math.floor(Number(uid) / 100000);
-            const userBadge = userId !== 0 ? `<span class="system-chip">User ${userId}</span>` : '';
-            return `
-                <div class="card setting-item" data-uid="${uid}" data-label="${label}">
-                    <div class="exclusion-app">
-                        <img src="ksu://icon/${pkg}" class="app-icon-img" onerror="this.src='${APP_ICON_FALLBACK}'" />
-                        <div class="setting-text"><h3>${label} ${userBadge}</h3><p>${pkg}</p></div>
-                    </div>
-                    <md-icon-button class="btn-delete" aria-label="Remove exclusion">
-                        <md-icon data-icon="delete" data-icon-variant="outline" aria-hidden="true">
-                            <svg viewBox="0 -960 960 960" aria-hidden="true" style="width:100%; height:100%; fill:currentColor;">
-                                <path d="${ICON_PATHS['delete']}"/>
-                            </svg>
-                        </md-icon>
-                    </md-icon-button>
-                </div>
-            `;
-        });
-
         requestAnimationFrame(() => {
             if (loadId !== exclusionsLoadId) return;
-            blockedUids.length === 0 ? renderEmptyState(listContainer, '(._.)', translate('no_exclusions_yet')) : listContainer.innerHTML = htmlArr.join('');
+            if (blockedUids.length === 0) {
+                renderEmptyState(listContainer, '(._.)', translate('no_exclusions_yet'));
+                return;
+            }
+            const frag = document.createDocumentFragment();
+            for (const uid of blockedUids) frag.appendChild(buildExclusionCard(uid, appsMap.get(uid)));
+            listContainer.replaceChildren(frag);
         });
     } catch (e) {
         renderTextState(listContainer, 'error-message', translate('error_loading_exclusions'));
@@ -1106,7 +1136,7 @@ function openAppSelector() {
     searchInput.value = '';
     if (sysSwitch) sysSwitch.checked = showSystemApps;
 
-    container.innerHTML = `<div class="loading-spinner">${translate('loading') || 'Loading apps...'}</div>`;
+    container.replaceChildren(el('div', { class: 'loading-spinner' }, translate('loading') || 'Loading apps...'));
     listObserver = new IntersectionObserver((entries) => { 
         if (entries[0].isIntersecting) renderNextAppBatch(); 
     }, { root: container, rootMargin: '200px' });
@@ -1152,21 +1182,26 @@ function renderNextAppBatch() {
         return;
     }
 
-    const htmlStr = batch.map(app => {
-        const isSel = selectedAppsMap.has(app.uid) ? 'selected' : '';
-        return `
-        <div class="app-item segment-card ${isSel}" data-uid="${app.uid}" data-label="${app.appLabel}" data-pkg="${app.packageName}">
-            <img src="ksu://icon/${app.packageName}" class="app-icon-img" loading="lazy" onerror="this.src='${APP_ICON_FALLBACK}'" />
-            <div class="app-details"><div class="app-name">${app.appLabel}</div><div class="app-pkg">${app.packageName}</div></div>
-            <div class="app-meta"><div class="uid-label">UID: ${app.uid}</div>${app.isSystem ? '<span class="system-chip">SYS</span>' : ''}${app.isClone ? `<span class="system-chip">User ${app.userId}</span>` : ''}</div>
-        </div>
-        `;
-    }).join('');
-
-    container.insertAdjacentHTML('beforeend', htmlStr);
+    const frag = document.createDocumentFragment();
+    for (const app of batch) {
+        const meta = el('div', { class: 'app-meta' },
+            el('div', { class: 'uid-label' }, `UID: ${app.uid}`),
+            app.isSystem ? el('span', { class: 'system-chip' }, 'SYS') : null,
+            app.isClone ? el('span', { class: 'system-chip' }, `User ${app.userId}`) : null
+        );
+        frag.appendChild(el('div', {
+            class: `app-item segment-card${selectedAppsMap.has(app.uid) ? ' selected' : ''}`,
+            dataset: { uid: String(app.uid), label: app.appLabel, pkg: app.packageName },
+        },
+            el('img', { class: 'app-icon-img', src: `ksu://icon/${app.packageName}`, loading: 'lazy' }),
+            el('div', { class: 'app-details' }, el('div', { class: 'app-name' }, app.appLabel), el('div', { class: 'app-pkg' }, app.packageName)),
+            meta
+        ));
+    }
+    const last = frag.lastChild;
+    container.appendChild(frag);
     appListRenderIndex += batch.length;
-    const lastEl = container.lastElementChild;
-    if (lastEl && listObserver) listObserver.observe(lastEl);
+    if (listObserver && last) listObserver.observe(last);
 }
 
 async function removeExclusion(uid, name, domItem) {
@@ -1604,6 +1639,15 @@ function getManualUid() {
 }
 
 function initDelegationAndAttach() {
+    const handleIconError = (e) => {
+        const img = e.target;
+        if (!(img instanceof HTMLImageElement) || img.dataset.iconFallback) return;
+        img.dataset.iconFallback = '1';
+        img.src = APP_ICON_FALLBACK;
+    };
+    document.getElementById('app-list-container')?.addEventListener('error', handleIconError, true);
+    document.getElementById('exclusions-list')?.addEventListener('error', handleIconError, true);
+
     const updateModuleCardDOM = async (card, modId) => {
         const mod = (await readModules([modId])).find(m => m.modId === modId);
         const newFileCount = mod?.fileCount ?? 0;
@@ -1853,7 +1897,9 @@ function initDelegationAndAttach() {
     });
 
     attachPullToRefresh('#app-list-container', '#app-modal-refresh-indicator', 70, async () => {
-        document.getElementById('app-list-container').innerHTML = `<div class="loading-spinner">${translate('loading') || 'Refreshing...'}</div>`;
+        document.getElementById('app-list-container').replaceChildren(
+            el('div', { class: 'loading-spinner' }, translate('loading') || 'Refreshing...')
+        );
         await ensureAppsCache(true);
         await filterAndRender(document.getElementById('app-search-input')?.value || '');
     });
