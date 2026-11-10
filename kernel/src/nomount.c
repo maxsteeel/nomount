@@ -78,7 +78,7 @@ static struct nm_leaf *nm_find_leaf_in_dir(struct nm_dir_node *dir_node, const c
     if (!dir_node || !(children = rcu_dereference_check(dir_node->children, lockdep_is_held(&nm_mutex))))
         return NULL;
     entries = nm_entries(children);
-    if (!children->bucket_count) {
+    if (!children->bucket_slots) {
         for (i = 0; i < children->count; i++)
             if (nm_child_matches(entries[i], name, len))
                 return entries[i];
@@ -1325,12 +1325,12 @@ static struct nm_dir_node *nm_alloc_dir_node(void)
 
 static struct nm_child_array *nm_alloc_child_array(int count)
 {
-    u16 buckets = nm_child_buckets_for(count);
-    size_t sz = ALIGN(sizeof(struct nm_child_array) + (buckets + 1) * sizeof(u32), 8) + count * sizeof(struct nm_leaf *);
+    u16 slots = nm_child_slots_for(count);
+    size_t sz = ALIGN(sizeof(struct nm_child_array) + slots * sizeof(u32), 8) + count * sizeof(struct nm_leaf *);
     struct nm_child_array *array = kmalloc(sz, GFP_KERNEL);
     if (array) {
         array->count = count;
-        array->bucket_count = buckets;
+        array->bucket_slots = slots;
     }
     return array;
 }
@@ -1341,7 +1341,7 @@ static void nm_rebuild_children(struct nm_child_array *array, struct nm_child_ar
     struct nm_leaf **entries = nm_entries(array);
     u16 b;
 
-    if (!array->bucket_count) {
+    if (!array->bucket_slots) {
         int at = 0;
         for (int i = 0; i < count; i++)
             if (i != skip) entries[at++] = nm_entries(old)[i];
@@ -1349,12 +1349,12 @@ static void nm_rebuild_children(struct nm_child_array *array, struct nm_child_ar
         return;
     }
 
-    memset(array->starts, 0, (array->bucket_count + 1) * sizeof(u32));
+    memset(array->starts, 0, array->bucket_slots * sizeof(u32));
     for (int i = 0; i < count; i++)
         if (i != skip) array->starts[nm_child_bucket(array, nm_entries(old)[i]->child_hash)]++;
     if (extra) array->starts[nm_child_bucket(array, extra->child_hash)]++;
 
-    for (b = 1; b <= array->bucket_count; b++)
+    for (b = 1; b < array->bucket_slots; b++)
         array->starts[b] += array->starts[b - 1];
 
     for (int i = count - 1; i >= 0; i--) {
@@ -1398,11 +1398,11 @@ static int nm_inject_child_locked(struct nm_dir_node *dir_node, struct nm_leaf *
     leaf->child_hash = full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, name, name_len);
 
     if (!(array = nm_alloc_child_array(count + 1))) return -ENOMEM;
-    if (old && old->bucket_count && array->bucket_count == old->bucket_count) {
+    if (old && old->bucket_slots && array->bucket_slots == old->bucket_slots) {
         u32 bucket = nm_child_bucket(array, leaf->child_hash), pos = old->starts[bucket + 1];
         u16 i;
         for (i = 0; i <= bucket; i++) array->starts[i] = old->starts[i];
-        for (; i <= array->bucket_count; i++) array->starts[i] = old->starts[i] + 1;
+        for (; i < array->bucket_slots; i++) array->starts[i] = old->starts[i] + 1;
         memcpy(nm_entries(array), nm_entries(old), pos * sizeof(struct nm_leaf *));
         nm_entries(array)[pos] = leaf;
         memcpy(nm_entries(array) + pos + 1, nm_entries(old) + pos, (count - pos) * sizeof(struct nm_leaf *));
@@ -1426,7 +1426,7 @@ static struct nm_dir_node *nm_delete_child_locked(struct nm_leaf *leaf, bool cle
     if (!clear) {
         u32 bucket = 0;
         int pos = 0, end = old->count;
-        if (old->bucket_count) {
+        if (old->bucket_slots) {
             bucket = nm_child_bucket(old, leaf->child_hash);
             pos = old->starts[bucket];
             end = old->starts[bucket + 1];
@@ -1436,10 +1436,10 @@ static struct nm_dir_node *nm_delete_child_locked(struct nm_leaf *leaf, bool cle
         if (old->count > 1) {
             int new_count = old->count - 1;
             if (!(array = nm_alloc_child_array(new_count))) return ERR_PTR(-ENOMEM);
-            if (array->bucket_count && array->bucket_count == old->bucket_count) {
+            if (array->bucket_slots && array->bucket_slots == old->bucket_slots) {
                 u16 i;
                 for (i = 0; i <= bucket; i++) array->starts[i] = old->starts[i];
-                for (; i <= array->bucket_count; i++) array->starts[i] = old->starts[i] - 1;
+                for (; i < array->bucket_slots; i++) array->starts[i] = old->starts[i] - 1;
                 memcpy(nm_entries(array), nm_entries(old), pos * sizeof(struct nm_leaf *));
                 memcpy(nm_entries(array) + pos, nm_entries(old) + pos + 1, (new_count - pos) * sizeof(struct nm_leaf *));
             } else nm_rebuild_children(array, old, NULL, pos);

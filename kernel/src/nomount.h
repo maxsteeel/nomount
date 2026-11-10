@@ -85,8 +85,8 @@ struct nm_inode_info {
 struct nm_child_array {
     struct rcu_head rcu;
     int count;
-    u16 bucket_count;
-    u32 starts[] __aligned(4);   /* bucket_count + 1 u32 */
+    u16 bucket_slots;
+    u32 starts[] __aligned(4);
 };
 
 struct nm_dir_node {
@@ -153,23 +153,23 @@ struct nm_uid_array {
 
 static inline struct nm_leaf **nm_entries(struct nm_child_array *arr)
 {
-    uintptr_t p = (uintptr_t)arr->starts + (arr->bucket_count + 1) * sizeof(u32);
+    uintptr_t p = (uintptr_t)arr->starts + arr->bucket_slots * sizeof(u32);
     return (struct nm_leaf **)((p + 7) & ~(uintptr_t)7);
 }
 
-static inline u16 nm_child_buckets_for(int count)
+static inline u16 nm_child_slots_for(int count)
 {
     if (count <= 2)   return 0;
-    if (count <= 16)  return 8;
-    if (count <= 64)  return 32;
-    if (count <= 256) return 128;
-    if (count <= 1024) return 256;
-    return 512;
+    if (count <= 16)  return 9;
+    if (count <= 64)  return 33;
+    if (count <= 256) return 129;
+    if (count <= 1024) return 257;
+    return 513;
 }
 
 static inline u32 nm_child_bucket(struct nm_child_array *arr, u32 hash)
 {
-    return (hash >> 5) & (arr->bucket_count - 1);
+    return (hash >> 5) & (arr->bucket_slots - 2);
 }
 
 /*** Operaction Vectors ***/
