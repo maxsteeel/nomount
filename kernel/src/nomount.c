@@ -1295,6 +1295,7 @@ static void nm_clear_dops_sb(struct super_block *sb)
     struct dentry *dentry;
     spin_lock(&sb->s_inode_list_lock);
     list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+        bool is_virtual = nm_inode_is_virtual(inode);
         spin_lock(&inode->i_lock);
         for_each_alias(dentry, inode) {
             const struct dentry_operations *dop, *orig = NULL;
@@ -1315,6 +1316,9 @@ static void nm_clear_dops_sb(struct super_block *sb)
                 }
             }
             spin_unlock(&dentry->d_lock);
+
+            if (is_virtual)
+                d_drop(dentry);
         }
         spin_unlock(&inode->i_lock);
     }
