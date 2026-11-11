@@ -1272,17 +1272,27 @@ static void nm_clear_dops_sb(struct super_block *sb)
     list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
         spin_lock(&inode->i_lock);
         for_each_alias(dentry, inode) {
-            if (dentry->d_op && dentry->d_op->d_revalidate == nm_d_revalidate) {
-                spin_lock(&dentry->d_lock);
-                dentry->d_op = NULL;
-                dentry->d_flags &= ~(DCACHE_OP_REVALIDATE | DCACHE_OP_WEAK_REVALIDATE |
-                                     DCACHE_OP_DELETE | DCACHE_OP_PRUNE |
-                                     DCACHE_OP_HASH | DCACHE_OP_COMPARE);
+            const struct dentry_operations *dop, *orig = NULL;
+            spin_lock(&dentry->d_lock);
+            dop = dentry->d_op;
+            if (dop && dop->d_revalidate == nm_d_revalidate) {
+                if (dop != &nm_dops)
+                    orig = nm_get_orig_dops(container_of(dop, struct nm_dir_ops, fake_dops));
+                if (orig) {
+                    dentry->d_op = orig;
+                    if (!orig->d_revalidate)
+                        dentry->d_flags &= ~DCACHE_OP_REVALIDATE;
+                } else {
+                    dentry->d_op = NULL;
+                    dentry->d_flags &= ~(DCACHE_OP_REVALIDATE | DCACHE_OP_WEAK_REVALIDATE |
+                                         DCACHE_OP_DELETE | DCACHE_OP_PRUNE |
+                                         DCACHE_OP_HASH | DCACHE_OP_COMPARE | DCACHE_OP_REAL);
 #ifdef DCACHE_DONTCACHE
-                dentry->d_flags &= ~DCACHE_DONTCACHE;
+                    dentry->d_flags &= ~DCACHE_DONTCACHE;
 #endif
-                spin_unlock(&dentry->d_lock);
+                }
             }
+            spin_unlock(&dentry->d_lock);
         }
         spin_unlock(&inode->i_lock);
     }
