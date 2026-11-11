@@ -279,9 +279,9 @@ static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_d
 		rcu_read_unlock();
 		if (!has_more) break;
 
-		ctx->pos = nm_pack_pos_frag(id, cur_frag);
+		ctx->pos = nm_pack_pos(id, cur_frag);
 		if (do_emit && !dir_emit(ctx, name_buf, name_len, v_ino, d_type)) break;
-		ctx->pos = nm_pack_pos_frag(id + 1, next_frag);
+		ctx->pos = nm_pack_pos(id + 1, next_frag);
 	}
 }
 
@@ -459,7 +459,7 @@ static int nm_iterate_view(struct file *file, struct dir_context *ctx, const str
         goto emit_virtual;
     if ((opaque && !uid_blocked) || !real_file) {
         if (ctx->pos < 2 && !dir_emit_dots(file, ctx)) return 0;
-        ctx->pos = nm_pack_pos(0);
+        ctx->pos = nm_pack_pos(0, 0);
         goto emit_virtual;
     }
     if (unlikely(uid_blocked || !dir_node))
@@ -472,7 +472,7 @@ static int nm_iterate_view(struct file *file, struct dir_context *ctx, const str
     res = nm_call_iterate(real_file, &proxy_ctx.ctx, fop);
     ctx->pos = proxy_ctx.ctx.pos;
     if (res < 0 || proxy_ctx.emitted) return res;
-    ctx->pos = nm_pack_pos(0);
+    ctx->pos = nm_pack_pos(0, 0);
 
 emit_virtual:
     if (likely(!uid_blocked))
@@ -1008,7 +1008,7 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
         has_rule = true;
         if (rule->flags & NM_FLAG_WHITEOUT)
             whiteout = true;
-        else if (inode && (inode->i_op == &nm_file_iops || inode->i_op == &nm_dir_iops)) {
+        else if (inode && nm_inode_is_virtual(inode)) {
             if (rule->flags & NM_FLAG_IS_DIR)
                 match_rule = nm_inode_matches_binding(inode, &rule->r_path, leaf->this_dir, rule->flags & NM_FLAG_OPAQUE);
             else
@@ -1311,10 +1311,7 @@ static void nm_clear_dops_sb(struct super_block *sb)
                     dentry->d_op = NULL;
                     dentry->d_flags &= ~(DCACHE_OP_REVALIDATE | DCACHE_OP_WEAK_REVALIDATE |
                                          DCACHE_OP_DELETE | DCACHE_OP_PRUNE |
-                                         DCACHE_OP_HASH | DCACHE_OP_COMPARE | DCACHE_OP_REAL);
-#ifdef DCACHE_DONTCACHE
-                    dentry->d_flags &= ~DCACHE_DONTCACHE;
-#endif
+                                         DCACHE_OP_HASH | DCACHE_OP_COMPARE | DCACHE_OP_REAL | DCACHE_DONTCACHE);
                 }
             }
             spin_unlock(&dentry->d_lock);
@@ -1872,7 +1869,8 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     if (r_path && r_len && !(r_buf = kmemdup_nul(r_path, r_len, GFP_KERNEL))) return -ENOMEM;
 
     err = nm_prepare_rule(r_buf, flags, uid, uid_end, deny_start, deny_end, &new_rule, &name);
-    if (err) { kfree(r_buf); return err; }
+    kfree(r_buf);
+    if (err) return err;
 
     while (v_len > 1 && v_path[v_len - 1] == '/') v_len--;
 
@@ -1946,7 +1944,6 @@ out_leaf: if (fresh) nm_free_leaf(leaf);
 out_rule: if (new_rule.r_path.dentry) path_put(&new_rule.r_path);
           if (new_rule.r_parent) dput(new_rule.r_parent);
           if (new_rule.r_name) release_dentry_name_snapshot(&name);
-          kfree(r_buf);
           return err;
 }
 
@@ -1974,7 +1971,7 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
     if (!stub_virtual && old->count == 1) {
         struct nm_dir_node *parent = nm_detach_leaf_locked(leaf);
         if (IS_ERR(parent)) return PTR_ERR(parent);
-        return parent ? nm_prune_empty_virtual_dirs_locked(parent) : 0;
+        return nm_prune_empty_virtual_dirs_locked(parent);
     }
 
     new_count = stub_virtual ? old->count : old->count - 1;

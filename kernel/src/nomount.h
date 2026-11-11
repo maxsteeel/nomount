@@ -208,14 +208,7 @@ static inline bool nm_is_virtual_pos(loff_t pos) {
     return (pos & 0xFFFF000000000000ULL) == (NM_SIG_16 << 48);
 }
 
-static inline loff_t nm_pack_pos(u32 id) {
-#ifdef CONFIG_COMPAT
-    if (in_compat_syscall()) return (NM_SIG_16 << 16) | (id & 0xFFFF);
-#endif
-    return (NM_SIG_16 << 48) | id;
-}
-
-static inline loff_t nm_pack_pos_frag(u32 id, u32 frag) {
+static inline loff_t nm_pack_pos(u32 id, u32 frag) {
 #ifdef CONFIG_COMPAT
     if (in_compat_syscall()) return (NM_SIG_16 << 16) | (id & 0xFFFF);
 #endif
