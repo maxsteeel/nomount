@@ -196,7 +196,7 @@ static void nm_clear_state(int clear_flags);
 /* =====================================================================
  * NoMount VFS Offset Protocol
  * =====================================================================
- * 64-bit layout: [ 16-bit 'nm' ][ 16-bit 0 ][ 32-bit ID ] 
+ * 64-bit layout: [ 16-bit 'nm' ][ 16-bit FRAG ][ 32-bit ID ]
  * 32-bit layout: [ 16-bit 'nm' ][ 16-bit ID ]
  */
 #define NM_SIG_16 0x6E6DULL /* "nm" in hex */
@@ -204,7 +204,7 @@ static inline bool nm_is_virtual_pos(loff_t pos) {
 #ifdef CONFIG_COMPAT
     if (in_compat_syscall()) return (pos & 0xFFFF0000ULL) == (NM_SIG_16 << 16);
 #endif
-    return (pos & 0xFFFFFFFF00000000ULL) == (NM_SIG_16 << 48);
+    return (pos & 0xFFFF000000000000ULL) == (NM_SIG_16 << 48);
 }
 
 static inline loff_t nm_pack_pos(u32 id) {
@@ -212,6 +212,20 @@ static inline loff_t nm_pack_pos(u32 id) {
     if (in_compat_syscall()) return (NM_SIG_16 << 16) | (id & 0xFFFF);
 #endif
     return (NM_SIG_16 << 48) | id;
+}
+
+static inline loff_t nm_pack_pos_frag(u32 id, u32 frag) {
+#ifdef CONFIG_COMPAT
+    if (in_compat_syscall()) return (NM_SIG_16 << 16) | (id & 0xFFFF);
+#endif
+    return ((loff_t)NM_SIG_16 << 48) | ((loff_t)(frag & 0xFFFF) << 32) | id;
+}
+
+static inline u32 nm_unpack_frag(loff_t pos) {
+#ifdef CONFIG_COMPAT
+    if (in_compat_syscall()) return 0;
+#endif
+    return (u32)((pos >> 32) & 0xFFFF);
 }
 
 static inline u32 nm_unpack_pos(loff_t pos) {

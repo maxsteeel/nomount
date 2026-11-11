@@ -39,6 +39,11 @@ static __always_inline bool nm_child_matches(struct nm_leaf *leaf, const char *n
     return child_name[0] == name[0] && child_name[len - 1] == name[len - 1] && !memcmp(child_name, name, len);
 }
 
+static __always_inline u32 nm_child_frag(struct nm_leaf *leaf)
+{
+    return (leaf->child_hash >> 16) & 0xFFFF;
+}
+
 static bool nm_rules_overlap(const struct nm_rule *a, const struct nm_rule *b)
 {
     unsigned int lo = max(a->target_uid, b->target_uid), hi = min(a->uid_end, b->uid_end);
@@ -227,20 +232,37 @@ static NM_ACTOR_RET nm_actor_proxy(struct dir_context *ctx, const char *name, in
 static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_dir_node *dir_node, uid_t fsuid, bool native_view)
 {
 	if (!dir_node) return;
-	if (!nm_is_virtual_pos(ctx->pos)) ctx->pos = nm_pack_pos(0);
 
-	for (u32 id = nm_unpack_pos(ctx->pos); ; id++) {
+	u32 index = 0;
+	if (nm_is_virtual_pos(ctx->pos)) {
+		index = nm_unpack_pos(ctx->pos);
+		u32 frag = nm_unpack_frag(ctx->pos);
+		if (frag) {
+			rcu_guard();
+			struct nm_child_array *array = rcu_dereference(dir_node->children);
+			if (array) {
+				if (index >= (u32)array->count || nm_child_frag(nm_entries(array)[index]) != frag) {
+					for (u32 i = 0; i < (u32)array->count; i++)
+						if (nm_child_frag(nm_entries(array)[i]) == frag) { index = i; break; }
+				}
+			}
+		}
+	}
+
+	for (u32 id = index; ; id++) {
 		char name_buf[NAME_MAX + 1];
 		int name_len = 0;
 		unsigned long v_ino = 0;
 		unsigned char d_type = 0;
 		bool do_emit = false, has_more = false;
+		u32 cur_frag = 0, next_frag = 0;
 
 		rcu_read_lock();
 		struct nm_child_array *array = rcu_dereference(dir_node->children);
 		if (array && id < (u32)array->count) {
 			struct nm_leaf *leaf = nm_entries(array)[id];
 			struct nm_rule *rule = nm_select_rule(leaf, fsuid);
+			cur_frag = nm_child_frag(leaf);
 			has_more = true;
 			if (rule && !(rule->flags & NM_FLAG_WHITEOUT) && (!native_view || nm_rule_needs_readdir(leaf, rule))) {
 				name_len = leaf->child_len;
@@ -251,13 +273,14 @@ static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_d
 					do_emit = true;
 				}
 			}
+			if (id + 1 < (u32)array->count) next_frag = nm_child_frag(nm_entries(array)[id + 1]);
 		}
 		rcu_read_unlock();
 		if (!has_more) break;
 
-		ctx->pos = nm_pack_pos(id);
+		ctx->pos = nm_pack_pos_frag(id, cur_frag);
 		if (do_emit && !dir_emit(ctx, name_buf, name_len, v_ino, d_type)) break;
-		ctx->pos = nm_pack_pos(id + 1);
+		ctx->pos = nm_pack_pos_frag(id + 1, next_frag);
 	}
 }
 
