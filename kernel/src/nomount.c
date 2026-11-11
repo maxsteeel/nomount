@@ -1686,6 +1686,7 @@ static void nm_publish_rules_locked(struct nm_leaf *leaf, struct nm_rule_array *
 static void nm_retire_leaf_locked(struct nm_leaf *leaf)
 {
     struct nm_rule_array *array = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex));
+    if (leaf->this_dir) leaf->this_dir->owner = NULL;
     RCU_INIT_POINTER(leaf->rules, NULL);
     leaf->next = nm_retired_leaves;
     nm_retired_leaves = leaf;
@@ -1823,7 +1824,6 @@ static struct nm_dir_node *nm_detach_leaf_locked(struct nm_leaf *leaf)
 {
     struct nm_dir_node *parent = nm_delete_child_locked(leaf, false);
     if (IS_ERR(parent)) return parent;
-    if (leaf->this_dir) leaf->this_dir->owner = NULL;
     hash_del_rcu(&leaf->ht_node);
     nm_retire_leaf_locked(leaf);
     return parent;
@@ -2021,7 +2021,6 @@ static void nm_clear_state(int clear_flags)
         int bkt;
         hash_for_each_safe(nm_leaves_ht, bkt, tmp, leaf, ht_node) {
             nm_delete_child_locked(leaf, true);
-            if (leaf->this_dir) leaf->this_dir->owner = NULL;
             hash_del_rcu(&leaf->ht_node);
             nm_retire_leaf_locked(leaf);
         }
