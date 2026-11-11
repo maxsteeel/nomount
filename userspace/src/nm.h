@@ -179,15 +179,9 @@ static noinline void parse_uid_range(const char *s, unsigned int *start, unsigne
 }
 
 static noinline void parse_arguments(long argc, char **argv, struct nm_args *parsed_args) {
-    parsed_args->action = ACTION_NONE;
+    unsigned char *p = (unsigned char *)parsed_args;
+    for (unsigned long i = 0; i < sizeof(*parsed_args); i++) p[i] = 0;
     parsed_args->data_start_idx = 2;
-    parsed_args->is_json = 0;
-    parsed_args->is_whiteout = 0;
-    parsed_args->is_opaque = 0;
-    parsed_args->target_uid = 0;
-    parsed_args->target_uid_end = 0;
-    parsed_args->deny_start = 0;
-    parsed_args->deny_end = 0;
 
     if (argc < 2) return;
 
@@ -210,7 +204,6 @@ static noinline void parse_arguments(long argc, char **argv, struct nm_args *par
     } else if (strcmp(c1, "clear") == 0) {
         if (argc >= 3 && strcmp(argv[2], "rules") == 0) parsed_args->action = ACTION_RULE_CLEAR;
         else if (argc >= 3 && strcmp(argv[2], "uid") == 0) parsed_args->action = ACTION_UID_CLEAR;
-        else if (argc >= 3 && strcmp(argv[2], "all") == 0) parsed_args->action = ACTION_CLEAR_ALL;
         else parsed_args->action = ACTION_CLEAR_ALL;
         parsed_args->data_start_idx = (argc >= 3) ? 3 : 2;
     }
@@ -289,31 +282,17 @@ static noinline void list_print_uint(struct nm_output *out, unsigned int n) {
 }
 
 /* path resolution */
-static noinline int resolved_path_length(const char *cwd, const char *rel) {
-    int length = 0;
-    if (cwd && *rel != '/') {
-        while (*cwd++) {
-            if (length == PATH_MAX) return -1;
-            length++;
-        }
-        if (length == PATH_MAX) return -1;
-        length++;
-    }
-    while (*rel++) {
-        if (length == PATH_MAX) return -1;
-        length++;
-    }
-    return length;
-}
-
-static noinline char* resolve_path(char *p, const char *cwd, const char *rel) {
+static noinline char* resolve_path(char *p, char *end, const char *cwd, const char *rel) {
     if (cwd && *rel != '/') {
         while (*cwd) {
+            if (p == end) return 0;
             *p++ = *cwd++;
         }
+        if (p == end) return 0;
         *p++ = '/';
     }
     while (*rel) {
+        if (p == end) return 0;
         *p++ = *rel++;
     }
     return p;

@@ -78,24 +78,15 @@ void c_main(long *sp) {
             char *cursor = payload->buffer;
 
             for (int i = 0; i + step - 1 < p_count; i += step) {
-                int v_len = resolved_path_length(cwd, argv[i]);
-                if (v_len <= 0) { exit_code = 3; continue; }
-
-                int r_len = 0;
-                if (args.action == ACTION_RULE_ADD && !args.is_whiteout) {
-                    r_len = resolved_path_length(cwd, argv[i+1]);
-                    if (r_len <= 0) { exit_code = 3; continue; }
-                }
-
                 int header_size = (target_cmd == NM_CMD_ADD_RULE) ? sizeof(struct nm_rule_hdr) : sizeof(struct nm_del_hdr);
-                int record_size = header_size + v_len + r_len;
-                if (record_size > sizeof(payload->buffer)) { exit_code = 3; continue; }
-                if ((cursor - payload->buffer) + record_size > sizeof(payload->buffer)) {
-                    payload->data_size = cursor - payload->buffer;
-                    exit_code |= (nm_send_payload(payload) < 0);
-                    cursor = payload->buffer;
-                    payload->arg1 = 0;
-                }
+                char *end = payload->buffer + sizeof(payload->buffer);
+                if (end - cursor < header_size) goto batch_full;
+                char *v = cursor + header_size;
+                char *v_end = resolve_path(v, end, cwd, argv[i]);
+                if (!v_end) goto batch_full;
+                char *r_end = v_end;
+                if (step == 2 && !(r_end = resolve_path(v_end, end, cwd, argv[i+1]))) goto batch_full;
+                int v_len = v_end - v, r_len = r_end - v_end;
 
                 if (target_cmd == NM_CMD_ADD_RULE) {
                     struct nm_rule_hdr *h = (void *)cursor;
@@ -103,17 +94,21 @@ void c_main(long *sp) {
                     h->uid = args.target_uid; h->uid_end = args.target_uid_end;
                     h->deny_start = args.deny_start; h->deny_end = args.deny_end;
                     h->v_len = v_len; h->r_len = r_len;
-
-                    cursor = resolve_path(cursor + sizeof(*h), cwd, argv[i]);
-                    if (r_len > 0) cursor = resolve_path(cursor, cwd, argv[i+1]);
                 } else {
                     struct nm_del_hdr *h = (void *)cursor;
                     h->uid = args.target_uid; h->v_len = v_len;
                     h->uid_end = args.target_uid_end;
                     h->deny_start = args.deny_start; h->deny_end = args.deny_end;
-
-                    cursor = resolve_path(cursor + sizeof(*h), cwd, argv[i]);
                 }
+                cursor = r_end;
+                continue;
+            batch_full:
+                if (cursor == payload->buffer) { exit_code = 3; continue; }
+                payload->data_size = cursor - payload->buffer;
+                exit_code |= (nm_send_payload(payload) < 0);
+                payload->arg1 = 0;
+                cursor = payload->buffer;
+                i -= step;
             }
 
             if (cursor > payload->buffer) {
