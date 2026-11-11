@@ -866,8 +866,9 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
             .v_ino = d_inode(backing)->i_ino,
             .backing_child = true,
         };
-        path_get(&rule_info.r_path);
         rule_info.r_path.dentry = backing;
+        path_get(&rule_info.r_path);
+        dput(backing);
         return nm_materialize_rule(dir, dentry, &rule_info);
     }
 
