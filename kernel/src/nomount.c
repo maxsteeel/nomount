@@ -1119,19 +1119,17 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
         if (!(nm_sop = kzalloc(sizeof(*nm_sop), GFP_KERNEL))) return -ENOMEM;
         nm_sop->orig_sop = sb->s_op;
         nm_sop->sb = sb;
-        if (kernfs) {
-            list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
-            return 0;
+        if (!kernfs) {
+            nm_sop->fake_sop = *sb->s_op;
+            if (with_xattr) {
+                nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
+                nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
+            }
+            if (!sb_rdonly(sb) && !nm_is_pseudo_fs(sb))
+                nm_sop->fake_sop.sync_fs = nm_shutdown_sync_fs;
+            smp_store_release(&sb->s_op, &nm_sop->fake_sop);
         }
-        nm_sop->fake_sop = *sb->s_op;
-        if (with_xattr) {
-            nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
-            nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
-        }
-        if (!sb_rdonly(sb) && !nm_is_pseudo_fs(sb))
-            nm_sop->fake_sop.sync_fs = nm_shutdown_sync_fs;
         list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
-        smp_store_release(&sb->s_op, &nm_sop->fake_sop);
         nm_debug("Superblock successfully hijacked for dev: 0x%x\n", sb->s_dev);
     } else if (!with_xattr || nm_sop->fake_xattr) {
         return 0;
@@ -1311,12 +1309,12 @@ static void nm_restore_superblocks(void)
             list_for_each_entry(inode, &nm_sop->sb->s_inodes, i_sb_list)
                 nm_destroy_hijacked_inode(inode);
             spin_unlock(&nm_sop->sb->s_inode_list_lock);
-            if (READ_ONCE(nm_sop->sb->s_op) == &nm_sop->fake_sop) {
+            if (READ_ONCE(nm_sop->sb->s_op) == &nm_sop->fake_sop)
                 smp_store_release(&nm_sop->sb->s_op, nm_sop->orig_sop);
-                if (nm_sop->fake_xattr) {
+            if (nm_sop->fake_xattr) {
+                if (READ_ONCE(nm_sop->sb->s_xattr) == nm_sop->fake_xattr)
                     smp_store_release((const struct xattr_handler ***)&nm_sop->sb->s_xattr, nm_sop->orig_xattr);
-                    kfree(nm_sop->fake_xattr); 
-                }
+                kfree(nm_sop->fake_xattr);
             }
             nm_debug("Successfully cured superblock for dev: 0x%x\n", nm_sop->sb->s_dev);
         }
