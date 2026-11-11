@@ -82,6 +82,6 @@
   "done": "Xong",
   "modules_skip": "Bỏ qua",
   "modules_unskip": "Khôi phục",
-  "dump_rules": "Dump rules",
-  "dump_rules_desc": "Dump all rules into android log. Only enable for debugging."
+  "dump_rules": "Xuất quy tắc",
+  "dump_rules_desc": "Xuất tất cả các quy tắc vào nhật ký android. Chỉ bật để gỡ lỗi."
 }
