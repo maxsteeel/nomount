@@ -83,5 +83,8 @@
   "modules_skip": "Bỏ qua",
   "modules_unskip": "Khôi phục",
   "dump_rules": "Xuất quy tắc",
-  "dump_rules_desc": "Xuất tất cả các quy tắc vào nhật ký android. Chỉ bật để gỡ lỗi."
+  "dump_rules_desc": "Xuất tất cả các quy tắc vào nhật ký android. Chỉ bật để gỡ lỗi.",
+  "dump_now": "Dump rules now",
+  "dump_done": "Rules dumped to logcat",
+  "dump_failed": "Failed to dump rules"
 }
