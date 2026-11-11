@@ -141,7 +141,7 @@ static int nm_rebind_path(struct nm_rule_info *rule_info)
     if (IS_ERR(new)) return PTR_ERR(new);
 
     new_inode = d_backing_inode(new);
-    if (!d_is_positive(new) || new->d_sb != rule_info->r_path.dentry->d_sb || !new_inode || nm_inode_is_virtual(new_inode) || ((new_inode->i_mode ^ old_inode->i_mode) & S_IFMT)) {
+    if (!d_is_positive(new) || new->d_sb != rule_info->r_path.dentry->d_sb || !new_inode || nm_inode_is_virtual(new_inode) || d_mountpoint(new) || ((new_inode->i_mode ^ old_inode->i_mode) & S_IFMT)) {
         dput(new);
         return -ENOENT;
     }
@@ -636,9 +636,9 @@ static int nm_open(struct inode *inode, struct file *file)
 
 static int nm_release(struct inode *inode, struct file *file)
 {
-    struct nm_inode_info *info = inode->i_private;
+    struct nm_inode_info *info = READ_ONCE(inode->i_private);
     struct file *real_file = file->private_data;
-    if (real_file && real_file != READ_ONCE(info->r_file)) fput(real_file);
+    if (real_file && info && real_file != READ_ONCE(info->r_file)) fput(real_file);
     file->private_data = NULL;
     return 0;
 }
@@ -647,6 +647,8 @@ static loff_t nm_llseek(struct file *file, loff_t offset, int whence)
 {
     struct file *real_file = file->private_data;
     loff_t pos;
+
+    if (!real_file) return -EINVAL;
 
     switch (whence) {
     case SEEK_SET: pos = offset; break;
@@ -836,9 +838,10 @@ static const char *nm_get_link(struct dentry *dentry, struct inode *inode, struc
 
 static int nm_dir_iterate_dir(struct file *file, struct dir_context *ctx)
 {
-    struct nm_inode_info *info = file_inode(file)->i_private;
+    struct nm_inode_info *info = READ_ONCE(file_inode(file)->i_private);
     struct file *real_file = file->private_data;
 
+    if (unlikely(!info)) return -ENODEV;
     return nm_iterate_view(file, ctx, real_file ? real_file->f_op : NULL, info->dir_node, false, info->opaque);
 }
 
