@@ -95,15 +95,16 @@ static struct nm_leaf *nm_find_leaf_in_dir(struct nm_dir_node *dir_node, const c
     return NULL;
 }
 
-static bool nm_path_unchanged(struct dentry *d, const struct dentry *saved_parent, const char *name, u16 namelen)
+static bool nm_path_unchanged(struct dentry *d, const struct nm_rule *rule)
 {
     bool unchanged;
     unsigned seq;
 
     do {
         seq = raw_seqcount_begin(&d->d_seq);
-        unchanged = d->d_parent == saved_parent && d->d_name.len == namelen &&
-                    !memcmp(d->d_name.name, name, namelen) &&
+        unchanged = ((d == rule->r_path.dentry && seq == rule->r_seq) ||
+                     (d->d_parent == rule->r_parent && d->d_name.len == rule->r_name_len &&
+                      !memcmp(d->d_name.name, rule->r_name, rule->r_name_len))) &&
                     !(d_unhashed(d) && !IS_ROOT(d) && (!d_inode(d) || d_inode(d)->i_nlink == 0));
     } while (read_seqcount_retry(&d->d_seq, seq));
 
@@ -116,7 +117,7 @@ static int nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct n
     char *name = NULL;
     if (!rule) return 0;
 
-    if (rule->r_parent && !nm_path_unchanged(rule->r_path.dentry, rule->r_parent, rule->r_name, rule->r_name_len)) {
+    if (rule->r_parent && !nm_path_unchanged(rule->r_path.dentry, rule)) {
         if (!(name = kmemdup(rule->r_name, rule->r_name_len, GFP_ATOMIC))) return -ENOMEM;
     }
 
@@ -341,7 +342,7 @@ static bool nm_binding_matches_rule(struct inode *inode, const struct nm_rule *r
     if (!info || info->backing_child || info->dir_node || info->opaque)
         return false;
     d = READ_ONCE(info->r_path.dentry);
-    if (!d || !nm_path_unchanged(d, rule->r_parent, rule->r_name, rule->r_name_len))
+    if (!d || !nm_path_unchanged(d, rule))
         return false;
     r_inode = d_backing_inode(d);
     return nm_inode_matches_attrs(inode, r_inode);
@@ -1543,7 +1544,7 @@ static int nm_prepare_rule(const char *r_path, u32 flags, unsigned int uid, unsi
                     path_put(&out->r_path);
                     return -ENOMEM;
                 }
-                if (!read_seqcount_retry(&dentry->d_seq, seq)) break;
+                if (!read_seqcount_retry(&dentry->d_seq, seq)) { out->r_seq = seq; break; }
                 dput(out->r_parent);
                 release_dentry_name_snapshot(name);
             }
