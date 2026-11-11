@@ -501,7 +501,7 @@ static int nm_hijacked_unlink(struct inode *dir, struct dentry *dentry)
         goto do_real_unlink;
     }
     leaf = nm_find_leaf_in_dir(dir_node, dentry->d_name.name, dentry->d_name.len);
-    if (unlikely(!leaf || !(rule = nm_select_rule(leaf, fsuid)))) {
+    if (unlikely(!leaf || !(rule = nm_select_rule(leaf, fsuid)) || (!rule->target_uid && !rule->uid_end))) {
         mutex_unlock(&nm_mutex);
         goto do_real_unlink;
     }
