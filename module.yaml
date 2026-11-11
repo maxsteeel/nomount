@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/KernelSU-Modules/tools/main/schemas/module.schema.json
+schemaVersion: 1
+id: nomount
+name: NoMount
+summary: A kernel-level VFS path redirection metamodule for KernelSU and APatch.
+description: README.md
+license: GPL-2.0-only for kernel; GPL-3.0-only for others
+homepage: https://github.com/maxsteeel/nomount
+support: https://github.com/maxsteeel/nomount/issues
+tags: [kernel, vfs, filesystem, system, metamodule]
+metamodule: true
+
+authors:
+  - name: maxsteeel
+    url: https://github.com/maxsteeel
+
+compatibility:
+  architectures: [armeabi-v7a, arm64-v8a, x86_64]
+
+release:
+  assetPattern: "NoMount-*.zip"

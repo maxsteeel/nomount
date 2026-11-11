@@ -84,12 +84,13 @@ let cachedI18nNodes = null;
 async function setAppLocale(locale, refreshView = true) {
     activeLocale = locale in LOCALE_NAMES ? locale : 'en';
 
-    if (!translationsCache[activeLocale]) {
+    await Promise.all(Array.from(new Set(['en', activeLocale]), async loc => {
+        if (translationsCache[loc]) return;
         try {
-            const response = await fetch(`./locales/${activeLocale}.json`);
-            translationsCache[activeLocale] = response.ok ? await response.json() : {};
-        } catch { translationsCache[activeLocale] = {}; }
-    }
+            const response = await fetch(`./locales/${loc}.json`);
+            translationsCache[loc] = response.ok ? await response.json() : {};
+        } catch { translationsCache[loc] = {}; }
+    }));
 
     translations = translationsCache[activeLocale];
     document.documentElement.lang = activeLocale;
@@ -98,9 +99,11 @@ async function setAppLocale(locale, refreshView = true) {
     if (!cachedI18nNodes) cachedI18nNodes = document.querySelectorAll('[data-i18n]');
 
     cachedI18nNodes.forEach(el => {
+        // if key even missing from en, keep the text hardcoded in the HTML instead of raw key
+        if (!(el.dataset.i18n in translations)) return;
         const text = translate(el.dataset.i18n);
         const targetAttr = el.dataset.i18nAttr;
-        
+
         if (targetAttr) el.setAttribute(targetAttr, text);
         else if ('placeholder' in el) el.placeholder = text;
         else el.textContent = text;
@@ -153,13 +156,38 @@ const MOD_DIR = "/data/adb/modules";
 const NM_DATA = "/data/adb/nomount";
 const NM_BIN = "/data/adb/modules/nomount/bin/nm";
 const RULE_PATHS = `${MOD_DIR}/nomount/rule-paths.sh`;
-const FILES = { disable: `${NM_DATA}/disable`, exclusions: `${NM_DATA}/.exclusion_list.json`, isolated: `${NM_DATA}/.block_isolated_uids`, theme: `${NM_DATA}/theme.json` };
+const FILES = { disable: `${NM_DATA}/disable`, exclusions: `${NM_DATA}/.exclusion_list.json`, isolated: `${NM_DATA}/.block_isolated_uids`, theme: `${NM_DATA}/theme.json`, dump_rules: `${NM_DATA}/dump_rules` };
 const APP_ICON_FALLBACK = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
 const viewLoadState = { 'view-home': false, 'view-modules': false, 'view-exclusions': false, 'view-options': false };
 
-const renderTextState = (el, cls, text) => { el.className = cls; el.textContent = text; };
-const renderEmptyState = (el, face, text) => el.innerHTML = `<div class="empty-list-placeholder empty-state"><div class="empty-face">${face}</div><div class="empty-text">${text}</div></div>`;
 const delay = ms => new Promise(r => setTimeout(r, ms));
+
+function el(tag, props, ...children) {
+    const node = document.createElement(tag);
+    if (props) for (const k in props) {
+        const v = props[k];
+        if (v == null || v === false) continue;
+        if (k === 'class') node.className = v;
+        else if (k === 'style' && typeof v === 'object') Object.assign(node.style, v);
+        else if (k === 'dataset') Object.assign(node.dataset, v);
+        else if (k === 'checked' || k === 'disabled') node[k] = !!v;
+        else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v);
+        else node.setAttribute(k, v);
+    }
+    for (const c of children.flat(Infinity)) {
+        if (c == null || c === false) continue;
+        node.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+    }
+    return node;
+}
+
+const renderTextState = (container, cls, text) => { container.className = cls; container.textContent = text; };
+function renderEmptyState(container, face, text) {
+    container.replaceChildren(
+        el('div', { class: 'empty-list-placeholder empty-state' }, el('div', { class: 'empty-face' }, face), el('div', { class: 'empty-text' }, text)
+        )
+    );
+}
 
 // Icons
 customElements.define('md-icon', class extends HTMLElement {});
@@ -192,6 +220,8 @@ const FILLED_ICON_PATHS = {
     settings: 'M433-80q-27 0-46.5-18T363-142l-9-66q-13-5-24.5-12T307-235l-62 26q-25 11-50 2t-39-32l-47-82q-14-23-8-49t27-43l53-40q-1-7-1-13.5v-27q0-6.5 1-13.5l-53-40q-21-17-27-43t8-49l47-82q14-23 39-32t50 2l62 26q11-8 23-15t24-12l9-66q4-26 23.5-44t46.5-18h94q27 0 46.5 18t23.5 44l9 66q13 5 24.5 12t22.5 15l62-26q25-11 50-2t39 32l47 82q14 23 8 49t-27 43l-53 40q1 7 1 13.5v27q0 6.5-2 13.5l53 40q21 17 27 43t-8 49l-48 82q-14 23-39 32t-50-2l-60-26q-11 8-23 15t-24 12l-9 66q-4 26-23.5 44T527-80h-94Zm49-260q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Z',
     shield: 'M467-85q-6-1-12-3-135-45-215-166.5T160-516v-189q0-25 14.5-45t37.5-29l240-90q14-5 28-5t28 5l240 90q23 9 37.5 29t14.5 45v189q0 140-80 261.5T505-88q-6 2-12 3t-13 1q-7 0-13-1Z'
 };
+
+const SYRINGE_SVG = '<svg viewBox="0 0 48 48" aria-hidden="true" style="width:1.2em;height:1.2em;fill:currentColor;transform:scaleX(-1)"><path d="M45.4,10.3,37.7,2.6a2.1,2.1,0,0,0-2.9,0,2.1,2.1,0,0,0,0,2.8l2.5,2.5-3.4,3.4L28.5,5.8h0a2,2,0,1,0-2.8,2.9L9.9,24.4a6.3,6.3,0,0,0-1.7,5.2l1.1,6.3L4.6,40.6a1.9,1.9,0,0,0,0,2.8,1.9,1.9,0,0,0,2.8,0l4.7-4.7,6.3,1.1a6,6,0,0,0,5.2-1.7L39.4,22.3a2,2,0,1,0,2.9-2.7l-5.6-5.5,3.4-3.4,2.5,2.5a2,2,0,0,0,1.4.6A2.1,2.1,0,0,0,45.4,10.3Zm-24.6,25a2.3,2.3,0,0,1-1.8.5l-5.8-1-1-5.8a2.3,2.3,0,0,1,.5-1.8l2.6-2.5,3.2,3.2a2.1,2.1,0,0,0,2.9,0,1.9,1.9,0,0,0,0-2.8l-3.3-3.3,3.4-3.3,3.3,3.2a2,2,0,0,0,2.8-2.8l-3.3-3.3,4.2-4.1,8,8Z"/></svg>';
 
 const svgCache = {};
 function setIcon(icon, name, variant = 'outline') {
@@ -337,11 +367,11 @@ const _PALETTE_ROLES = {
 };
 
 _PALETTE_ROLES.amoled = Object.assign({}, _PALETTE_ROLES.dark, {
-    surface:                ['neutral', 4, 0.02],
-    background:             ['neutral', 4, 0.02],
-    surfaceContainer:       ['neutral', 8, 0.08],
-    surfaceContainerHigh:   ['neutral', 12, 0.12],
-    surfaceContainerHighest:['neutral', 16, 0.16],
+    surface:                ['neutral', 0, 0],
+    background:             ['neutral', 0, 0],
+    surfaceContainer:       ['neutral', 4, 0.08],
+    surfaceContainerHigh:   ['neutral', 8, 0.12],
+    surfaceContainerHighest:['neutral', 12, 0.16],
 });
 
 const _PALETTE_HUES = {
@@ -428,6 +458,15 @@ function applyAppearance() {
                 applyAppearance();
             }
         });
+    }
+
+    const surfaceContainer = palette['--md-sys-color-surface-container'];
+    if (surfaceContainer) {
+        const r = parseInt(surfaceContainer.slice(1, 3), 16);
+        const g = parseInt(surfaceContainer.slice(3, 5), 16);
+        const b = parseInt(surfaceContainer.slice(5, 7), 16);
+        const alpha = scheme === 'amoled' ? 0.80 : 0.75;
+        root.style.setProperty('--nm-nav-background', `rgba(${r}, ${g}, ${b}, ${alpha})`);
     }
 }
 // Apply immediately to prevent flashes
@@ -622,63 +661,61 @@ function initNavigation() {
 }
 
 // Home
-async function loadHome() {
+async function loadHome(readModuleInfo = readModules) {
     try { applyHomeData(JSON.parse(localStorage.getItem('nm_home_cache'))); } catch (e) { console.error("Error loading cache:", e); }
 
     const script = `
         uname -r; echo "|||"
-        getprop ro.product.vendor.model; [ -z "$(getprop ro.product.vendor.model)" ] && getprop ro.product.model; echo "|||"
+        model=$(getprop ro.product.vendor.model)
+        [ -n "$model" ] || model=$(getprop ro.product.model)
+        printf '%s\\n' "$model"; echo "|||"
         getprop ro.build.version.release; echo "|||"
         getprop ro.build.version.sdk; echo "|||"
-        grep "version=" ${MOD_DIR}/nomount/module.prop | cut -d= -f2; echo "|||"
-        ${NM_BIN} version; echo "|||"
-        ${NM_BIN} rule list --json; echo "|||"
-        if ${NM_BIN} version > /dev/null 2>&1; then lsmod | grep -q nomount && echo lkm || echo built-in; fi
+        sed -n 's/^version=\\([^=]*\\).*/\\1/p' ${MOD_DIR}/nomount/module.prop; echo "|||"
+        ${NM_BIN} version; driver_status=$?; echo "|||"
+        if [ "$driver_status" -eq 0 ]; then lsmod | grep -q nomount && echo lkm || echo built-in; fi
     `;
 
     try {
-        const parts = (await exec(script)).stdout.split('|||').map(s => s.trim());
-        if (!parts[6]) parts[6] = "[]";
-        let activeModulesCount = 0;
-        try {
-            const rules = JSON.parse(parts[6]);
-            const modCounts = {};
-            rules.forEach(r => {
-                if (r?.real?.startsWith(MOD_DIR)) {
-                    const modName = r.real.split('/')[4];
-                    if (modName && modName !== 'nomount') modCounts[modName] = 1;
-                }
-            });
-            activeModulesCount = Object.keys(modCounts).length;
-        } catch (e) { console.error("Error parsing rules:", e); }
+        await Promise.all([
+            exec(script).then(({ stdout }) => {
+                const parts = stdout.split('|||').map(s => s.trim());
+                const unk = translate('unknown_value');
+                const raw = parts.slice(0, 6);
+                const kVer = raw[0] || unk,
+                      model = raw[1] || unk,
+                      aRel = raw[2] || unk,
+                      aSdk = raw[3] || unk,
+                      mVer = raw[4] || unk,
+                      dVer = raw[5] || unk;
 
-        const unk = translate('unknown_value');
-        const raw = parts.slice(0, 6);
-        const kVer = raw[0] || unk,
-              model = raw[1] || unk,
-              aRel = raw[2] || unk,
-              aSdk = raw[3] || unk,
-              mVer = raw[4] || unk,
-              dVer = raw[5] || unk;
+                const nmMode = (parts[6] || '').toLowerCase();
+                const homeData = {
+                    kernelVer: kVer, deviceModel: model,
+                    androidInfo: `Android ${aRel} (API ${aSdk})`,
+                    driverVersion: `${dVer}`,
+                    moduleVersion: `${mVer}`,
+                    active: dVer !== unk,
+                    nmMode
+                };
 
-        const nmMode = (parts[7] || '').toLowerCase();
-        const homeData = {
-            kernelVer: kVer, deviceModel: model,
-            androidInfo: `Android ${aRel} (API ${aSdk})`,
-            driverVersion: `${dVer}`,
-            moduleVersion: `${mVer}`,
-            active: dVer !== unk,
-            nmMode
-        };
-
-        requestAnimationFrame(() => {
-            applyHomeData(homeData, activeModulesCount === 1 ? translate('module_injected_count') : translate('modules_injected_count', { count: activeModulesCount }));
-            localStorage.setItem('nm_home_cache', JSON.stringify(homeData));
-        });
+                requestAnimationFrame(() => {
+                    applyHomeData(homeData);
+                    localStorage.setItem('nm_home_cache', JSON.stringify(homeData));
+                });
+            }),
+            readModuleInfo().then(modules => {
+                const count = modules.filter(mod => mod.fileCount > 0).length;
+                requestAnimationFrame(() => {
+                    const stats = getHomeElements().stats;
+                    if (stats) stats.textContent = count === 1 ? translate('module_injected_count') : translate('modules_injected_count', { count });
+                });
+            })
+        ]);
     } catch (e) { console.error("Delayed Home update error:", e); }
 }
 
-function applyHomeData(data, statsText) {
+function applyHomeData(data) {
     const el = getHomeElements();
     if (el.kernel) el.kernel.textContent = data.kernelVer || translate('unknown_value');
     if (el.device) el.device.textContent = data.deviceModel || translate('unknown_value');
@@ -689,7 +726,6 @@ function applyHomeData(data, statsText) {
     if (el.statusLabel) el.statusLabel.textContent = translate('status_version', {
         version: (data.driverVersion || translate('unknown_value')).replace(/^v(?=\d)/i, '')
     });
-    if (statsText && el.stats) el.stats.textContent = statsText;
 
     if (el.statusTitle) el.statusTitle.textContent = translate(data.active ? 'status_active' : 'status_inactive');
     [el.statusLabel, el.statusCard].forEach(e => {
@@ -708,119 +744,192 @@ function applyHomeData(data, statsText) {
 // Modules
 let currentRenderId = 0;
 const TARGET_PARTITIONS = "system system_ext vendor odm product apex oem optics prism mi_ext my_bigball my_carrier my_company my_engineering my_heytap my_manifest my_preload my_product my_region my_reserve my_stock";
-async function loadModules() {
+async function readModules(onlyMods = null) {
+    const filter = onlyMods ? `case " ${onlyMods.join(' ')} " in *" $mod "*) ;; *) continue ;; esac` : '';
+    const script = `
+        ${NM_BIN} rule list --json || exit $?; echo "|||"
+        cd -P ${MOD_DIR} || exit 1
+        set --
+        for mod in *; do
+            [ ! -d "$mod" ] && continue
+            [ "$mod" = "nomount" ] && continue
+            [ ! -f "$mod/module.prop" ] && continue
+            ${filter}
+            count=$#
+            for p in ${TARGET_PARTITIONS}; do [ -d "$mod/$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && set -- "$@" "$mod/$p"; done
+            [ "$#" -eq "$count" ] && continue
+            name=""
+            while IFS='=' read -r k v; do case "$k" in name) name="$v"; break;; esac; done < "$mod/module.prop"
+            disable=false; [ -f "$mod/disable" ] && disable=true
+            skip=false; [ -f "$mod/skip_mount" ] && skip=true
+            root="\${PWD%/}/$mod"
+            if [ -L "$mod" ]; then root=$(readlink -f "$mod") || exit 1; fi
+            printf '@@M\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$mod" "$name" "$disable" "$skip" "$root"
+        done
+        if [ "$#" -gt 0 ]; then
+            sh "${RULE_PATHS}" links "$@" || exit 1
+            find -H "$@" -type l -exec sh "${RULE_PATHS}" scan {} + || exit 1
+        fi
+    `;
+    const { errno, stdout, stderr } = await exec(script);
+    if (errno) throw new Error(stderr || 'Failed to read modules');
+    const [jsonPart, modulesPart = ''] = stdout.split('|||');
+    const rules = JSON.parse(jsonPart.trim() || '[]');
+    const modules = new Map(), roots = new Map(), links = new Map();
+    for (const line of modulesPart.split('\n')) {
+        const [kind, modId, ...fields] = line.split('\t');
+        if (kind === '@@M') {
+            const [realName, disable, skipMount, root] = fields;
+            const mod = { modId, realName, disable: disable === 'true', skipMount: skipMount === 'true', fileCount: 0 };
+            modules.set(modId, mod);
+            if (!roots.has(root)) roots.set(root, []);
+            roots.get(root).push(mod);
+        } else if (kind === '@@S') {
+            const [virtual, real, dir] = fields;
+            if (!links.has(virtual)) links.set(virtual, []);
+            links.get(virtual).push({ mod: modules.get(modId), real, dir: dir === 'true' });
+        }
+    }
+    for (const { virtual, real } of rules) {
+        if (!real) continue;
+        const owners = new Set();
+        for (let path = real; path; path = path.slice(0, path.lastIndexOf('/'))) {
+            for (const mod of roots.get(path) || []) owners.add(mod);
+        }
+        for (let path = virtual; path; path = path.slice(0, path.lastIndexOf('/'))) {
+            const suffix = virtual.slice(path.length);
+            for (const link of links.get(path) || []) {
+                if ((link.dir || !suffix) && real === (suffix ? link.real.replace(/\/$/, '') + suffix : link.real)) owners.add(link.mod);
+            }
+        }
+        for (const mod of owners) mod.fileCount++;
+    }
+    for (const mod of modules.values()) {
+        const { fileCount, disable, skipMount } = mod;
+        mod.statusKey = fileCount > 0 ? ((disable || skipMount) ? 'status_loaded' : 'status_active') : (disable ? 'status_disabled' : (skipMount ? 'status_skipped' : 'status_inactive'));
+    }
+    return [...modules.values()];
+}
+
+function buildModuleCard({ modId, realName, disable, skipMount, fileCount, statusKey }) {
+    const isLoaded = fileCount > 0;
+    const syringeIcon = el('md-icon', { dataset: { icon: 'syringe' } });
+    syringeIcon.innerHTML = SYRINGE_SVG;
+    const filesChip = el('span', { class: 'files-chip md-chip', style: { display: fileCount > 0 ? '' : 'none' } },
+        syringeIcon,
+        el('span', { class: 'files-count-text' }, fileCount > 0 ? translate('modules_injected_files', { count: fileCount }) : '')
+    );
+
+    return el('div', { class: 'card module-card', dataset: { moduleId: modId } },
+        el('div', { class: 'module-header' },
+            el('div', { class: 'module-info' },
+                el('h3', {}, realName || modId),
+                el('div', { class: 'module-chips' },
+                    el('span', { class: `status-chip md-chip status-${statusKey.replace('status_', '')}` }, translate(statusKey)),
+                    filesChip
+                )
+            ),
+            el('label', { class: 'custom-switch' },
+                el('input', { type: 'checkbox', class: 'switch-input', 'aria-label': 'Toggle module', checked: !disable }),
+                el('span', { class: 'switch-track' },
+                    el('span', { class: 'switch-thumb' })
+                )
+            )
+        ),
+        el('div', { class: 'module-divider' }),
+        el('div', { class: 'module-extension' },
+            el('button', { class: `btn-skip-action ${skipMount ? 'unskip' : ''}` },
+                el('span', {}, translate(skipMount ? 'modules_unskip' : 'modules_skip'))
+            ),
+            el('button', { class: `btn-hot-action ${isLoaded ? 'unload' : ''}` },
+                el('span', {}, translate(isLoaded ? 'modules_hot_unload' : 'modules_hot_load'))
+            )
+        )
+    );
+}
+
+async function loadModules(readModuleInfo = readModules) {
     const listContainer = document.getElementById('modules-list');
     if (!listContainer) return;
     const renderId = ++currentRenderId;
 
     try {
-        const script = `
-            ${NM_BIN} rule list --json; echo "|||"
-            cd ${MOD_DIR}
-            for mod in *; do
-                [ ! -d "$mod" ] || [ "$mod" = "nomount" ] || [ ! -f "$mod/module.prop" ] && continue
-                has_injectable=0
-                for p in ${TARGET_PARTITIONS}; do [ -d "$mod/$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && has_injectable=1 && break; done
-                [ $has_injectable -eq 0 ] && continue
-                echo "$mod|$(grep "^name=" "$mod/module.prop" | head -n1 | cut -d= -f2-)|$([ -f "$mod/disable" ] && echo true || echo false)|$([ -f "$mod/skip_mount" ] && echo true || echo false)"
-            done
-        `;
-
-        const { stdout } = await exec(script);
-        const [jsonPart, modulesPart] = stdout.split('|||');
-        
-        const activeRules = JSON.parse(jsonPart?.trim() || "[]");
-        const lines = (modulesPart || '').split('\n').filter(Boolean);
-        
-        const ruleCountByMod = {};
-        activeRules.forEach(r => {
-            if (r?.real?.startsWith(MOD_DIR)) {
-                const parts = r.real.split('/');
-                if (parts[4] && parts[4] !== 'nomount') ruleCountByMod[parts[4]] = (ruleCountByMod[parts[4]] || 0) + 1;
-            }
-        });
-
-        const htmlArr = lines.map(line => {
-            const [modId, realName, disableStr, skipStr] = line.split('|');
-            const hasDisable = disableStr === 'true', hasSkipMount = skipStr === 'true';
-            const fileCount = ruleCountByMod[modId] || 0;
-            const isLoaded = fileCount > 0;
-            const statusKey = isLoaded ? ((hasDisable || hasSkipMount) ? 'status_loaded' : 'status_active') : (hasDisable ? 'status_disabled' : (hasSkipMount ? 'status_skipped' : 'status_inactive'));
-            return `
-                <div class="card module-card" data-module-id="${modId}">
-                    <div class="module-header">
-                        <div class="module-info">
-                            <h3>${realName || modId}</h3>
-                            <div class="module-chips">
-                                <span class="status-chip md-chip status-${statusKey.replace('status_', '')}">
-                                    ${translate(statusKey)}
-                                </span>
-                                <span class="files-chip md-chip" style="${fileCount > 0 ? '' : 'display: none;'}">
-                                    <md-icon data-icon="syringe">
-                                        <svg viewBox="0 0 48 48" aria-hidden="true" style="width: 1.2em; height: 1.2em; fill: currentColor; transform: scaleX(-1);">
-                                            <path d="M45.4,10.3,37.7,2.6a2.1,2.1,0,0,0-2.9,0,2.1,2.1,0,0,0,0,2.8l2.5,2.5-3.4,3.4L28.5,5.8h0a2,2,0,1,0-2.8,2.9L9.9,24.4a6.3,6.3,0,0,0-1.7,5.2l1.1,6.3L4.6,40.6a1.9,1.9,0,0,0,0,2.8,1.9,1.9,0,0,0,2.8,0l4.7-4.7,6.3,1.1a6,6,0,0,0,5.2-1.7L39.4,22.3a2,2,0,1,0,2.9-2.7l-5.6-5.5,3.4-3.4,2.5,2.5a2,2,0,0,0,1.4.6A2.1,2.1,0,0,0,45.4,10.3Zm-24.6,25a2.3,2.3,0,0,1-1.8.5l-5.8-1-1-5.8a2.3,2.3,0,0,1,.5-1.8l2.6-2.5,3.2,3.2a2.1,2.1,0,0,0,2.9,0,1.9,1.9,0,0,0,0-2.8l-3.3-3.3,3.4-3.3,3.3,3.2a2,2,0,0,0,2.8-2.8l-3.3-3.3,4.2-4.1,8,8Z"/>
-                                        </svg>
-                                    </md-icon>
-                                    <span class="files-count-text">${fileCount > 0 ? translate('modules_injected_files', { count: fileCount }) : ''}</span>
-                                </span>
-                            </div>
-                        </div>
-                        <label class="custom-switch" id="switch-${modId}">
-                            <input type="checkbox" class="switch-input" aria-label="Toggle module" ${!hasDisable ? 'checked' : ''}>
-                            <span class="switch-track">
-                                <span class="switch-thumb"></span>
-                            </span>
-                        </label>
-                    </div>
-                    <div class="module-divider"></div>
-                    <div class="module-extension">
-                        <button class="btn-skip-action ${hasSkipMount ? 'unskip' : ''}" id="btn-skip-${modId}">
-                            <span>${translate(hasSkipMount ? 'modules_unskip' : 'modules_skip')}</span>
-                        </button>
-                        <button class="btn-hot-action ${isLoaded ? 'unload' : ''}" id="btn-hot-${modId}">
-                            <span>${translate(isLoaded ? 'modules_hot_unload' : 'modules_hot_load')}</span>
-                        </button>
-                    </div>
-                </div>
-            `;
-        });
-
-        if (renderId === currentRenderId) {
-            lines.length === 0 ? renderEmptyState(listContainer, '(._.)', translate('no_modules_found')) : listContainer.innerHTML = htmlArr.join('');
+        const moduleInfo = await readModuleInfo();
+        if (renderId !== currentRenderId) return;
+        if (moduleInfo.length === 0) {
+            renderEmptyState(listContainer, '(._.)', translate('no_modules_found'));
+            return;
         }
+        const frag = document.createDocumentFragment();
+        for (const mod of moduleInfo) frag.appendChild(buildModuleCard(mod));
+        listContainer.replaceChildren(frag);
     } catch (e) {
         renderTextState(listContainer, 'error-message', `Error: ${e.message}`);
     }
 }
 
+let initialModulesPromise;
+const readInitialModules = () => initialModulesPromise ||= readModules().catch(e => { initialModulesPromise = null; throw e; });
+readInitialModules();
+
 async function loadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
     const script = `
-        cd "${modPath}" || exit 0
+        cd "${modPath}" || { echo "nm_load_status=1" >&2; exit 0; }
         valid_dirs=""
         for p in ${TARGET_PARTITIONS}; do [ -d "$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && valid_dirs="$valid_dirs $p"; done
-        [ -z "$valid_dirs" ] && exit 0
-        find -L $valid_dirs \\( -type d -o -type c -o -name ".replace" \\) -exec sh "${RULE_PATHS}" path "${modPath}" {} + 2>/dev/null | xargs -0 -r -n 200 ${NM_BIN} rule add --whiteout
+        [ -z "$valid_dirs" ] && { echo "nm_load_status=0" >&2; exit 0; }
+        status=0
 
-        find -L $valid_dirs  \\( -type f -o -type l \\) ! -name ".replace" -exec sh "${RULE_PATHS}" pair "${modPath}" {} + 2>/dev/null | xargs -0 -r -n 200 ${NM_BIN} rule add
+        find -L $valid_dirs '(' -type d -o -type c -o -name ".replace" -o -name ".remove" ')' \\
+            -exec sh "${RULE_PATHS}" path "${modPath}" {} + 2>/dev/null \\
+            | xargs -0 -r -n 200 ${NM_BIN} rule add --whiteout
+        st=$?; [ "$st" -ne 0 ] && status=$st
+
+        find -L $valid_dirs '(' -type d -o -name ".replace" ')' \\
+            -exec sh "${RULE_PATHS}" opaque "${modPath}" {} + 2>/dev/null \\
+            | xargs -0 -r -n 200 ${NM_BIN} rule add --opaque
+        st=$?; [ "$st" -ne 0 ] && status=$st
+
+        find -L $valid_dirs '(' -type f -o -type l ')' ! -name ".replace" ! -name ".remove" \\
+            -exec sh "${RULE_PATHS}" pair "${modPath}" {} + 2>/dev/null \\
+            | xargs -0 -r -n 200 ${NM_BIN} rule add
+        st=$?; [ "$st" -ne 0 ] && status=$st
+
+        echo "nm_load_status=$status" >&2
     `;
-    try { await exec(script); } catch (e) { throw e; }
+
+    const result = await exec(script);
+    const m = (result.stderr || '').match(/nm_load_status=(\d+)/);
+    if (!m) throw new Error('load script did not report status');
+    if (parseInt(m[1], 10) !== 0) throw new Error(result.stderr || `load failed (status ${m[1]})`);
 }
 
 async function unloadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
     const script = `
-        cd "${modPath}" || exit 0
+        cd "${modPath}" || { echo "nm_unload_status=1" >&2; exit 0; }
         valid_dirs=""
         for p in ${TARGET_PARTITIONS}; do [ -d "$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && valid_dirs="$valid_dirs $p"; done
-        [ -z "$valid_dirs" ] && exit 0
-        find -L $valid_dirs \\( -type f -o -type l -o -type c -o -type d \\) -exec sh "${RULE_PATHS}" path "${modPath}" {} + 2>/dev/null | xargs -0 -r -n 200 ${NM_BIN} rule del
+        [ -z "$valid_dirs" ] && { echo "nm_unload_status=0" >&2; exit 0; }
+        status=0
+
+        find -L $valid_dirs '(' -type f -o -type l -o -type c -o -type d ')' \\
+            -exec sh "${RULE_PATHS}" del "${modPath}" {} + 2>/dev/null \\
+            | xargs -0 -r -n 200 ${NM_BIN} rule del
+        st=$?; [ "$st" -ne 0 ] && status=$st
+
+        echo "nm_unload_status=$status" >&2
     `;
-    try { await exec(script); } catch (e) { throw e; }
+
+    const result = await exec(script);
+    const m = (result.stderr || '').match(/nm_unload_status=(\d+)/);
+    if (!m) throw new Error('unload script did not report status');
+    if (parseInt(m[1], 10) !== 0) throw new Error(result.stderr || `unload failed (status ${m[1]})`);
 }
 
 // Apps & Exclusions
-let allAppsCache = [], showSystemApps = false, appLoadingPromise = null, appListRenderIndex = 0,
+let allAppsCache = [], showSystemApps = localStorage.getItem('nm_show_system_apps') === 'true', appLoadingPromise = null, appListRenderIndex = 0,
     currentlyDisplayedApps = [], listObserver = null, filterTimeout, exclusionsLoadId = 0,
     isMultiSelectMode = false, selectedAppsMap = new Map();
 
@@ -839,6 +948,25 @@ async function writeExclusionsJson(dataArray) {
     return await exec(cmd);
 }
 
+function buildExclusionCard(uid, app) {
+    const label = app ? app.label : `UID: ${uid}`;
+    const pkg = app ? app.pkg : 'System/Unknown';
+    const userId = Math.floor(Number(uid) / 100000);
+    const deleteIcon = el('md-icon');
+    setIcon(deleteIcon, 'delete', 'outline');
+
+    return el('div', { class: 'card setting-item', dataset: { uid, label } },
+        el('div', { class: 'exclusion-app' },
+            el('img', { class: 'app-icon-img', src: `ksu://icon/${pkg}` }),
+            el('div', { class: 'setting-text' },
+                el('h3', {}, label, userId !== 0 ? [' ', el('span', { class: 'system-chip' }, `User ${userId}`)] : null),
+                el('p', {}, pkg)
+            )
+        ),
+        el('md-icon-button', { class: 'btn-delete', 'aria-label': 'Remove exclusion' }, deleteIcon)
+    );
+}
+
 async function loadExclusions() {
     const listContainer = document.getElementById('exclusions-list');
     if (!listContainer) return;
@@ -855,32 +983,15 @@ async function loadExclusions() {
         const savedData = await readExclusionsJson();
         const appsMap = new Map(savedData.map(app => [String(app.uid), app]));
 
-        const htmlArr = blockedUids.map(uid => {
-            const app = appsMap.get(uid);
-            const label = app ? app.label : `UID: ${uid}`;
-            const pkg = app ? app.pkg : 'System/Unknown';
-            const userId = Math.floor(Number(uid) / 100000);
-            const userBadge = userId !== 0 ? `<span class="system-chip">User ${userId}</span>` : '';
-            return `
-                <div class="card setting-item" data-uid="${uid}" data-label="${label}">
-                    <div class="exclusion-app">
-                        <img src="ksu://icon/${pkg}" class="app-icon-img" onerror="this.src='${APP_ICON_FALLBACK}'" />
-                        <div class="setting-text"><h3>${label} ${userBadge}</h3><p>${pkg}</p></div>
-                    </div>
-                    <md-icon-button class="btn-delete" aria-label="Remove exclusion">
-                        <md-icon data-icon="delete" data-icon-variant="outline" aria-hidden="true">
-                            <svg viewBox="0 -960 960 960" aria-hidden="true" style="width:100%; height:100%; fill:currentColor;">
-                                <path d="${ICON_PATHS['delete']}"/>
-                            </svg>
-                        </md-icon>
-                    </md-icon-button>
-                </div>
-            `;
-        });
-
         requestAnimationFrame(() => {
             if (loadId !== exclusionsLoadId) return;
-            blockedUids.length === 0 ? renderEmptyState(listContainer, '(._.)', translate('no_exclusions_yet')) : listContainer.innerHTML = htmlArr.join('');
+            if (blockedUids.length === 0) {
+                renderEmptyState(listContainer, '(._.)', translate('no_exclusions_yet'));
+                return;
+            }
+            const frag = document.createDocumentFragment();
+            for (const uid of blockedUids) frag.appendChild(buildExclusionCard(uid, appsMap.get(uid)));
+            listContainer.replaceChildren(frag);
         });
     } catch (e) {
         renderTextState(listContainer, 'error-message', translate('error_loading_exclusions'));
@@ -991,6 +1102,14 @@ async function ensureAppsCache(force = false) {
             } catch (e) {
                 console.warn("Failed to save apps cache to LocalStorage. Data might be too large.", e);
             }
+            
+            setTimeout(() => {
+                for (const app of allAppsCache.slice(0, 50)) {
+                    const img = new Image();
+                    img.decoding = 'async';
+                    img.src = `ksu://icon/${app.packageName}`;
+                }
+            }, 100);
 
         } catch (e) {
             console.error("Error in ensureAppsCache:", e);
@@ -1016,7 +1135,6 @@ function openAppSelector() {
     const modal = document.getElementById('app-selector-modal'), 
           container = document.getElementById('app-list-container'), 
           searchInput = document.getElementById('app-search-input');
-          
     const switchWrapper = document.getElementById('switch-system-apps');
     const sysSwitch = switchWrapper ? (switchWrapper.tagName === 'INPUT' ? switchWrapper : switchWrapper.querySelector('input')) : null;
     if (!modal) return;
@@ -1034,37 +1152,53 @@ function openAppSelector() {
     searchInput.value = '';
     if (sysSwitch) sysSwitch.checked = showSystemApps;
 
-    document.getElementById('btn-close-modal').onclick = () => { 
-        closeAppSelector();
+    listObserver = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) renderNextAppBatch();
+    }, { root: container, rootMargin: '400px' });
+
+    const bindHandlers = () => {
+        searchInput.oninput = (e) => filterAndRender(e.target.value);
+        document.getElementById('btn-filter-toggle').onclick = () => document.getElementById('filter-menu').classList.toggle('active');
+        if (sysSwitch) sysSwitch.onchange = (e) => { 
+            showSystemApps = e.target.checked;
+            localStorage.setItem('nm_show_system_apps', showSystemApps);
+            filterAndRender(searchInput.value);
+        };
     };
 
-    container.innerHTML = `<div class="loading-spinner">${translate('loading') || 'Loading apps...'}</div>`;
-    listObserver = new IntersectionObserver((entries) => { 
-        if (entries[0].isIntersecting) renderNextAppBatch(); 
-    }, { root: container, rootMargin: '200px' });
+    if (allAppsCache.length > 0) {
+        renderFilteredApps('');
+        bindHandlers();
+        return;
+    }
 
+    container.replaceChildren(el('div', { class: 'loading-spinner' }, translate('loading') || 'Loading apps...'));
     setTimeout(async () => {
         try {
             await ensureAppsCache();
-            filterAndRender();
-            searchInput.oninput = (e) => filterAndRender(e.target.value);
-            document.getElementById('btn-filter-toggle').onclick = () => document.getElementById('filter-menu').classList.toggle('active');
-            if (sysSwitch) sysSwitch.onchange = (e) => { showSystemApps = e.target.checked; filterAndRender(searchInput.value); };
+            renderFilteredApps('');
+            bindHandlers();
         } catch (e) { 
             renderTextState(container, 'error-message', `${translate('load_failed') || 'Failed'}`); 
         }
     }, 250);
 }
 
+function renderFilteredApps(searchTerm = '') {
+    const container = document.getElementById('app-list-container');
+    const term = searchTerm.toLowerCase();
+    currentlyDisplayedApps = allAppsCache.filter(app => app._search.includes(term) && (showSystemApps || !app.isSystem));
+    container.replaceChildren();
+    container.scrollTop = 0;
+    appListRenderIndex = 0;
+    renderNextAppBatch();
+}
+
 function filterAndRender(searchTerm = '') {
     return new Promise(resolve => {
         clearTimeout(filterTimeout);
         filterTimeout = setTimeout(() => {
-            const term = searchTerm.toLowerCase();
-            currentlyDisplayedApps = allAppsCache.filter(app => app._search.includes(term) && (showSystemApps || !app.isSystem));
-            document.getElementById('app-list-container').replaceChildren();
-            appListRenderIndex = 0;
-            renderNextAppBatch();
+            renderFilteredApps(searchTerm);
             resolve();
         }, 200);
     });
@@ -1072,7 +1206,7 @@ function filterAndRender(searchTerm = '') {
 
 function renderNextAppBatch() {
     const container = document.getElementById('app-list-container');
-    const batch = currentlyDisplayedApps.slice(appListRenderIndex, appListRenderIndex + 50);
+    const batch = currentlyDisplayedApps.slice(appListRenderIndex, appListRenderIndex + 25);
 
     if (batch.length === 0) {
         if (listObserver) listObserver.disconnect();
@@ -1080,21 +1214,33 @@ function renderNextAppBatch() {
         return;
     }
 
-    const htmlStr = batch.map(app => {
-        const isSel = selectedAppsMap.has(app.uid) ? 'selected' : '';
-        return `
-        <div class="app-item segment-card ${isSel}" data-uid="${app.uid}" data-label="${app.appLabel}" data-pkg="${app.packageName}">
-            <img src="ksu://icon/${app.packageName}" class="app-icon-img" loading="lazy" onerror="this.src='${APP_ICON_FALLBACK}'" />
-            <div class="app-details"><div class="app-name">${app.appLabel}</div><div class="app-pkg">${app.packageName}</div></div>
-            <div class="app-meta"><div class="uid-label">UID: ${app.uid}</div>${app.isSystem ? '<span class="system-chip">SYS</span>' : ''}${app.isClone ? `<span class="system-chip">User ${app.userId}</span>` : ''}</div>
-        </div>
-        `;
-    }).join('');
-
-    container.insertAdjacentHTML('beforeend', htmlStr);
+    const frag = document.createDocumentFragment();
+    for (const app of batch) {
+        const meta = el('div', { class: 'app-meta' },
+            el('div', { class: 'uid-label' }, `UID: ${app.uid}`),
+            app.isSystem ? el('span', { class: 'system-chip' }, 'SYS') : null,
+            app.isClone ? el('span', { class: 'system-chip' }, `User ${app.userId}`) : null
+        );
+        frag.appendChild(el('div', {
+            class: `app-item segment-card${selectedAppsMap.has(app.uid) ? ' selected' : ''}`,
+            dataset: { uid: String(app.uid), label: app.appLabel, pkg: app.packageName },
+        },
+            el('img', { class: 'app-icon-img', src: `ksu://icon/${app.packageName}`, loading: 'lazy', decoding: 'async', fetchpriority: 'low' }),
+            el('div', { class: 'app-details' }, el('div', { class: 'app-name' }, app.appLabel), el('div', { class: 'app-pkg' }, app.packageName)),
+            meta
+        ));
+    }
+    const last = frag.lastChild;
+    container.appendChild(frag);
     appListRenderIndex += batch.length;
-    const lastEl = container.lastElementChild;
-    if (lastEl && listObserver) listObserver.observe(lastEl);
+    if (listObserver && last) listObserver.observe(last);
+
+    const nextBatch = currentlyDisplayedApps.slice(appListRenderIndex, appListRenderIndex + 25);
+    for (const app of nextBatch) {
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = `ksu://icon/${app.packageName}`;
+    }
 }
 
 async function removeExclusion(uid, name, domItem) {
@@ -1139,16 +1285,27 @@ async function addExclusion(uid, label, pkg) {
 }
 
 // Options
+const setDumpNowVisible = on => {
+    const btn = document.getElementById('btn-dump-now');
+    if (btn) btn.style.display = on ? '' : 'none';
+};
+
 let optionsInitialized = false;
 async function loadOptions() {
     if (!optionsInitialized) initOptionsUI();
 
     const swSafe = document.querySelector('#setting-safemode input');
+    const swDumpRules = document.querySelector('#setting-dumprule input');
     const swIso = document.querySelector('#setting-isolated input');
     const swIsoCard = document.getElementById('setting-isolated-card');
 
     if (swSafe)
         swSafe.checked = (await exec(`[ -f ${FILES.disable} ] && echo yes`)).stdout.includes('yes');
+
+    if (swDumpRules) {
+        swDumpRules.checked = (await exec(`[ -f ${FILES.dump_rules} ] && echo yes`)).stdout.includes('yes');
+        setDumpNowVisible(swDumpRules.checked);
+    }
 
     if (swIso && swIsoCard) {
         const safeModeCard = document.getElementById('setting-safemode').closest('.segment-card');
@@ -1332,14 +1489,35 @@ function initOptionsUI() {
     }
 
     const swSafe = document.querySelector('#setting-safemode input');
+    const swDumpRules = document.querySelector('#setting-dumprule input');
     const swIso = document.querySelector('#setting-isolated input');
     const swIsoCard = document.getElementById('setting-isolated-card');
+    const btnDumpNow = document.getElementById('btn-dump-now');
     const btnClearRules = document.getElementById('btn-clear-rules-only');
     const btnClearUids = document.getElementById('btn-clear-uids-only');
     const btnClearAll = document.getElementById('btn-clear-all');
 
     if (swSafe)
         swSafe.onchange = e => exec(e.target.checked ? `touch ${FILES.disable}` : `rm ${FILES.disable}`);
+
+    if (swDumpRules)
+        swDumpRules.onchange = async e => {
+            const on = e.target.checked;
+            await exec(on ? `touch ${FILES.dump_rules}` : `rm ${FILES.dump_rules}`);
+            setDumpNowVisible(on);
+        };
+
+    if (btnDumpNow) {
+        btnDumpNow.onclick = async () => {
+            btnDumpNow.disabled = true;
+            try {
+                const r = await exec(`sh ${MOD_DIR}/nomount/dump_rules.sh by webui`);
+                if (r.errno !== 0) throw new Error(r.stderr || 'dump failed');
+                showToast(translate('dump_done'));
+            } catch { showToast(translate('dump_failed')); }
+            btnDumpNow.disabled = false;
+        };
+    }
 
     if (swIso && swIsoCard) {
         swIso.onchange = async (e) => {
@@ -1500,15 +1678,20 @@ function getManualUid() {
 }
 
 function initDelegationAndAttach() {
+    const handleIconError = (e) => {
+        const img = e.target;
+        if (!(img instanceof HTMLImageElement) || img.dataset.iconFallback) return;
+        img.dataset.iconFallback = '1';
+        img.src = APP_ICON_FALLBACK;
+    };
+    document.getElementById('app-list-container')?.addEventListener('error', handleIconError, true);
+    document.getElementById('exclusions-list')?.addEventListener('error', handleIconError, true);
+
     const updateModuleCardDOM = async (card, modId) => {
-        const { stdout } = await exec(`${NM_BIN} rule list --json 2>/dev/null`);
-        const activeRules = JSON.parse(stdout.trim() || "[]");
-        let newFileCount = 0;
-        activeRules.forEach(r => { if (r?.real?.startsWith(`${MOD_DIR}/${modId}/`)) newFileCount++; });
+        const mod = (await readModules([modId])).find(m => m.modId === modId);
+        const newFileCount = mod?.fileCount ?? 0;
+        const statusKey = mod?.statusKey ?? 'status_inactive';
         const nowLoaded = newFileCount > 0;
-        const toggleChecked = card.querySelector('.switch-input').checked;
-        const hasSkipMount = card.querySelector('.btn-skip-action')?.classList.contains('unskip');
-        const statusKey = nowLoaded ? ((!toggleChecked || hasSkipMount) ? 'status_loaded' : 'status_active') : (!toggleChecked ? 'status_disabled' : (hasSkipMount ? 'status_skipped' : 'status_inactive'));
 
         const filesChip = card.querySelector('.files-chip');
         if (newFileCount > 0) {
@@ -1753,7 +1936,9 @@ function initDelegationAndAttach() {
     });
 
     attachPullToRefresh('#app-list-container', '#app-modal-refresh-indicator', 70, async () => {
-        document.getElementById('app-list-container').innerHTML = `<div class="loading-spinner">${translate('loading') || 'Refreshing...'}</div>`;
+        document.getElementById('app-list-container').replaceChildren(
+            el('div', { class: 'loading-spinner' }, translate('loading') || 'Refreshing...')
+        );
         await ensureAppsCache(true);
         await filterAndRender(document.getElementById('app-search-input')?.value || '');
     });
@@ -1784,7 +1969,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initScrollListener();
     updateTopAppBar();
     viewLoadState['view-home'] = true;
-    loadHome();
+    loadHome(readInitialModules);
     restoreThemeFromDisk();
     document.body.classList.remove('loading');
     if ('requestIdleCallback' in window) {
@@ -1794,7 +1979,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     try {
-        if (!viewLoadState['view-modules']) loadModules();
+        if (!viewLoadState['view-modules']) loadModules(readInitialModules);
         if (!viewLoadState['view-exclusions']) loadExclusions();
         if (!viewLoadState['view-options']) loadOptions();
     } catch {}

@@ -36,8 +36,7 @@ jobs:
 
       - name: grab sstrip from ELFkickers
         run: |
-          curl -L https://www.muppetlabs.com/~breadbox/pub/software/ELFkickers-3.2.tar.gz -o sstrip.tar.gz
-          tar xf sstrip.tar.gz
+          curl -fsSL https://distfiles.gentoo.org/distfiles/1e/ELFkickers-3.2.tar.gz | tar -xz
           make -C ELFkickers-3.2 sstrip
           cp ELFkickers-3.2/sstrip/sstrip .
           chmod +x ./sstrip
@@ -47,15 +46,17 @@ jobs:
           mkdir bin
           cd userspace/src
           zig cc -target aarch64-linux -Oz -mcmodel=tiny -static -nostdlib -ffreestanding -fno-unwind-tables \
-            -fno-ident -Wno-invalid-noreturn -Wl,--entry=_start nm.c -o ../../bin/nm-arm64
+            -fno-ident -Wno-invalid-noreturn -mllvm -enable-machine-outliner=always  -Wl,--entry=_start nm.c -o ../../bin/nm-arm64
 
           zig cc -target arm-linux -Oz -static -nostdlib -ffreestanding -fno-unwind-tables -fno-ident -Wno-invalid-noreturn \
             -ffunction-sections -fdata-sections -Wl,--gc-sections -Wl,--entry=_start nm.c -o ../../bin/nm-arm
 
-          cd ../../bin
-          ../sstrip -z nm-arm64
-          ../sstrip -z nm-arm
+          zig cc -target x86_64-linux -Oz -static -nostdlib -ffreestanding -fno-unwind-tables -fno-ident -Wno-invalid-noreturn \
+            -Wl,--entry=_start nm.c -o ../../bin/nm-x86_64
 
+          cd ../../bin
+          wc -c nm-*
+          ../sstrip -z nm-*
           wc -c nm-*
           file nm-*
           mkdir -p ../module/bin
@@ -66,11 +67,15 @@ jobs:
           git clone https://github.com/maxsteeel/lkmloader.git lkmloader_src
           cd lkmloader_src
 
-          zig cc -target aarch64-linux -Oz -static -Wl,--gc-sections,-z,norelro -fno-unwind-tables \
-            -fno-ident -flto -fmerge-all-constants -fomit-frame-pointer src/lkmloader.c -o lkmloader-arm64
+          zig cc -target aarch64-linux -Oz -mcmodel=tiny -static -Wl,--gc-sections,-z,norelro -fno-unwind-tables \
+            -fno-ident -flto -fmerge-all-constants -fomit-frame-pointer -mllvm -enable-machine-outliner=always \
+              src/lkmloader.c -o lkmloader-arm64
 
           zig cc -target arm-linux -Oz -static -Wl,--gc-sections,-z,norelro -fno-unwind-tables \
             -fno-ident -flto -fmerge-all-constants -fomit-frame-pointer src/lkmloader.c -o lkmloader-arm
+
+          zig cc -target x86_64-linux -Oz -static -Wl,--gc-sections,-z,norelro -fno-unwind-tables \
+            -fno-ident -flto -fmerge-all-constants -fomit-frame-pointer src/lkmloader.c -o lkmloader-x86_64
 
           ../sstrip -z lkmloader-*
           wc -c lkmloader-*
@@ -81,8 +86,8 @@ jobs:
         run: |
           SHORT_HASH=$(git rev-parse --short HEAD)
           COMMIT_COUNT=$(git rev-list --count HEAD)
-          NAME=$(sed -n 's/^name=//p' module/module.prop | tr -d '\r' | tr -d ' ')
-          BASE_VERSION=$(sed -n 's/^version=//p' module/module.prop | tr -d '\r' | tr -d ' ')
+          NAME=$(sed -n 's/^name=//p' module/module.prop | tr -d '\r ')
+          BASE_VERSION=$(sed -n 's/^version=//p' module/module.prop | tr -d '\r ')
 
           sed -i "s/^versionCode=.*/versionCode=${COMMIT_COUNT}/" module/module.prop
           if [ "${{ github.ref }}" != "refs/heads/master" ]; then
@@ -102,9 +107,9 @@ jobs:
           for f in "$MODULE_BUILD"/webroot/locales/*.json; do jq -c . "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done
           mkdir -p "$WEBUI_BUILD"
 
-          curl -sL "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.1.tgz" -o /tmp/esbuild.tgz
-          tar -xzf /tmp/esbuild.tgz -C /tmp && mv /tmp/package/bin/esbuild /tmp/esbuild && chmod +x /tmp/esbuild
-          /tmp/esbuild module/webroot/index.js --bundle --format=esm --minify --outfile="$WEBUI_BUILD/index.js"
+          curl -fsSL "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.1.tgz" \
+            | tar -xz -C /tmp --strip-components=2 package/bin/esbuild && chmod +x /tmp/esbuild
+          /tmp/esbuild module/webroot/index.js --bundle --format=esm --minify --charset=utf8 --outfile="$WEBUI_BUILD/index.js"
           /tmp/esbuild module/webroot/styles.css --minify --outfile="$WEBUI_BUILD/styles.css"
           tr '\n' ' ' < module/webroot/index.html | sed 's/  */ /g' | sed 's/> </></g' > "$WEBUI_BUILD/index.html"
 

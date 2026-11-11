@@ -34,9 +34,9 @@
     --nm-segment-inner-corner: 2px;
     --nm-segment-outer-corner: 16px;
     --nm-page-bottom-gap: 12px;
-    --nm-nav-background: color-mix(in srgb, var(--md-sys-color-surface-container) 75%, transparent);
-    --nm-scrim-mix: color-mix(in srgb, var(--md-sys-color-scrim) 44%, transparent);
-    --nm-elevation-2: 0 8px 24px color-mix(in srgb, var(--md-sys-color-shadow) 18%, transparent);
+    --nm-nav-background: rgba(243, 237, 247, 0.75);
+    --nm-scrim-mix: rgba(0, 0, 0, 0.44);
+    --nm-elevation-2: 0 8px 24px rgba(0, 0, 0, 0.18);
     --nav-height: 74px;
     --insets-top: var(--window-inset-top, env(safe-area-inset-top, 0px));
     --insets-bottom: var(--window-inset-bottom, env(safe-area-inset-bottom, 0px));
@@ -44,9 +44,9 @@
 
 html[data-scheme="dark"], html[data-scheme="amoled"] {
     color-scheme: dark;
-    --nm-nav-background: color-mix(in srgb, var(--md-sys-color-surface-container) 80%, transparent);
-    --nm-scrim-mix: color-mix(in srgb, var(--md-sys-color-scrim) 54%, transparent);
-    --nm-elevation-2: 0 10px 28px color-mix(in srgb, var(--md-sys-color-shadow) 30%, transparent);
+    --nm-nav-background: rgba(29, 27, 32, 0.80);
+    --nm-scrim-mix: rgba(0, 0, 0, 0.54);
+    --nm-elevation-2: 0 10px 28px rgba(0, 0, 0, 0.30);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -62,9 +62,14 @@ html, body {
     -webkit-tap-highlight-color: transparent;
 }
 
-body { transition: opacity 250ms ease; }
+.page-container, .app-list { overscroll-behavior: contain; }
+body { overscroll-behavior-y: none; transition: opacity 250ms ease; touch-action: manipulation; }
 body.loading { opacity: 0; visibility: hidden; }
 
+
+.info-value, .files-count-text, .uid-label, .md-chip {
+    font-variant-numeric: tabular-nums;
+}
 .nav-item, .segment-icon, .app-icon-img, .exclusion-app img,
 .setting-item img, md-icon, .pull-to-refresh-indicator, .btn-hot-action, .custom-tonal-btn,
 .custom-fab, .modal-header, md-icon-button, .nav-icon, .empty-state, .btn-skip-action,
@@ -98,6 +103,11 @@ body.loading { opacity: 0; visibility: hidden; }
 .module-card {
     background-color: color-mix(in srgb, var(--md-sys-color-primary) 5.1%, var(--md-sys-color-surface));
     padding: 18px 22px 12px;
+    border-radius: 24px;
+    gap: 12px;
+    contain: content;
+    content-visibility: auto;
+    contain-intrinsic-size: 0 160px;
 }
 
 .page-container::-webkit-scrollbar, .app-list::-webkit-scrollbar,
@@ -245,7 +255,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
     display: inline-flex; align-items: center; position: relative;
     width: 52px; height: 32px; cursor: pointer; flex: 0 0 auto;
 }
-.custom-switch.switch-busy { pointer-events: none; opacity: 0.7; }
+.custom-switch.switch-busy { pointer-events: none; opacity: 0.5; }
 .custom-switch .switch-track {
     position: absolute; inset: 0;
     background-color: var(--md-sys-color-surface-container-highest);
@@ -253,19 +263,22 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
     transition: background-color 0.2s, border-color 0.2s;
 }
 .custom-switch .switch-thumb {
-    position: absolute; top: 6px; inset-inline-start: 6px; width: 16px; height: 16px;
+    position: absolute; top: 4px; inset-inline-start: 4px;
+    width: 20px; height: 20px;
     background-color: var(--md-sys-color-outline); border-radius: 50%;
-    transition: transform 0.1s cubic-bezier(0.2, 0, 0, 1), background-color 0.2s, width 0.2s, height 0.2s, top 0.2s, inset-inline-start 0.2s;
+    transform: scale(0.8);
+    transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1), background-color 0.2s;
 }
 .custom-switch .switch-input:checked+.switch-track {
     background-color: var(--md-sys-color-primary); border-color: var(--md-sys-color-primary);
 }
 .custom-switch .switch-input:checked+.switch-track .switch-thumb {
     background-color: var(--md-sys-color-on-primary);
-    width: 24px; height: 24px; top: 2px; inset-inline-start: 2px; transform: translate3d(20px, 0, 0);
+    transform: translate3d(20px, 0, 0) scale(1.2);
 }
-[dir="rtl"] .custom-switch .switch-input:checked+.switch-track .switch-thumb { transform: translate3d(-20px, 0, 0); }
-.custom-switch:active .switch-thumb { width: 28px; }
+[dir="rtl"] .custom-switch .switch-input:checked+.switch-track .switch-thumb {
+    transform: translate3d(-20px, 0, 0) scale(1.2);
+}
 
 .top-app-bar {
     --top-app-bar-opacity: 0; --top-app-title-opacity: 0;
@@ -320,7 +333,6 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 .module-header { display: flex; align-items: flex-start; margin-bottom: 8px; }
 .module-card .custom-switch { height: 48px; }
 .module-card .custom-switch .switch-track { inset: 8px 0; }
-.module-divider { height: 1px; background-color: rgba(120, 120, 120, 0.2); width: 100%; }
 .module-extension {
     display: flex; align-items: center; justify-content: flex-end;
     margin-top: 8px; gap: 8px;
@@ -342,6 +354,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 .custom-select-wrapper.open .dropdown-arrow { transform: rotate(180deg); color: var(--md-sys-color-primary); }
 .custom-select-menu {
     position: absolute; top: calc(100% + 4px); inset-inline-end: 0;
+    width: max-content; min-width: 100%; max-width: calc(100vw - 32px);
     background-color: var(--md-sys-color-surface-container); border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
     opacity: 0; visibility: hidden; transform: translate3d(0, -10px, 0);
@@ -359,15 +372,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
     background-color: var(--md-sys-color-secondary-container);
     color: var(--md-sys-color-on-secondary-container);
 }
-#lang-setting-card { position: relative; z-index: 1000; }
-#lang-select-wrapper .custom-select-menu {
-    top: auto; 
-    bottom: calc(100% + 4px);
-    transform: translate3d(0, 10px, 0);
-}
-#lang-select-wrapper.open .custom-select-menu {
-    transform: translate3d(0, 0, 0);
-}
+#lang-setting-card { position: relative; z-index: 1002; }
 
 .empty-state {
     flex: 1 1 auto; width: 100%; min-height: 46vh; gap: 14px; text-align: center;
@@ -379,7 +384,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 
 .modal-overlay {
-    position: fixed; inset: 0; background: var(--nm-scrim); z-index: 2000;
+    position: fixed; inset: 0; background: var(--nm-scrim-mix); z-index: 2000;
     display: none; align-items: flex-end;
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
@@ -396,6 +401,9 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 }
 .modal-header { padding: 0 8px; margin-bottom: 16px; flex-shrink: 0; }
 
+
+.module-card { content-visibility: auto; contain-intrinsic-size: 0 160px; }
+.app-item    { content-visibility: auto; contain-intrinsic-size: 0 72px; }
 .search-box {
     background: var(--md-sys-color-surface-container-highest); border-radius: 28px;
     padding: 0 16px; min-height: 56px; display: flex; align-items: center;
@@ -443,25 +451,40 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
     position: fixed; inset: auto 0 0; width: 100%; justify-content: space-evenly;
     height: calc(var(--nav-height) + var(--insets-bottom)); padding-bottom: var(--insets-bottom);
     background-color: var(--nm-nav-background);
-    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); z-index: 2000;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); z-index: 2000;
 }
 .nav-item {
+    display: grid;
+    grid-template-rows: 34px 0fr;
+    align-content: center;
+    justify-items: center;
+    width: 64px; height: 64px;
+    padding-block: 0;
     color: var(--md-sys-color-on-surface-variant); opacity: 0.78;
-    width: 64px; height: 64px; cursor: pointer; user-select: none;
-    transition: color 0.2s, opacity 0.2s, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    cursor: pointer; user-select: none;
 }
-.nav-item.active { opacity: 1; color: var(--md-sys-color-primary); }
-.nav-item.active .nav-icon { 
-    border-radius: 999px; 
-    background-color: var(--md-sys-color-secondary-container); 
+.nav-item.active {
+    grid-template-rows: 34px 1fr;
+    padding-block: 6px;
+}
+.nav-item.active .nav-icon {
+    border-radius: 999px;
+    background-color: var(--md-sys-color-secondary-container);
     color: var(--md-sys-color-on-secondary-container);
 }
 .nav-icon { width: 64px; height: 34px; }
 .nav-item span {
-    font-size: 12px; font-weight: 650; height: 0; opacity: 0; overflow: hidden;
-    transform: translate3d(0, -4px, 0); transition: all 0.2s;
+    font-size: 12px; font-weight: 650;
+    padding-top: 8px;
+    align-self: start;
+    min-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.2s ease-in;
 }
-.nav-item.active span { height: 16px; margin-top: 5px; opacity: 1; transform: translate3d(0, 0, 0); }
+.nav-item.active span {
+    opacity: 1;
+}
 
 #fab-container {
     position: fixed; bottom: calc(var(--nav-height) + var(--insets-bottom) + 16px);
@@ -543,11 +566,6 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
 .md-text-field input::placeholder { color: var(--md-sys-color-on-surface-variant); }
 .md-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 
-.module-card {
-    border-radius: 24px;
-    gap: 12px;
-}
-
 .module-chips {
     display: flex; flex-wrap: wrap;
     gap: 4px; margin-top: 8px;
@@ -575,7 +593,7 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
     color: var(--md-sys-color-on-secondary-container);
 }
 .md-chip md-icon { font-size: 16px; }
-.module-divider { background-color: var(--md-sys-color-outline); opacity: 0.15; }
+.module-divider { height: 1px; width: 100%; background-color: var(--md-sys-color-outline); opacity: 0.15; }
 
 .color-picker-input {
     -webkit-appearance: none;
@@ -627,9 +645,6 @@ md-icon svg { width: 1em; height: 1em; fill: currentColor; display: block; }
     border-radius: 100px; transition: background-color 0.2s;
 }
 .btn-text:hover, .btn-text:active { background-color: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); }
-
-.custom-switch .switch-thumb, .custom-fab, .custom-tonal-btn,
-.pull-to-refresh-indicator md-icon { will-change: transform; }
 
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @keyframes fadeIn { from { opacity: 0; transform: translate3d(0, 8px, 0) scale(0.98); } to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); } }

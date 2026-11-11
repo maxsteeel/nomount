@@ -133,12 +133,18 @@ _Static_assert(__builtin_offsetof(struct nm_workspace, payload) == 0, "payload m
 struct nm_rule_hdr {
     unsigned int flags;
     unsigned int uid;
+    unsigned int uid_end;
+    unsigned int deny_start;
+    unsigned int deny_end;
     unsigned short v_len;
     unsigned short r_len;
 } __attribute__((packed));
 
 struct nm_del_hdr {
     unsigned int uid;
+    unsigned int uid_end;
+    unsigned int deny_start;
+    unsigned int deny_end;
     unsigned short v_len;
 } __attribute__((packed));
 
@@ -147,7 +153,11 @@ struct nm_args {
     int data_start_idx;
     int is_json;
     int is_whiteout;
+    int is_opaque;
     unsigned int target_uid;
+    unsigned int target_uid_end;
+    unsigned int deny_start;
+    unsigned int deny_end;
 };
 
 /* --- UTILS --- */
@@ -157,12 +167,21 @@ static noinline int strcmp(const char *s1, const char *s2) {
     return *(unsigned char *)s1 - *(unsigned char *)s2;
 }
 
+static noinline void parse_uid_range(const char *s, unsigned int *start, unsigned int *end) {
+    unsigned int first = 0, last = 0;
+    while (*s && *s != '-') first = (first << 3) + (first << 1) + (*s++ - '0');
+    if (*s == '-') s++;
+    if (*s) while (*s) last = (last << 3) + (last << 1) + (*s++ - '0');
+    else last = first;
+    if (last < first) { unsigned int t = first; first = last; last = t; }
+    *start = first;
+    *end = last;
+}
+
 static noinline void parse_arguments(long argc, char **argv, struct nm_args *parsed_args) {
-    parsed_args->action = ACTION_NONE;
+    unsigned char *p = (unsigned char *)parsed_args;
+    for (unsigned long i = 0; i < sizeof(*parsed_args); i++) p[i] = 0;
     parsed_args->data_start_idx = 2;
-    parsed_args->is_json = 0;
-    parsed_args->is_whiteout = 0;
-    parsed_args->target_uid = 0;
 
     if (argc < 2) return;
 
@@ -185,7 +204,6 @@ static noinline void parse_arguments(long argc, char **argv, struct nm_args *par
     } else if (strcmp(c1, "clear") == 0) {
         if (argc >= 3 && strcmp(argv[2], "rules") == 0) parsed_args->action = ACTION_RULE_CLEAR;
         else if (argc >= 3 && strcmp(argv[2], "uid") == 0) parsed_args->action = ACTION_UID_CLEAR;
-        else if (argc >= 3 && strcmp(argv[2], "all") == 0) parsed_args->action = ACTION_CLEAR_ALL;
         else parsed_args->action = ACTION_CLEAR_ALL;
         parsed_args->data_start_idx = (argc >= 3) ? 3 : 2;
     }
@@ -229,7 +247,9 @@ static noinline void list_print_strn(struct nm_output *out, const char *s, unsig
         if (out->used == PATH_MAX) list_flush(out);
         unsigned long n = PATH_MAX - out->used;
         if (n > len) n = len;
-        for (unsigned long i = 0; i < n; i++) out->buffer[out->used++] = *s++;
+        char *p = out->buffer + out->used;
+        for (unsigned long i = 0; i < n; i++) *p++ = *s++;
+        out->used += n;
         len -= n;
     }
 }
@@ -262,31 +282,17 @@ static noinline void list_print_uint(struct nm_output *out, unsigned int n) {
 }
 
 /* path resolution */
-static noinline int resolved_path_length(const char *cwd, const char *rel) {
-    int length = 0;
-    if (cwd && *rel != '/') {
-        while (*cwd++) {
-            if (length == PATH_MAX) return -1;
-            length++;
-        }
-        if (length == PATH_MAX) return -1;
-        length++;
-    }
-    while (*rel++) {
-        if (length == PATH_MAX) return -1;
-        length++;
-    }
-    return length;
-}
-
-static noinline char* resolve_path(char *p, const char *cwd, const char *rel) {
+static noinline char* resolve_path(char *p, char *end, const char *cwd, const char *rel) {
     if (cwd && *rel != '/') {
         while (*cwd) {
+            if (p == end) return 0;
             *p++ = *cwd++;
         }
+        if (p == end) return 0;
         *p++ = '/';
     }
     while (*rel) {
+        if (p == end) return 0;
         *p++ = *rel++;
     }
     return p;

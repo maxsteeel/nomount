@@ -42,7 +42,7 @@ metamodule_hot_install() {
 	ui_print "- No need to reboot!"
 }
 
-if [ "$MODULE_HOT_INSTALL_REQUEST" = true ]; then
+if [ "$KSU_HAS_HOT_INSTALL" != true ] && [ "$MODULE_HOT_INSTALL_REQUEST" = true ]; then
 	metamodule_hot_install
 fi
 

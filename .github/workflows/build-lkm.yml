@@ -46,7 +46,7 @@ jobs:
     name: Select KMI builds
     runs-on: ubuntu-latest
     outputs:
-      kmi: ${{ steps.matrix.outputs.kmi }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
 
     steps:
       - name: Generate build matrix
@@ -73,27 +73,28 @@ jobs:
               {kmi: "android15-6.6",  enabled: (if $force_all then true else (env.KMI_ANDROID15_6_6 == "true") end)},
               {kmi: "android16-6.12", enabled: (if $force_all then true else (env.KMI_ANDROID16_6_12 == "true") end)}
             ] | map(select(.enabled).kmi) as $selected
-              | if $selected == [] then map(.kmi) else $selected end')"
+              | (if $selected == [] then map(.kmi) else $selected end) as $kmis
+              | {include: ( ($kmis | map({kmi: ., arch: "arm64"})) + ($kmis | map({kmi: ., arch: "x86_64"})) )}')"
 
-          echo "kmi=$matrix" >> "$GITHUB_OUTPUT"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build ${{ matrix.kmi }}
+    name: Build ${{ matrix.kmi }} ${{ matrix.arch }}
     needs: select-kmis
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     strategy:
       fail-fast: false
-      matrix:
-        kmi: ${{ fromJSON(needs.select-kmis.outputs.kmi) }}
+      matrix: ${{ fromJSON(needs.select-kmis.outputs.matrix) }}
 
     container:
       image: ghcr.io/ylarod/ddk-min:${{ matrix.kmi }}
+      options: --privileged
 
     env:
       SRC_DIR: ${{ github.workspace }}/kernel/src
-      ARTIFACT: artifacts/nomount-${{ matrix.kmi }}.ko
+      ARTIFACT: artifacts/nomount-${{ matrix.kmi }}${{ matrix.arch == 'x86_64' && '-x86_64' || '' }}.ko
 
     steps:
       - name: Checkout repo
@@ -115,17 +116,42 @@ jobs:
           fi
 
           echo "KMI: ${{ matrix.kmi }}"
+          echo "Arch: ${{ matrix.arch }}"
           echo "KDIR: $KDIR"
           clang --version
           ld.lld --version
+
+      - name: Prepare x86_64 kdir
+        if: ${{ matrix.arch == 'x86_64' }}
+        run: |
+          set -euo pipefail
+          unset ARCH CROSS_COMPILE
+          export ARCH=x86_64
+          KDIR_X64="/opt/ddk/kdir-x64/${{ matrix.kmi }}"
+          mkdir -p "$KDIR_X64"
+          pushd "/opt/ddk/src/${{ matrix.kmi }}"
+          MODPOST=scripts/mod/modpost.c
+          sed -i -E 's/^([[:space:]]*)check_exports\(mod\);/\1\/\/ check_exports(mod);/' "$MODPOST"
+          sed -i -E 's/^([[:space:]]*)s->module = exp->module;/\1\/\/ s->module = exp->module;/' "$MODPOST"
+          sed -i 's/^static void check_exports(/static void __attribute__((unused)) check_exports(/' "$MODPOST"
+          sed -i 's/__version_ext_names\\") =\\n/__version_ext_names\\") = \\"\\"\\n/' "$MODPOST"
+          make ARCH=x86_64 O="$KDIR_X64" LLVM=1 LLVM_IAS=1 -j$(nproc) x86_64_defconfig 
+          scripts/config --file "$KDIR_X64/.config" -d LTO_CLANG -e LTO_NONE -d LTO_CLANG_THIN -d LTO_CLANG_FULL -d THINLTO
+          make ARCH=x86_64 O="$KDIR_X64" LLVM=1 LLVM_IAS=1 -j$(nproc) modules_prepare
+          popd
 
       - name: Build module
         run: |
           set -euo pipefail
           git config --global --add safe.directory '*' || true
 
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            unset ARCH CROSS_COMPILE
+            export KDIR="/opt/ddk/kdir-x64/${{ matrix.kmi }}"
+          fi
+
           # strip page pinner symbols
-          for MM in /opt/ddk/src/*/include/linux/mm.h /opt/ddk/kdir/*/include/linux/mm.h; do
+          for MM in /opt/ddk/src/*/include/linux/mm.h /opt/ddk/kdir/*/include/linux/mm.h /opt/ddk/kdir-x64/*/include/linux/mm.h; do
             [ -f "$MM" ] || continue
             if grep -q '^#include <linux/page_pinner.h>' "$MM"; then
               cp "$MM" "$MM.orig"
@@ -134,7 +160,7 @@ jobs:
             fi
           done
 
-          CONFIG_NOMOUNT=m make -j"$(nproc)" -C "$KDIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 M="$SRC_DIR" modules
+          CONFIG_NOMOUNT=m make -j"$(nproc)" -C "$KDIR" ARCH=${{ matrix.arch }} LLVM=1 LLVM_IAS=1 M="$SRC_DIR" modules
 
       - name: Collect module
         run: |
@@ -146,5 +172,5 @@ jobs:
       - name: Upload module
         uses: actions/upload-artifact@v7
         with:
-          name: nomount-${{ matrix.kmi }}
+          name: nomount-${{ matrix.kmi }}${{ matrix.arch == 'x86_64' && '-x86_64' || '' }}
           path: ${{ env.ARTIFACT }}

@@ -95,6 +95,21 @@
                 
                 <div class="segment-section-label" data-i18n="appearance">Appearance</div>
                 <div class="settings-segment-group">
+                    <div class="segment-card setting-item" id="lang-setting-card">
+                        <div class="setting-text">
+                            <h3 data-i18n="language">Language</h3>
+                            <p data-i18n="language_description">Select the interface language.</p>
+                        </div>
+
+                        <div class="custom-select-wrapper" id="lang-select-wrapper">
+                            <div class="custom-select-trigger" id="lang-select-trigger">
+                                <span id="lang-select-value">English</span>
+                                <md-icon class="dropdown-arrow">arrow_drop_down</md-icon>
+                            </div>
+                            <div class="custom-select-menu" id="lang-select-menu"></div>
+                        </div>
+                    </div>
+
                     <div class="segment-card setting-item" style="z-index: 1001;">
                         <div class="setting-text">
                             <h3 data-i18n="theme_mode">Theme</h3>
@@ -160,23 +175,24 @@
                         </label>
                     </div>
 
-                    <div class="segment-card setting-item" id="lang-setting-card">
+                    <div class="segment-card setting-item">
                         <div class="setting-text">
-                            <h3 data-i18n="language">Language</h3>
-                            <p data-i18n="language_description">Select the interface language.</p>
+                            <h3 data-i18n="dump_rules">Dump rules</h3>
+                            <p data-i18n="dump_rules_desc">Dump all rules into android log. Only enable for debugging.</p>
                         </div>
-                        
-                        <div class="custom-select-wrapper" id="lang-select-wrapper">
-                            <div class="custom-select-trigger" id="lang-select-trigger">
-                                <span id="lang-select-value">English</span>
-                                <md-icon class="dropdown-arrow">arrow_drop_down</md-icon>
-                            </div>
-                            <div class="custom-select-menu" id="lang-select-menu"></div>
-                        </div>
+                        <label class="custom-switch" id="setting-dumprule">
+                            <input type="checkbox" class="switch-input" aria-label="Dump rules">
+                            <span class="switch-track">
+                                <span class="switch-thumb"></span>
+                            </span>
+                        </label>
                     </div>
                 </div>
 
-                <div class="settings-segment-group" style="gap: 8px; flex-direction: row; flex-wrap: wrap;">
+                <div style="display: flex; gap: 8px; flex-direction: row; flex-wrap: wrap;">
+                    <button class="custom-tonal-btn" id="btn-dump-now" style="flex: 1 1 100%; display: none;" data-i18n="dump_now">
+                        Dump rules now
+                    </button>
                     <button class="custom-tonal-btn error" id="btn-clear-rules-only" style="flex: 1; min-width: 140px; padding: 0 12px;" data-i18n="clear_rules">
                         Clear rules
                     </button>

@@ -16,27 +16,59 @@ void c_main(long *sp) {
     parse_arguments(argc, argv, &args);
     payload->magic = NOMOUNT_MAGIC_SIG;
 
-    int p_count = 0;
+    int p_count = 0, needs_cwd = 0;
     if (argc >= 2) {
         for (int i = args.data_start_idx; i < argc; i++) {
-            if (strcmp(argv[i], "--uid") == 0 && i + 1 < argc) {
+            if (argv[i][0] == '/') { argv[p_count++] = argv[i]; }
+            else if (strcmp(argv[i], "--uid") == 0 && i + 1 < argc) {
                 const char *s = argv[++i];
-                while (*s) args.target_uid = (args.target_uid << 3) + (args.target_uid << 1) + (*s++ - '0');
-            } 
+                unsigned int uid = 0;
+                while (*s) uid = (uid << 3) + (uid << 1) + (*s++ - '0');
+                args.target_uid = uid;
+                args.target_uid_end = uid;
+            }
+            else if (strcmp(argv[i], "--uid-range") == 0 && i + 1 < argc) {
+                const char *s = argv[++i];
+                if (strcmp(s, "all") == 0) {
+                    args.target_uid = 0;
+                    args.target_uid_end = 0xFFFFFFFFU;
+                } else parse_uid_range(s, &args.target_uid, &args.target_uid_end);
+            }
+            else if (strcmp(argv[i], "--uid-excluded") == 0 && i + 1 < argc) {
+                parse_uid_range(argv[++i], &args.deny_start, &args.deny_end);
+            }
             else if (strcmp(argv[i], "--json") == 0 || strcmp(argv[i], "json") == 0) { args.is_json = 1; }
             else if (strcmp(argv[i], "--whiteout") == 0) { args.is_whiteout = 1; }
-            else { argv[p_count++] = argv[i]; }
+            else if (strcmp(argv[i], "--opaque") == 0) { args.is_opaque = 1; }
+            else { needs_cwd = 1; argv[p_count++] = argv[i]; }
         }
     }
 
     switch (args.action) {
         case ACTION_RULE_ADD:
         case ACTION_RULE_DEL: {
+            if (args.action == ACTION_RULE_ADD && args.is_whiteout && args.is_opaque) {
+                print_literal("nm: --whiteout and --opaque flags are mutually exclusive\n");
+                exit_code = 1;
+                goto do_exit;
+            }
+            if (args.deny_start || args.deny_end) {
+                if (!args.deny_start || !args.deny_end) {
+                    print_literal("nm: --uid-excluded requires a valid range\n");
+                    exit_code = 1;
+                    goto do_exit;
+                }
+                if (args.deny_start < args.target_uid || args.deny_end > args.target_uid_end) {
+                    print_literal("nm: --uid-excluded must be inside --uid / --uid-range\n");
+                    exit_code = 1;
+                    goto do_exit;
+                }
+            }
             int step = (args.action == ACTION_RULE_ADD && !args.is_whiteout) ? 2 : 1;
             if (p_count < step) { exit_code = 0; goto do_exit; }
 
             char *cwd_buf = workspace.cwd;
-            const char *cwd = (sys3(SYS_GETCWD, (long)cwd_buf, PATH_MAX, 0) > 0) ? cwd_buf : "/";
+            const char *cwd = (needs_cwd && sys3(SYS_GETCWD, (long)cwd_buf, PATH_MAX, 0) > 0) ? cwd_buf : "/";
             int target_cmd = (args.action == ACTION_RULE_DEL) ? NM_CMD_DEL_RULE : NM_CMD_ADD_RULE;
 
             exit_code = 0;
@@ -46,40 +78,37 @@ void c_main(long *sp) {
             char *cursor = payload->buffer;
 
             for (int i = 0; i + step - 1 < p_count; i += step) {
-                int v_len = resolved_path_length(cwd, argv[i]);
-                if (v_len < 0) { exit_code = 3; continue; }
-                if (!v_len) { exit_code = 3; continue; }
-
-                int r_len = 0;
-                if (args.action == ACTION_RULE_ADD && !args.is_whiteout) {
-                    r_len = resolved_path_length(cwd, argv[i+1]);
-                    if (r_len < 0) { exit_code = 3; continue; }
-                    if (!r_len) { exit_code = 3; continue; }
-                }
-
                 int header_size = (target_cmd == NM_CMD_ADD_RULE) ? sizeof(struct nm_rule_hdr) : sizeof(struct nm_del_hdr);
-                int record_size = header_size + v_len + r_len;
-                if (record_size > sizeof(payload->buffer)) { exit_code = 3; continue; }
-                if ((cursor - payload->buffer) + record_size > sizeof(payload->buffer)) {
-                    payload->data_size = cursor - payload->buffer;
-                    exit_code |= (nm_send_payload(payload) < 0);
-                    cursor = payload->buffer;
-                    payload->arg1 = 0;
-                }
+                char *end = payload->buffer + sizeof(payload->buffer);
+                if (end - cursor < header_size) goto batch_full;
+                char *v = cursor + header_size;
+                char *v_end = resolve_path(v, end, cwd, argv[i]);
+                if (!v_end) goto batch_full;
+                char *r_end = v_end;
+                if (step == 2 && !(r_end = resolve_path(v_end, end, cwd, argv[i+1]))) goto batch_full;
+                int v_len = v_end - v, r_len = r_end - v_end;
 
                 if (target_cmd == NM_CMD_ADD_RULE) {
                     struct nm_rule_hdr *h = (void *)cursor;
-                    h->flags = (args.is_whiteout) ? 4 : 0; h->uid = args.target_uid;
+                    h->flags = (args.is_whiteout ? 4 : 0) | (args.is_opaque ? 8 : 0);
+                    h->uid = args.target_uid; h->uid_end = args.target_uid_end;
+                    h->deny_start = args.deny_start; h->deny_end = args.deny_end;
                     h->v_len = v_len; h->r_len = r_len;
-
-                    cursor = resolve_path(cursor + sizeof(*h), cwd, argv[i]);
-                    if (r_len > 0) cursor = resolve_path(cursor, cwd, argv[i+1]);
                 } else {
                     struct nm_del_hdr *h = (void *)cursor;
                     h->uid = args.target_uid; h->v_len = v_len;
-
-                    cursor = resolve_path(cursor + sizeof(*h), cwd, argv[i]);
+                    h->uid_end = args.target_uid_end;
+                    h->deny_start = args.deny_start; h->deny_end = args.deny_end;
                 }
+                cursor = r_end;
+                continue;
+            batch_full:
+                if (cursor == payload->buffer) { exit_code = 3; continue; }
+                payload->data_size = cursor - payload->buffer;
+                exit_code |= (nm_send_payload(payload) < 0);
+                payload->arg1 = 0;
+                cursor = payload->buffer;
+                i -= step;
             }
 
             if (cursor > payload->buffer) {
@@ -158,7 +187,7 @@ void c_main(long *sp) {
 
             payload->cmd = is_uids ? NM_CMD_GET_UIDS : NM_CMD_GET_LIST;
             payload->arg1 = 0;
-            while (1) {
+            do {
                 exit_code = (nm_send_payload(payload) < 0);
                 if (exit_code || payload->data_size == 0) break;
 
@@ -173,7 +202,8 @@ void c_main(long *sp) {
                         offset = 0;
                     } else {
                         struct nm_rule_hdr *h = (void *)(data + pos);
-                        unsigned int flags = h->flags, uid = h->uid;
+                        unsigned int flags = h->flags, uid = h->uid, uid_end = h->uid_end;
+                        unsigned int deny_start = h->deny_start, deny_end = h->deny_end;
                         unsigned short vlen = h->v_len, rlen = h->r_len;
                         pos += sizeof(*h);
 
@@ -181,26 +211,54 @@ void c_main(long *sp) {
                         char *r = data + pos; pos += rlen;
                         int is_white_flag  = (flags & 4);
                         int is_virtual_dir = (flags & 2);
+                        int is_opaque      = (flags & 8);
 
                         if (args.is_json) {
                             list_print_literal_offset(&output, ",\n  {\n    \"virtual\": \"", offset); offset = 0;
                             list_print_json_strn(&output, v, vlen);
                             if (is_white_flag) list_print_literal(&output, "\",\n    \"whiteout\": true");
                             else if (is_virtual_dir) list_print_literal(&output, "\",\n    \"virtual_dir\": true");
-                            else { list_print_literal(&output, "\",\n    \"real\": \""); list_print_json_strn(&output, r, rlen); list_print_literal(&output, "\""); }
-                            if (uid != 0) { list_print_literal(&output, ",\n    \"uid\": "); list_print_uint(&output, uid); }
+                            else {
+                                list_print_literal(&output, "\",\n    \"real\": \""); list_print_json_strn(&output, r, rlen); list_print_literal(&output, "\"");
+                                if (is_opaque) list_print_literal(&output, ",\n    \"opaque\": true");
+                            }
+                            if (uid || uid_end || deny_start || deny_end) {
+                                if (uid == 0 && uid_end == 0) list_print_literal(&output, ",\n    \"default\": true");
+                                else {
+                                    list_print_literal(&output, ",\n    \"uid\": "); list_print_uint(&output, uid);
+                                    list_print_literal(&output, ",\n    \"uid_end\": "); list_print_uint(&output, uid_end);
+                                }
+                                if (deny_start) {
+                                    list_print_literal(&output, ",\n    \"deny_start\": "); list_print_uint(&output, deny_start);
+                                    list_print_literal(&output, ",\n    \"deny_end\": "); list_print_uint(&output, deny_end);
+                                }
+                            }
                             list_print_literal(&output, "\n  }");
                         } else {
                             list_print_strn(&output, v, vlen);
                             if (is_white_flag) list_print_literal(&output, " (whiteout)");
                             else if (is_virtual_dir) list_print_literal(&output, " (virtual dir)");
-                            else { list_print_literal(&output, " -> "); list_print_strn(&output, r, rlen); }
-                            if (uid != 0) { list_print_literal(&output, " [UID: "); list_print_uint(&output, uid); list_print_literal(&output, "]"); }
+                            else {
+                                list_print_literal(&output, " -> "); list_print_strn(&output, r, rlen);
+                                if (is_opaque) list_print_literal(&output, " (opaque)");
+                            }
+                            if (uid || uid_end) {
+                                list_print_literal(&output, " [UID: ");
+                                if (uid == 0 && uid_end == 0) list_print_literal(&output, "all");
+                                else if (uid == uid_end) list_print_uint(&output, uid);
+                                else { list_print_uint(&output, uid); list_print_literal(&output, "-"); list_print_uint(&output, uid_end); }
+                                if (deny_start) {
+                                    list_print_literal(&output, " excl ");
+                                    if (deny_start == deny_end) list_print_uint(&output, deny_start);
+                                    else { list_print_uint(&output, deny_start); list_print_literal(&output, "-"); list_print_uint(&output, deny_end); }
+                                }
+                                list_print_literal(&output, "]");
+                            }
                             list_print_literal(&output, "\n");
                         }
                     }
                 }
-            }
+            } while (payload->arg1 != ~0U);
 
             if (args.is_json) list_print_literal(&output, "\n]\n");
             list_flush(&output);
@@ -214,7 +272,14 @@ void c_main(long *sp) {
                 "Rule Commands:\n"
                 "  nm rule add <virtual_path> <real_path>  Add a path redirection\n"
                 "  nm rule add --whiteout <virtual_path>   Hide/whiteout a path\n"
+                "  nm rule add --opaque <virtual_dir> <real_dir>\n"
+                "                                          Add an opaque dir redirect\n"
+                "  nm rule add [--uid <u> | --uid-range <a>-<b> | --uid-range all]\n"
+                "              [--uid-excluded <c>-<d>] <vpath> <rpath>\n"
+                "                                          Scope the rule to a UID set\n"
+                "                                          (default: applies to all UIDs)\n"
                 "  nm rule del <virtual_path>              Delete a specific rule\n"
+                "  nm rule del [same UID options] <vpath>  Delete a rule matching the UID scope\n"
                 "  nm rule list [--json]                   List all active rules\n"
                 "  nm rule clear                           Clear all rules\n\n"
                 "UID Commands (Exceptions):\n"
