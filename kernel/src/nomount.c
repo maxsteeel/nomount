@@ -1810,8 +1810,8 @@ static int nm_generate_virtual_topology(struct nm_leaf *target, unsigned int uid
         hlist_del(&parent->ht_node);
         if (!err) hash_add_rcu(nm_leaves_ht, &parent->ht_node, parent->v_hash);
         else {
-            kfree(rcu_access_pointer(parent->rules));
-            nm_free_leaf(parent);
+            nm_delete_child_locked(parent, false);
+            nm_retire_leaf_locked(parent);
         }
     }
     return err;
@@ -1929,8 +1929,8 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     if (fresh) {
         RCU_INIT_POINTER(leaf->rules, array);
         if ((err = nm_generate_virtual_topology(leaf, uid))) {
-            nm_rule_array_free(array);
-            nm_free_leaf(leaf);
+            nm_delete_child_locked(leaf, false);
+            nm_retire_leaf_locked(leaf);
             goto out_rule;
         }
         hash_add_rcu(nm_leaves_ht, &leaf->ht_node, leaf->v_hash);
