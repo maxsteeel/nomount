@@ -433,7 +433,7 @@ static int nm_iterate_view(struct file *file, struct dir_context *ctx, const str
 
     if (unlikely(nm_is_virtual_pos(ctx->pos)))
         goto emit_virtual;
-    if (opaque || !real_file) {
+    if ((opaque && !uid_blocked) || !real_file) {
         if (ctx->pos < 2 && !dir_emit_dots(file, ctx)) return 0;
         ctx->pos = nm_pack_pos(0);
         goto emit_virtual;
