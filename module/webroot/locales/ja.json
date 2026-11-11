@@ -83,5 +83,8 @@
   "modules_skip": "スキップ",
   "modules_unskip": "スキップ解除",
   "dump_rules": "ルールを出力",
-  "dump_rules_desc": "すべてのルールを Android のログに出力します。デバッグ時のみ有効にしてください。"
+  "dump_rules_desc": "すべてのルールを Android のログに出力します。デバッグ時のみ有効にしてください。",
+  "dump_now": "Dump rules now",
+  "dump_done": "Rules dumped to logcat",
+  "dump_failed": "Failed to dump rules"
 }
