@@ -63,7 +63,7 @@
   "status_version": "Версия: {{version}}",
   "add_exclusion": "Добавить исключение",
   "mode_lkm": "LKM",
-  "mode_builtin": "Built-in",
+  "mode_builtin": "Встроен",
   "module_version_label": "Версия модуля",
   "appearance": "Внешний вид",
   "theme_mode": "Тема",
@@ -82,9 +82,9 @@
   "done": "Готово",
   "modules_skip": "Пропустить",
   "modules_unskip": "Не пропустить",
-  "dump_rules": "Dump rules",
-  "dump_rules_desc": "Dump all rules into android log. Only enable for debugging.",
-  "dump_now": "Dump rules now",
-  "dump_done": "Rules dumped to logcat",
-  "dump_failed": "Failed to dump rules"
+  "dump_rules": "Сдампить правила",
+  "dump_rules_desc": "Сдампить все правила в лог android. Включайте только для отладки.",
+  "dump_now": "Сдампить правила сейчас",
+  "dump_done": "Правила были сброшены в logcat",
+  "dump_failed": "Не удалось сдампить правила"
 }
