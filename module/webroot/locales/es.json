@@ -85,6 +85,6 @@
   "dump_rules": "Volcar reglas",
   "dump_rules_desc": "Volcar todas las reglas hacia el log de Android. Solo habilitar para depuración.",
   "dump_now": "Volcar reglas ahora",
-  "dump_done": "Reglas volcadas al local",
+  "dump_done": "Reglas volcadas al logcat",
   "dump_failed": "Error al volcar las reglas"
 }
