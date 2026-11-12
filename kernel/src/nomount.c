@@ -95,20 +95,10 @@ static struct nm_leaf *nm_find_leaf_in_dir(struct nm_dir_node *dir_node, const c
     return NULL;
 }
 
-static bool nm_path_unchanged(struct dentry *d, const struct nm_rule *rule)
+static bool nm_backing_gone(struct dentry *d)
 {
-    bool unchanged;
-    unsigned seq;
-
-    do {
-        seq = raw_seqcount_begin(&d->d_seq);
-        unchanged = ((d == rule->r_path.dentry && seq == rule->r_seq) ||
-                     (d->d_parent == rule->r_parent && d->d_name.len == rule->r_name_len &&
-                      !memcmp(d->d_name.name, rule->r_name, rule->r_name_len))) &&
-                    !(d_unhashed(d) && !IS_ROOT(d) && (!d_inode(d) || d_inode(d)->i_nlink == 0));
-    } while (read_seqcount_retry(&d->d_seq, seq));
-
-    return unchanged;
+    struct inode *inode = READ_ONCE(d->d_inode);
+    return !inode || inode->i_nlink == 0;
 }
 
 static int nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct nm_rule_info *out, char *name_buf)
@@ -117,7 +107,7 @@ static int nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct n
     bool rebound = false;
     if (!rule) return 0;
 
-    if (rule->r_parent && !nm_path_unchanged(rule->r_path.dentry, rule)) {
+    if (rule->r_parent && nm_backing_gone(rule->r_path.dentry)) {
         memcpy(name_buf, rule->r_name, rule->r_name_len);
         rebound = true;
     }
@@ -138,6 +128,8 @@ static int nm_rebind_path(struct nm_rule_info *rule_info)
 {
     struct inode *old_inode = d_backing_inode(rule_info->r_path.dentry), *new_inode;
     struct dentry *new;
+
+    if (!old_inode) return -ENOENT;
 
     new = nm_lookup_one_len_unlocked(rule_info->r_name, rule_info->saved_parent, rule_info->r_name_len);
     if (IS_ERR(new)) return PTR_ERR(new);
@@ -343,7 +335,11 @@ static bool nm_binding_matches_rule(struct inode *inode, const struct nm_rule *r
     if (!info || info->backing_child || info->dir_node || info->opaque)
         return false;
     d = READ_ONCE(info->r_path.dentry);
-    if (!d || !nm_path_unchanged(d, rule))
+    if (!d || nm_backing_gone(d))
+        return false;
+    if (d != rule->r_path.dentry &&
+        (d->d_parent != rule->r_parent || d->d_name.len != rule->r_name_len ||
+         memcmp(d->d_name.name, rule->r_name, rule->r_name_len)))
         return false;
     r_inode = d_backing_inode(d);
     return nm_inode_matches_attrs(inode, r_inode);
@@ -1547,7 +1543,7 @@ static int nm_prepare_rule(const char *r_path, u32 flags, unsigned int uid, unsi
                     path_put(&out->r_path);
                     return -ENOMEM;
                 }
-                if (!read_seqcount_retry(&dentry->d_seq, seq)) { out->r_seq = seq; break; }
+                if (!read_seqcount_retry(&dentry->d_seq, seq)) break;
                 dput(out->r_parent);
                 release_dentry_name_snapshot(name);
             }
