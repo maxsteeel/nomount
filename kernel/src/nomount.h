@@ -81,6 +81,11 @@ struct nm_inode_info {
     struct rcu_head rcu;
 };
 
+struct nm_child {
+    struct nm_leaf *leaf;
+    u32 hash;
+};
+
 struct nm_child_array {
     struct rcu_head rcu;
     int count;
@@ -145,10 +150,10 @@ struct nm_uid_array {
     uid_t uids[];
 };
 
-static inline struct nm_leaf **nm_entries(struct nm_child_array *arr)
+static inline struct nm_child *nm_entries(struct nm_child_array *arr)
 {
     uintptr_t p = (uintptr_t)arr->starts + arr->bucket_slots * sizeof(u32);
-    return (struct nm_leaf **)((p + 7) & ~(uintptr_t)7);
+    return (struct nm_child *)((p + 7) & ~(uintptr_t)7);
 }
 
 static inline u16 nm_child_slots_for(int count)

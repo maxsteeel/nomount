@@ -39,9 +39,9 @@ static __always_inline bool nm_child_matches(struct nm_leaf *leaf, const char *n
     return child_name[0] == name[0] && child_name[len - 1] == name[len - 1] && !memcmp(child_name, name, len);
 }
 
-static __always_inline u32 nm_child_frag(struct nm_leaf *leaf)
+static __always_inline u32 nm_child_frag(u32 hash)
 {
-    return (leaf->child_hash >> 16) & 0xFFFF;
+    return (hash >> 16) & 0xFFFF;
 }
 
 static bool nm_rules_overlap(const struct nm_rule *a, const struct nm_rule *b)
@@ -77,21 +77,23 @@ static struct nm_rule *nm_select_rule(struct nm_leaf *leaf, unsigned int uid)
 static struct nm_leaf *nm_find_leaf_in_dir(struct nm_dir_node *dir_node, const char *name, size_t len)
 {
     struct nm_child_array *children;
-    struct nm_leaf **entries;
-    u32 bucket, i;
+    struct nm_child *entries;
+    u32 hash, bucket, i;
 
     if (!dir_node || !(children = rcu_dereference_check(dir_node->children, lockdep_is_held(&nm_mutex))))
         return NULL;
     entries = nm_entries(children);
+    hash = full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, name, len);
     if (!children->bucket_slots) {
         for (i = 0; i < children->count; i++)
-            if (nm_child_matches(entries[i], name, len))
-                return entries[i];
+            if (entries[i].hash == hash && nm_child_matches(entries[i].leaf, name, len))
+                return entries[i].leaf;
         return NULL;
     }
-    bucket = nm_child_bucket(children, full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, name, len));
+    bucket = nm_child_bucket(children, hash);
     for (i = children->starts[bucket]; i < children->starts[bucket + 1]; i++)
-        if (nm_child_matches(entries[i], name, len)) return entries[i];
+        if (entries[i].hash == hash && nm_child_matches(entries[i].leaf, name, len))
+            return entries[i].leaf;
     return NULL;
 }
 
@@ -242,9 +244,9 @@ static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_d
 			rcu_guard();
 			struct nm_child_array *array = rcu_dereference(dir_node->children);
 			if (array) {
-				if (index >= (u32)array->count || nm_child_frag(nm_entries(array)[index]) != frag) {
+				if (index >= (u32)array->count || nm_child_frag(nm_entries(array)[index].hash) != frag) {
 					for (u32 i = 0; i < (u32)array->count; i++)
-						if (nm_child_frag(nm_entries(array)[i]) == frag) { index = i; break; }
+						if (nm_child_frag(nm_entries(array)[i].hash) == frag) { index = i; break; }
 				}
 			}
 		}
@@ -261,9 +263,9 @@ static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_d
 		rcu_read_lock();
 		struct nm_child_array *array = rcu_dereference(dir_node->children);
 		if (array && id < (u32)array->count) {
-			struct nm_leaf *leaf = nm_entries(array)[id];
+			struct nm_leaf *leaf = nm_entries(array)[id].leaf;
 			struct nm_rule *rule = nm_select_rule(leaf, fsuid);
-			cur_frag = nm_child_frag(leaf);
+			cur_frag = nm_child_frag(nm_entries(array)[id].hash);
 			has_more = true;
 			if (rule && !(rule->flags & NM_FLAG_WHITEOUT) && (!native_view || nm_rule_needs_readdir(leaf, rule))) {
 				name_len = leaf->child_len;
@@ -274,7 +276,7 @@ static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_d
 					do_emit = true;
 				}
 			}
-			if (id + 1 < (u32)array->count) next_frag = nm_child_frag(nm_entries(array)[id + 1]);
+			if (id + 1 < (u32)array->count) next_frag = nm_child_frag(nm_entries(array)[id + 1].hash);
 		}
 		rcu_read_unlock();
 		if (!has_more) break;
@@ -1357,7 +1359,7 @@ static struct nm_dir_node *nm_alloc_dir_node(void)
 static struct nm_child_array *nm_alloc_child_array(int count)
 {
     u16 slots = nm_child_slots_for(count);
-    size_t sz = ALIGN(sizeof(struct nm_child_array) + slots * sizeof(u32), 8) + count * sizeof(struct nm_leaf *);
+    size_t sz = ALIGN(sizeof(struct nm_child_array) + slots * sizeof(u32), 8) + count * sizeof(struct nm_child);
     struct nm_child_array *array = kmalloc(sz, GFP_KERNEL);
     if (array) {
         array->count = count;
@@ -1369,20 +1371,20 @@ static struct nm_child_array *nm_alloc_child_array(int count)
 static void nm_rebuild_children(struct nm_child_array *array, struct nm_child_array *old, struct nm_leaf *extra, int skip)
 {
     int count = old ? old->count : 0;
-    struct nm_leaf **entries = nm_entries(array);
+    struct nm_child *entries = nm_entries(array);
     u16 b;
 
     if (!array->bucket_slots) {
         int at = 0;
         for (int i = 0; i < count; i++)
             if (i != skip) entries[at++] = nm_entries(old)[i];
-        if (extra) entries[at] = extra;
+        if (extra) entries[at] = (struct nm_child){ .leaf = extra, .hash = extra->child_hash };
         return;
     }
 
     memset(array->starts, 0, array->bucket_slots * sizeof(u32));
     for (int i = 0; i < count; i++)
-        if (i != skip) array->starts[nm_child_bucket(array, nm_entries(old)[i]->child_hash)]++;
+        if (i != skip) array->starts[nm_child_bucket(array, nm_entries(old)[i].hash)]++;
     if (extra) array->starts[nm_child_bucket(array, extra->child_hash)]++;
 
     for (b = 1; b < array->bucket_slots; b++)
@@ -1390,11 +1392,11 @@ static void nm_rebuild_children(struct nm_child_array *array, struct nm_child_ar
 
     for (int i = count - 1; i >= 0; i--) {
         if (i == skip) continue;
-        struct nm_leaf *leaf = nm_entries(old)[i];
-        entries[--array->starts[nm_child_bucket(array, leaf->child_hash)]] = leaf;
+        struct nm_child *child = &nm_entries(old)[i];
+        entries[--array->starts[nm_child_bucket(array, child->hash)]] = *child;
     }
     if (extra)
-        entries[--array->starts[nm_child_bucket(array, extra->child_hash)]] = extra;
+        entries[--array->starts[nm_child_bucket(array, extra->child_hash)]] = (struct nm_child){ .leaf = extra, .hash = extra->child_hash };
 }
 
 static bool nm_rules_need_readdir(struct nm_leaf *leaf, struct nm_rule_array *rules)
@@ -1434,9 +1436,9 @@ static int nm_inject_child_locked(struct nm_dir_node *dir_node, struct nm_leaf *
         u16 i;
         for (i = 0; i <= bucket; i++) array->starts[i] = old->starts[i];
         for (; i < array->bucket_slots; i++) array->starts[i] = old->starts[i] + 1;
-        memcpy(nm_entries(array), nm_entries(old), pos * sizeof(struct nm_leaf *));
-        nm_entries(array)[pos] = leaf;
-        memcpy(nm_entries(array) + pos + 1, nm_entries(old) + pos, (count - pos) * sizeof(struct nm_leaf *));
+        memcpy(nm_entries(array), nm_entries(old), pos * sizeof(struct nm_child));
+        nm_entries(array)[pos] = (struct nm_child){ .leaf = leaf, .hash = leaf->child_hash };
+        memcpy(nm_entries(array) + pos + 1, nm_entries(old) + pos, (count - pos) * sizeof(struct nm_child));
     } else nm_rebuild_children(array, old, leaf, -1);
 
     leaf->parent_dir = dir_node;
@@ -1462,7 +1464,7 @@ static struct nm_dir_node *nm_delete_child_locked(struct nm_leaf *leaf, bool cle
             pos = old->starts[bucket];
             end = old->starts[bucket + 1];
         }
-        for (; pos < end && nm_entries(old)[pos] != leaf; pos++) {}
+        for (; pos < end && nm_entries(old)[pos].leaf != leaf; pos++) {}
         if (pos == end) return dir_node;
         if (old->count > 1) {
             int new_count = old->count - 1;
@@ -1471,8 +1473,8 @@ static struct nm_dir_node *nm_delete_child_locked(struct nm_leaf *leaf, bool cle
                 u16 i;
                 for (i = 0; i <= bucket; i++) array->starts[i] = old->starts[i];
                 for (; i < array->bucket_slots; i++) array->starts[i] = old->starts[i] - 1;
-                memcpy(nm_entries(array), nm_entries(old), pos * sizeof(struct nm_leaf *));
-                memcpy(nm_entries(array) + pos, nm_entries(old) + pos + 1, (new_count - pos) * sizeof(struct nm_leaf *));
+                memcpy(nm_entries(array), nm_entries(old), pos * sizeof(struct nm_child));
+                memcpy(nm_entries(array) + pos, nm_entries(old) + pos + 1, (new_count - pos) * sizeof(struct nm_child));
             } else nm_rebuild_children(array, old, NULL, pos);
         }
     }
