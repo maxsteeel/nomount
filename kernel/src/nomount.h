@@ -49,7 +49,6 @@ static struct nm_leaf *nm_retired_leaves;
 
 /* * Helpers to dynamically calculate the memory address of the strings / structs */
 #define nm_get_child_name(leaf) ((leaf)->paths + (leaf)->v_len - (leaf)->child_len)
-#define nm_rule_heap(arr) ((char *)(arr)->rules + (arr)->count * sizeof(struct nm_rule))
 
 struct nm_dir_ops {
     const struct inode_operations *orig_iop;
@@ -100,13 +99,10 @@ struct nm_dir_node {
 
 struct nm_rule {
     struct path r_path;
-    struct dentry *r_parent;
-    const char *r_name;
     unsigned int target_uid;
     unsigned int uid_end;
     unsigned int deny_start;
     unsigned int deny_end;
-    u16 r_name_len;
     u16 flags;
 };
 
@@ -139,9 +135,6 @@ struct nm_rule_info {
     unsigned long v_ino;
     struct path r_path;
     struct nm_dir_node *this_dir;
-    struct dentry *saved_parent;
-    char *r_name;
-    u16 r_name_len;
 };
 
 struct nm_uid_array {
