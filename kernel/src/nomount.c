@@ -2087,10 +2087,10 @@ static int nm_process_payload(unsigned long user_addr)
             buf_ptr = payload->buffer;
             buf_end = payload->buffer + sizeof(payload->buffer);
 
-            rcu_guard();
+            mutex_lock(&nm_mutex);
             struct nm_leaf *leaf;
-            hash_for_each_rcu(nm_leaves_ht, bkt, leaf, ht_node) {
-                struct nm_rule_array *rules = rcu_dereference(leaf->rules);
+            hash_for_each(nm_leaves_ht, bkt, leaf, ht_node) {
+                struct nm_rule_array *rules = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex));
                 if (!rules) continue;
                 for (int i = 0; i < rules->count; i++) {
                     struct nm_rule *r = &rules->rules[i];
@@ -2127,6 +2127,7 @@ static int nm_process_payload(unsigned long user_addr)
             current_idx--;
             if (current_idx == (int)payload->arg1) payload->status = -ENAMETOOLONG;
         list_done:
+            mutex_unlock(&nm_mutex);
             payload->data_size = buf_ptr - payload->buffer;
             payload->arg1 = current_idx;
             break;
