@@ -74,7 +74,7 @@ struct nm_sop {
 
 struct nm_inode_info {
     struct path r_path;
-    struct nm_dir_node *dir_node;
+    union { struct nm_dir_node *dir_node; struct nm_leaf *leaf; const void *node; };
     struct file *r_file;
     bool opaque;
     bool backing_child;
@@ -128,8 +128,9 @@ struct nm_leaf {
     u16 v_len;
     u16 child_len;
     bool native_file;
-    u32 child_hash;
-    struct hlist_node ht_node;
+    u16 child_hash;
+    atomic_t refs;
+    union { struct hlist_node ht_node; struct rcu_head rcu; };
     struct nm_leaf *next;
     char paths[];
 };
@@ -141,6 +142,7 @@ struct nm_rule_info {
     unsigned long key;
     struct path r_path;
     struct nm_dir_node *this_dir;
+    struct nm_leaf *leaf;
 };
 
 struct nm_uid_array {
@@ -187,6 +189,7 @@ static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx);
 static void nm_hijacked_evict_inode(struct inode *inode);
 static void nm_hijack_dentry_ops(struct inode *dir, struct dentry *dentry, bool injected);
 static void nm_dir_put(struct nm_dir_node *dir_node);
+static void nm_leaf_put(struct nm_leaf *leaf);
 static void nm_shutdown_release(void);
 static int nm_shutdown_sync_fs(struct super_block *sb, int wait);
 static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid, unsigned int uid_end, unsigned int deny_start, unsigned int deny_end);
