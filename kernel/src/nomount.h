@@ -133,6 +133,7 @@ struct nm_rule_info {
     u16 flags;
     bool backing_child;
     unsigned long v_ino;
+    unsigned long key;
     struct path r_path;
     struct nm_dir_node *this_dir;
 };

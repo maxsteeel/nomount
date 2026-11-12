@@ -110,6 +110,7 @@ static int nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct n
     out->v_ino = leaf->v_ino;
     out->r_path = rule->r_path;
     out->this_dir = (rule->flags & NM_FLAG_IS_DIR) ? leaf->this_dir : NULL;
+    out->key = (unsigned long)(out->this_dir ? (void *)out->this_dir : (void *)leaf);
     if (out->r_path.dentry) path_get(&out->r_path);
     if (out->this_dir) atomic_inc(&out->this_dir->refs);
     return 1;
@@ -357,7 +358,7 @@ static int nm_cached_inode_set(struct inode *inode, void *data) { return 0; }
 static int nm_cached_inode_test(struct inode *inode, void *data)
 {
     struct nm_inode_info *info = data;
-    return inode->i_op == &nm_dir_iops && nm_inode_matches_binding(inode, &info->r_path, info->dir_node, info->opaque);
+    return nm_inode_is_virtual(inode) && nm_inode_matches_binding(inode, &info->r_path, info->dir_node, info->opaque);
 }
 
 static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dentry, struct nm_rule_info *rule_info)
@@ -378,30 +379,20 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
         .opaque = rule_info->this_dir && (rule_info->flags & NM_FLAG_OPAQUE),
         .backing_child = rule_info->backing_child,
     };
-    if (rule_info->this_dir) {
-        inode = iget5_locked(dir->i_sb, (unsigned long)rule_info->this_dir, nm_cached_inode_test, nm_cached_inode_set, &probe);
-        if (!inode) goto out;
+    inode = iget5_locked(dir->i_sb, rule_info->key, nm_cached_inode_test, nm_cached_inode_set, &probe);
+    if (!inode) goto out;
 
-        if (nm_inode_is_new(inode)) {
-            if (!(info = kmalloc(sizeof(*info), GFP_KERNEL))) { iget_failed(inode); goto out; }
-            *info = probe;
-            nm_init_prealloc_inode(inode, info, rule_info->v_ino);
-            unlock_new_inode(inode);
-        }
-        res = d_splice_alias(inode, dentry);
-        if (!IS_ERR(res))
-            nm_hijack_dentry_ops(dir, res ? res : dentry, true);
-        if (info) return res;
-        goto out;
+    if (nm_inode_is_new(inode)) {
+        if (!(info = kmalloc(sizeof(*info), GFP_KERNEL))) { iget_failed(inode); goto out; }
+        *info = probe;
+        nm_init_prealloc_inode(inode, info, rule_info->v_ino);
+        unlock_new_inode(inode);
     }
-
-    if (!(info = kmalloc(sizeof(*info), GFP_KERNEL))) goto out;
-    *info = probe;
-    if (!(inode = new_inode(dir->i_sb))) goto out;
-    nm_init_prealloc_inode(inode, info, rule_info->v_ino);
-    d_add(dentry, inode);
-    nm_hijack_dentry_ops(dir, dentry, true);
-    return NULL;
+    res = d_splice_alias(inode, dentry);
+    if (!IS_ERR(res))
+        nm_hijack_dentry_ops(dir, res ? res : dentry, true);
+    if (info) return res;
+    goto out;
 
 negative_dentry:
     nm_hijack_dentry_ops(dir, dentry, true);
@@ -894,6 +885,7 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
         rule_info = (struct nm_rule_info){
             .r_path = { .mnt = info->r_path.mnt },
             .v_ino = d_inode(backing)->i_ino,
+            .key = (unsigned long)backing,
             .backing_child = true,
         };
         rule_info.r_path.dentry = backing;
@@ -1267,7 +1259,6 @@ static void nm_hijack_dentry_ops(struct inode *dir, struct dentry *dentry, bool 
     if (injected || !orig) {
         new_flags = dentry->d_flags & ~DCACHE_OPS;
         new_flags |= (DCACHE_OP_REVALIDATE | DCACHE_OP_WEAK_REVALIDATE);
-        if (injected) new_flags |= DCACHE_DONTCACHE;
         dentry->d_op = &nm_dops;
         smp_store_release(&dentry->d_flags, new_flags);
     } else if (iop) {
