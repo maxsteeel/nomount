@@ -62,15 +62,17 @@ static struct nm_rule *nm_select_rule(struct nm_leaf *leaf, unsigned int uid)
     struct nm_rule *fallback = NULL;
     if (!arr) return NULL;
     if (!arr->uid_count) return arr->rules;
+
     struct nm_rule *r = arr->rules, *end = r + arr->count;
     if (arr->uid_count != arr->count) fallback = r++;
-    do {
+    while (r < end) {
         if (r->target_uid > uid) break;
         if (uid <= r->uid_end) {
-            if (r->deny_start && uid >= r->deny_start && uid <= r->deny_end) continue;
+            if (r->deny_start && uid >= r->deny_start && uid <= r->deny_end) { r++; continue; }
             return r;
         }
-    } while (++r < end);
+        r++;
+    }
     return fallback;
 }
 
