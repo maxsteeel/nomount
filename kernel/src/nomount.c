@@ -1792,7 +1792,7 @@ static int nm_generate_virtual_topology(struct nm_leaf *target, unsigned int uid
 
     hlist_for_each_entry_safe(parent, h_tmp, &pending, ht_node) {
         hlist_del(&parent->ht_node);
-        if (!err) hash_add_rcu(nm_leaves_ht, &parent->ht_node, parent->v_hash);
+        if (!err) hash_add(nm_leaves_ht, &parent->ht_node, parent->v_hash);
         else {
             nm_delete_child_locked(parent, false);
             nm_retire_leaf_locked(parent);
@@ -1805,7 +1805,7 @@ static struct nm_dir_node *nm_detach_leaf_locked(struct nm_leaf *leaf)
 {
     struct nm_dir_node *parent = nm_delete_child_locked(leaf, false);
     if (IS_ERR(parent)) return parent;
-    hash_del_rcu(&leaf->ht_node);
+    hash_del(&leaf->ht_node);
     nm_retire_leaf_locked(leaf);
     return parent;
 }
@@ -1893,7 +1893,7 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     }
 
     for (int i = 0; i < pos; i++, j++) nm_copy_rule(&array->rules[j], &old->rules[i]);
-    nm_copy_rule(&array->rules[j++], &new_rule);
+    array->rules[j++] = new_rule;
     for (int i = pos + replace; i < count; i++, j++) nm_copy_rule(&array->rules[j], &old->rules[i]);
     array->uid_count = new_count - (!array->rules[0].target_uid && !array->rules[0].uid_end);
 
@@ -1906,14 +1906,14 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
         if ((err = nm_generate_virtual_topology(leaf, uid))) {
             nm_delete_child_locked(leaf, false);
             nm_retire_leaf_locked(leaf);
-            goto out_rule;
+            return err;
         }
-        hash_add_rcu(nm_leaves_ht, &leaf->ht_node, leaf->v_hash);
+        hash_add(nm_leaves_ht, &leaf->ht_node, leaf->v_hash);
     } else {
         nm_publish_rules_locked(leaf, array, old);
     }
 
-    goto out_rule;
+    return 0;
 
 out_dir:  nm_dir_put(new_dir);
 out_leaf: if (fresh) nm_free_leaf(leaf, false);
@@ -1985,7 +1985,7 @@ static void nm_clear_state(int clear_flags)
         int bkt;
         hash_for_each_safe(nm_leaves_ht, bkt, tmp, leaf, ht_node) {
             nm_delete_child_locked(leaf, true);
-            hash_del_rcu(&leaf->ht_node);
+            hash_del(&leaf->ht_node);
             nm_retire_leaf_locked(leaf);
         }
     }
