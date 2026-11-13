@@ -17,7 +17,14 @@ run_url = os.environ["RUN_URL"]
 run_number = os.environ["RUN_NUMBER"]
 branch = os.environ.get("GITHUB_REF_NAME", "unknown")
 
-title = f"NoMount CI Build ({branch} branch)"
+custom_title = os.environ.get("UPLOAD_TITLE")
+custom_link_label = os.environ.get("UPLOAD_LINK_LABEL")
+custom_link_url = os.environ.get("UPLOAD_LINK_URL")
+
+title = custom_title if custom_title else f"NoMount CI Build ({branch} branch)"
+link_label = custom_link_label or "Workflow"
+link_url = custom_link_url or run_url
+
 run_text = f"#ci_{run_number}"
 
 if len(msg) > 800:
@@ -27,7 +34,7 @@ caption = (
     f"<b>{html.escape(title)}</b>\n"
     f"{html.escape(run_text)}\n"
     f"<pre>{html.escape(msg)}</pre>\n"
-    f"<a href=\"{commit_url}\">Commit</a> | <a href=\"{run_url}\">Workflow</a>"
+    f"<a href=\"{commit_url}\">Commit</a> | <a href=\"{link_url}\">{link_label}</a>"
 )
 
 curl_cmd = [
