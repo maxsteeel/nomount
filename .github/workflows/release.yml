@@ -1,0 +1,121 @@
+name: release module
+
+on:
+  workflow_run:
+    workflows: ["build module"]
+    types: [completed]
+    branches: [master]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      CHAT_ID: ${{ secrets.CHAT_ID }}
+      RELEASE_TOPIC_ID: ${{ secrets.RELEASE_TOPIC_ID }}
+    steps:
+      - name: Checkout bump commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Detect bump and extract tag
+        id: detect
+        run: |
+          MSG=$(git log -1 --format=%s)
+          echo "Head commit: $MSG"
+          if [[ "$MSG" =~ ^nomount:\ bump\ the\ version\ from\ v[0-9.]+\ to\ (v[0-9.]+)$ ]]; then
+            TAG="${BASH_REMATCH[1]}"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "is_bump=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not a bump commit, skipping."
+            echo "is_bump=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop if not a bump
+        if: steps.detect.outputs.is_bump != 'true'
+        run: exit 0
+
+      - name: Compute commit count
+        id: count
+        run: |
+          COUNT=$(git rev-list --count HEAD)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Download module artifact
+        uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          pattern: "*-release-*"
+          path: ${{ runner.temp }}/module-artifact
+
+      - name: Repack as release ZIP
+        id: zip
+        run: |
+          TAG="${{ steps.detect.outputs.tag }}"
+          COUNT="${{ steps.count.outputs.count }}"
+          ZIP_NAME="NoMount-${TAG}-release-${COUNT}.zip"
+
+          SRC=""
+          for d in "${{ runner.temp }}/module-artifact"/*/; do
+            if [ -f "${d}module.prop" ]; then
+              SRC="$d"
+              break
+            fi
+          done
+          if [ -z "$SRC" ]; then
+            echo "ERROR: no directory with module.prop found in artifact" >&2
+            ls -la "${{ runner.temp }}/module-artifact" >&2 || true
+            exit 1
+          fi
+          echo "Using source: $SRC"
+
+          cd "$SRC"
+          zip -qr9 "${{ runner.temp }}/$ZIP_NAME" .
+
+          if ! unzip -l "${{ runner.temp }}/$ZIP_NAME" | grep -qE ' module\.prop$'; then
+            echo "ERROR: generated ZIP does not contain module.prop at root" >&2
+            unzip -l "${{ runner.temp }}/$ZIP_NAME" >&2
+            exit 1
+          fi
+
+          echo "zip_path=${{ runner.temp }}/$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          ls -lh "${{ runner.temp }}/$ZIP_NAME"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.detect.outputs.tag }}
+          name: NoMount ${{ steps.detect.outputs.tag }}
+          body_path: CHANGELOG.md
+          files: ${{ steps.zip.outputs.zip_path }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to Telegram release topic
+        if: env.BOT_TOKEN != '' && env.CHAT_ID != '' && env.RELEASE_TOPIC_ID != ''
+        env:
+          ZIP_PATH: ${{ steps.zip.outputs.zip_path }}
+          TOPIC_ID: ${{ secrets.RELEASE_TOPIC_ID }}
+          COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
+          COMMIT_URL: ${{ github.event.workflow_run.head_commit.url }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          UPLOAD_TITLE: NoMount Release build
+          UPLOAD_LINK_LABEL: Release
+          UPLOAD_LINK_URL: https://github.com/${{ github.repository }}/releases/tag/${{ steps.detect.outputs.tag }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          python .github/scripts/telegram_upload.py
