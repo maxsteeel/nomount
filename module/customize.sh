@@ -202,7 +202,7 @@ if [ "$NM_CURRENT_VER" -lt "$NM_REQUIRED_VER" ]; then
     ui_print "* [!] KERNEL DRIVER TOO OLD                       *"
     ui_print "***************************************************"
     ui_print "* Current driver: v${NM_CURRENT_VER}              *"
-    ui_print "* Required:       v${NM_REQUIRED_VER}             *"
+    ui_print "* Required:       v${NM_REQUIRED_VER} as minimum  *"
     ui_print "*                                                 *"
     ui_print "* No compatible driver update is available for    *"
     ui_print "* this kernel. Update your kernel first, then     *"
