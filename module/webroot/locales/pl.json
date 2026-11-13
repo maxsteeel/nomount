@@ -34,11 +34,11 @@
   "no_modules_found": "Nie znaleziono żadnych modułów",
   "no_exclusions_yet": "Nie istnieją jeszcze zadne wykluczenia",
   "remove_exclusion": "Usuń wykliczenie",
-  "module_injected_count": "1 moduł wstrzyknięty",
+  "module_injected_count": "Modułów wstrzykniętych: 1",
   "modules_injected_count": "Modułów wstrzykniętych: {{count}}",
-  "modules_injected_files": "{{count}} plików",
-  "modules_hot_load": "Hot Load",
-  "modules_hot_unload": "Hot Unload",
+  "modules_injected_files": "pliki: {{count}}",
+  "modules_hot_load": "Ładowanie na gorąco",
+  "modules_hot_unload": "Wyładowanie na gorąco",
   "unknown_value": "Nieznany",
   "cancel": "Anuluj",
   "add": "Dodaj",
@@ -81,5 +81,10 @@
   "advanced_color": "Zaawansowany kolor",
   "done": "Gotowe",
   "modules_skip": "Pomiń",
-  "modules_unskip": "Nie pomijaj"
+  "modules_unskip": "Nie pomijaj",
+  "dump_rules": "Zrzuć reguły",
+  "dump_rules_desc": "Zrzuca wszystkie reguły do dziennika android. Uruchamiaj tylko na potrzeby debugowania.",
+  "dump_now": "Zrzuć reguły teraz",
+  "dump_done": "Reguły zostały zrzucone do logcata",
+  "dump_failed": "Nie udało się zrzucić reguł"
 }

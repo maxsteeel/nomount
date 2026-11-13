@@ -81,5 +81,10 @@
   "advanced_color": "Chọn màu nâng cao",
   "done": "Xong",
   "modules_skip": "Bỏ qua",
-  "modules_unskip": "Khôi phục"
+  "modules_unskip": "Khôi phục",
+  "dump_rules": "Xuất quy tắc",
+  "dump_rules_desc": "Xuất tất cả các quy tắc vào nhật ký android. Chỉ bật để gỡ lỗi.",
+  "dump_now": "Xuất các quy tắc ngay",
+  "dump_done": "Đã xuất các quy tắc vào logcat",
+  "dump_failed": "Xuất quy tắc thất bại"
 }

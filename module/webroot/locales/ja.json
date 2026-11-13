@@ -81,5 +81,10 @@
   "advanced_color": "高度な色設定",
   "done": "完了",
   "modules_skip": "スキップ",
-  "modules_unskip": "スキップ解除"
+  "modules_unskip": "スキップ解除",
+  "dump_rules": "ルールを出力",
+  "dump_rules_desc": "すべてのルールを Android のログに出力します。デバッグ時のみ有効にしてください。",
+  "dump_now": "今すぐルールを出力",
+  "dump_done": "logcat にルールを出力しました",
+  "dump_failed": "ルールの出力に失敗しました"
 }
