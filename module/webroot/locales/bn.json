@@ -84,7 +84,7 @@
   "modules_unskip": "বাদ দেবেন না",
   "dump_rules": "নিয়মের তালিকা লগে দেখান",
   "dump_rules_desc": "সব নিয়ম অ্যান্ড্রয়েড লগে লিখুন। শুধু সমস্যা খুঁজে বের করার সময় চালু করুন।",
-  "dump_now": "Dump rules now",
-  "dump_done": "Rules dumped to logcat",
-  "dump_failed": "Failed to dump rules"
+  "dump_now": "এখনই নিয়মগুলো লগে লিখুন",
+  "dump_done": "নিয়মগুলো logcat-এ লেখা হয়েছে",
+  "dump_failed": "নিয়মগুলো লগে লিখতে ব্যর্থ হয়েছে"
 }
