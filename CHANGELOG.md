@@ -1,49 +1,53 @@
-## NoMount v2.2.0 is here!🎉
+## NoMount v2.3.0 is here! 🎉
 
-This release brings UID-scoped rules, opaque directory redirection, `.remove` support, and the biggest hot-path optimization pass we've ever shipped. The kernel driver and the metamodule **must be updated together**.
-
-> Commit count hit 605 on this release. Driver protocol is now v22. Thanks to everyone who kept reporting, bisecting and testing through the rough week 💙
+The kernel driver and the metamodule **must be updated together**. There are no API-breaking changes (you can use the new module with previous kernel driver, and vice versa), but the amount of bug fixes below is large enough that running them out of sync is asking for trouble.
 
 ### Small Changelog:
+> There are too many changes in this version, so this is sort of a summary of most important changes of this release :)
 
 - kernel/:
-  - Wire protocol v22. `nm_rule_hdr` grew from 16 to 24 bytes and `nm_del_hdr` from 10 to 18 to fit the new UID range fields. A v22 CLI cannot talk to a v21 driver (and vice versa); the installer aborts if the running driver is older than v22.
-  - UID-scoped rules with ranges: `--uid-range 1000-5000` and `--uid-range all`. A single rule now covers a whole range without enumerating every UID.
-  - UID deny sub-ranges: `--uid-excluded 3000-4000`. Combine it with `--uid-range` for `[1000,5000] except [3000,4000]`, or use it alone as "default except this range". Rules with the same target range but different denies are rejected with `-EEXIST`; overlap between ranges is rejected too.
-  - Opaque directories: `--opaque`. A directory rule can hide the underlying filesystem entirely and only expose the module's leaves. This is what `.replace` with content actually meant: previously it whiteouted the whole directory and bootlooped when the hidden dir was a system app the framework needed.
-  - Pseudo filesystems (`proc`, `sysfs`, `devpts`, `debugfs`, `tracefs`, `selinuxfs`, `cgroup`, `bpf`) are no longer hijacked at the dentry level.
-  - Skip d_op installation on dentries that have no rule for their name. This is the biggest change in the release: it removes the d_revalidate tax on every non-rule lookup under a hijacked directory, which is most of them.
-  - Skip d_op installation on dentries in pseudo filesystems, and skip the `shrink_dcache_parent` pass when invalidating a single injected name. The `nm_hijack_dentry_ops` publication now uses `smp_store_release` and a single `d_flags` write.
-  - Hot-path micro-optimizations, reorder `nm_dir_ops` so the hot fields fit in one cache line, avoid `current_fsuid()` when the leaf is NULL, skip `nm_is_uid_blocked()` and `nm_find_leaf_in_dir()` when there is no leaf or no children, short-circuit `nm_dir_lookup` and `nm_d_revalidate_common` on directories without rules.
-  - `nm_d_revalidate_common` no longer reads `dentry->d_op` or `inode->i_op` when it does not need them, and chains to the original `d_revalidate` when the underlying filesystem has one.
-  - On unload, walk `i_dentry` to clear `d_op` before freeing module memory. Fixes the panic on `rmmod` with files open on virtual paths.
-  - `iget5_locked` hits no longer allocate an `nm_inode_info`; the probe uses a stack struct and `kmalloc` only happens for `I_NEW`. `d_add` instead of `d_splice_alias` for fresh file inodes.
-  - Probe `xattr_handler->__get` via header grep instead of `LINUX_VERSION_CODE`, so kernel trees that never backported the member compile again.
-  - `inode_state_read_once` for I_NEW checks (mainline >=6.19 compatibility).
-  - Deferred reclaim of rules and leaves moved fully to process context. `nm clear rules` no longer blocks on `synchronize_rcu`.
-  - Internal naming unified to the `nm_` prefix.
+  - **Rules are now inode-based.** A rule tracks the inode the path resolved to at add-time, not the path string. Rename or move the target and the rule keeps serving the same data as long as the inode is alive, and when the backing inode is gone (after unlink), the path is rebinded.
+  - **Pre-opened backing file cache.** Read-only opens of a redirected file reuse a cached `struct file` pointing at the backing, so a redirected `open`+`read`+`close` cycle measures within ~80 ns of the native one. Eligibility is checked on first open (ext4/f2fs only, `f_cred` pointer equality, `S_ISREG`).
+  - **Virtual inodes survive lookups.** File rules now go through `iget5_locked` like dir rules already did. The virtual inode stays in the dcache between accesses, which is what lets the pre-opened cache actually hit on repeated operations instead of the file being recreated per access.
+  - **Rule list reconstructs paths with `d_path`.** Paths are no longer stored in the kernel heap; `NM_CMD_GET_LIST` rebuilds them on demand from `r_path`. Drops rule path strings from the heap and reports the path the rule actually serves. `GET_LIST` now takes `nm_mutex` instead of `rcu_read_lock` so `d_path` can sleep safely.
+  - **Revalidate is O(1).** The virtual inode caches a reference to its leaf. `nm_d_revalidate_common` validates the parent dir and the child hash and returns, with no hash table walk and no `memcmp` in the fast path (rare cases where this fails will fall into the slow path).
+  - **Child buckets store `{ leaf *, hash }` inline**, so bucket lookup compares the hash before dereferencing the leaf.
+  - **`nm_rule` dropped `r_parent`, `r_name`, `r_name_len`, and the path strings.** `nm rule add` no longer copies names into a per-rule heap buffer.
+  - **Readdir resumes at the same child after rule changes.** The cursor encodes a 16-bit hash fragment so `ls` during concurrent `nm rule add/del` no longer skips or duplicates entries.
+  - **OOB read fix in `nm_select_rule`** when a single-rule path uses `--uid-range` scoping.
+  - **UAF fixes:** leaves are retired via RCU instead of freed while still reachable from the hash; virtual dentries are dropped before restoring `s_op`; `nm clear rules` no longer blocks in the syscall path (it defers cleanup to a workqueue).
+  - **Security:** `nm_xattr_set` runs LSM checks via `vfs_setxattr`/`vfs_removexattr`; SUID/SGID bits are cleared on virtual inodes; `unlink`/`rename`/`rmdir` are now managed by NoMount on virtual dentries (previously `f2fs_unlink` could walk into a virtual inode and corrupt slab).
+  - **Cross-sb lookups use a proxy inode.** When the backing dentry lives in a different `super_block` (FUSE mounts, user-namespace bind mounts, etc), the lookup materializes a virtual inode that proxies to the backing dentry instead of touching `r_dir->i_op->lookup`. Fixes the `get_fuse_mount_super` crash, and the null dentry deref on the same path.
+  - **kernfs superblocks are tracked but never hijacked.** `s_op` is left untouched (no more `cgroup2` panic on `unshare -C -m`), xattr proxies still install. `nm_hijack_superblock` no longer skips them entirely.
+  - **Native view honored for blocked UIDs on opaque dirs.** A blocked UID listing an opaque virtual directory now sees the real directory contents, not the empty opaque overlay.
+  - **Default rule is protected from `unlink`.** `nm_hijacked_unlink` refuses to drop the fallback rule when the virtual path only has the default UID scope.
+  - **Boot-time speedup:** `nm_prepare_native_file` resolves against the parent dentry via `vfs_path_lookup` instead of calling `kern_path` from `/` for every rule.
+  - UID overlap/deny checks done directly; childless stub leaves pruned; child array slots reused for small counts; reclaim moved to process context.
 
 - userspace/:
-  - `--uid-range <a>-<b>`, `--uid-range all`, `--uid-excluded <c>-<d>`, and `--opaque` flags.
-  - `nm rule list` prints `[UID: a-b excl c-d]` and emits `"opaque": true` in the JSON output.
-  - Streamlined absolute path handling, chunked output for large rule lists.
+  - `nm rule add` batches in a single bounded pass (no more double walk for size).
+  - `nm rule list` flags completed requests so the driver returns clean empty pages.
+  - UID range parsing shared between `add` and `del`.
 
 - module/:
-  - `common.sh` holds the boot pipeline: bootloop detection keyed on `/proc/sys/kernel/random/boot_id`, LKM loading, module disable. `post-fs-data.sh` and `metamount.sh` are thin wrappers over it.
-  - Boot order is now correct on both KernelSU and APatch. The previous flow silently lost rules on APatch (and sometimes in KernelSU with specific setups) because metamount.sh ran before the LKM was loaded.
-  - Bootloop detection no longer relies on `.booting` existence; a successful boot clears the file, a failed boot keeps the boot_id and the next boot disables the module.
-   - `.remove` support: Magisk's .remove marker is recognized alongside `.replace` (`.replace` with content → opaque rule, `.replace` alone → whiteout, `.remove` → whiteout).  `rule-paths.sh` gains `path`, `pair`, `opaque` and `del` kinds, and both `metamount.sh` and the WebUI's hot load/unload use the same flow. Hot unload now deletes opaque rules too.
-  - `x86_64` build support: new CI matrix entry, `lkmloader-x86_64`, `nm-x86_64`, and `ARCH_BIN` normalization for KernelSU's `x64` label.
-  - Installer aborts if the running driver is below v22, and falls back to the previous LKM if a v22 KO is staged for the next boot. Reboot is required to activate the new driver in LKM mode.
+  - **`MODDIR` is now set in `boot-completed.sh`.** Without it, the script silently failed to find its temp files, so `nm clear` never ran and the bootloop safety net never triggered. Root cause of several "NoMount disabled itself after a reboot" reports.
+  - `customize.sh` restores multi-candidate LKM fallback (`ko` → `lkmloader` → error).
+  - `.remove` marker recognized alongside `.replace`; `rule-paths.sh` gains `path`, `pair`, `opaque` and `del` kinds; `metamount.sh` and WebUI hot load/unload now share the same flow.
+  - Opaque directories with nonempty contents no longer abort the boot pipeline.
+  - **Module logs now go to dmesg/logcat.** The separate `module.log` file is not needed (and not used); everything routes through the dmesg, same log used by the driver, so both logs land in the same place.
+  - Injection failures propagate to the WebUI as explicit `nm_load_status=N` / `nm_unload_status=N` markers instead of being swallowed by the script.
+  - **`android17-6.18` LKM** added to the pre-compilated LKM list of this module.
 
 - webui/:
-  - Skip / Unskip button on each module card (creates or deletes `skip_mount`).
-  - Persist the "Show system apps" toggle across reloads.
-  - Back gesture closes the right dialog in every navigation state (fixed double back navigation).
-  - AMOLED palette adjustments and clear button corner fix.
+  - Module cards, app selector and exclusions are built with `document.createElement` + `textContent` instead of `innerHTML` templates. `realName` (from `module.prop`), `appLabel`/`pkg` (from `ksu.listPackages`) and exclusion `label`/`pkg` all go through `textContent`.
+  - App selector reuses the in-memory cache on reopen (no more 250+ ms spinner at reopen).
+  - Nav, switch and overlay render paths cut layout work: no transition on `grid-template-rows`, `transform`-only switch thumb, and `--nm-nav-background`/`--nm-scrim-mix`/`--nm-elevation-2` precomputed in `applyAppearance()` instead of `color-mix()` per frame.
+  - Module detection fixed: `readModules` runs once at boot and is shared between Home and Modules; `updateModuleCardDOM` accepts a `[modId]` filter so a toggle only walks one module.
+  - Locale fetch parallelized. Language selection moved to the Appearance group. Untranslated strings fall back to English.
+  - A new "Dump rules" toggle in Advanced writes rules to the log on every boot (debug only), and a "Dump rules now" button triggers it on demand.
 
 and a lot of other misc changes :)
 
 #### Thanks to everyone who kept testing, contributing and reporting through the rough bits: @ZQZCC, @nleloc, @sohan-f, and the testers on the Telegram group 🫂
 
-**Full Changelog**: https://github.com/maxsteeel/nomount/compare/v2.1.1...v2.2.0
+**Full Changelog**: https://github.com/maxsteeel/nomount/compare/v2.2.0...v2.3.0
