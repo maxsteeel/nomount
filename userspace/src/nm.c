@@ -49,18 +49,15 @@ void c_main(long *sp) {
         case ACTION_RULE_DEL: {
             if (args.action == ACTION_RULE_ADD && args.is_whiteout && args.is_opaque) {
                 print_literal("nm: --whiteout and --opaque flags are mutually exclusive\n");
-                exit_code = 1;
                 goto do_exit;
             }
             if (args.deny_start || args.deny_end) {
                 if (!args.deny_start || !args.deny_end) {
                     print_literal("nm: --uid-excluded requires a valid range\n");
-                    exit_code = 1;
                     goto do_exit;
                 }
                 if (args.deny_start < args.target_uid || args.deny_end > args.target_uid_end) {
                     print_literal("nm: --uid-excluded must be inside --uid / --uid-range\n");
-                    exit_code = 1;
                     goto do_exit;
                 }
             }
@@ -146,7 +143,6 @@ void c_main(long *sp) {
                 } else if (strcmp(argv[0], "off") == 0 || strcmp(argv[0], "0") == 0) {
                     payload->arg1 = 0;
                 } else {
-                    exit_code = 1;
                     goto do_exit;
                 }
                 exit_code = (nm_send_payload(payload) < 0);
@@ -244,8 +240,7 @@ void c_main(long *sp) {
                             }
                             if (uid || uid_end) {
                                 list_print_literal(&output, " [UID: ");
-                                if (uid == 0 && uid_end == 0) list_print_literal(&output, "all");
-                                else if (uid == uid_end) list_print_uint(&output, uid);
+                                if (uid == uid_end) list_print_uint(&output, uid);
                                 else { list_print_uint(&output, uid); list_print_literal(&output, "-"); list_print_uint(&output, uid_end); }
                                 if (deny_start) {
                                     list_print_literal(&output, " excl ");
@@ -292,7 +287,6 @@ void c_main(long *sp) {
                 "  nm clear all                            Clear all rules and UIDs\n"
                 "  nm version, v, -v                       Show driver version\n"
             );
-            exit_code = 1;
             break;
         }
     }

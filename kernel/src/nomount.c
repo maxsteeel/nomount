@@ -105,10 +105,10 @@ static bool nm_backing_gone(struct dentry *d)
     return !inode || inode->i_nlink == 0;
 }
 
-static int nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct nm_rule_info *out)
+static bool nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct nm_rule_info *out)
 {
     struct nm_rule *rule = nm_select_rule(leaf, fsuid);
-    if (!rule) return 0;
+    if (!rule) return false;
 
     out->flags = rule->flags;
     out->v_ino = leaf->v_ino;
@@ -119,7 +119,7 @@ static int nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct n
     if (out->leaf) atomic_inc(&out->leaf->refs);
     if (out->r_path.dentry) path_get(&out->r_path);
     if (out->this_dir) atomic_inc(&out->this_dir->refs);
-    return 1;
+    return true;
 }
 
 static int nm_rebind_path(struct nm_rule_info *rule_info)
@@ -407,7 +407,6 @@ negative_dentry:
     d_add(dentry, NULL);
     res = NULL;
 out:
-    kfree(info);
     nm_dir_put(rule_info->this_dir);
     nm_leaf_put(rule_info->leaf);
     if (rule_info->r_path.dentry) path_put(&rule_info->r_path);
@@ -421,8 +420,7 @@ static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentr
     struct nm_rule_info rule_info = {0};
     struct nm_dir_ops *nm_iop = NULL;
     struct dentry *res, *target;
-    int found = 0;
-    bool has_leaf = false;
+    bool found = false, has_leaf = false;
 
     rcu_read_lock();
     if (likely((nm_iop = nm_get_nm_iop(rcu_dereference(dir->i_op))))) {
@@ -437,7 +435,6 @@ static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentr
     }
     rcu_read_unlock();
 
-    if (found < 0) return ERR_PTR(found);
     if (found)
         return nm_materialize_rule(dir, dentry, &rule_info);
 
@@ -523,10 +520,6 @@ static int nm_hijacked_unlink(struct inode *dir, struct dentry *dentry)
 
     if (!mutex_trylock(&nm_mutex)) return -EBUSY;
     dir_node = rcu_dereference_protected(nm_iop->dir_node, lockdep_is_held(&nm_mutex));
-    if (unlikely(!dir_node || !rcu_access_pointer(dir_node->children))) {
-        mutex_unlock(&nm_mutex);
-        goto do_real_unlink;
-    }
     leaf = nm_find_leaf_in_dir(dir_node, dentry->d_name.name, dentry->d_name.len);
     if (unlikely(!leaf || !(rule = nm_select_rule(leaf, fsuid)) || (!rule->target_uid && !rule->uid_end))) {
         mutex_unlock(&nm_mutex);
@@ -855,9 +848,8 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     struct nm_rule_info rule_info = {0};
     struct inode *r_dir;
     struct dentry *res;
-    int found = 0;
     uid_t fsuid;
-    bool uid_blocked, has_leaf = false;
+    bool uid_blocked, found = false, has_leaf = false;
 
     if (unlikely(!info))
         goto negative_dentry;
@@ -868,7 +860,6 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     has_leaf = leaf != NULL;
     if (leaf && !uid_blocked) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
     rcu_read_unlock();
-    if (found < 0) return ERR_PTR(found);
     if (found) return nm_materialize_rule(dir, dentry, &rule_info);
 
     if (info->opaque && !uid_blocked)
