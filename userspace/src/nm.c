@@ -4,12 +4,8 @@
 #include "nm.h"
 
 /* --- MAIN --- */
-__attribute__((noreturn, used))
-void c_main(long *sp) {
-    long argc = *sp;
-    char **argv = (char **)(sp + 1);
+int main(int argc, char **argv) {
     int exit_code = 1;
-
     struct nm_workspace workspace;
     struct nm_payload *payload = &workspace.payload;
     struct nm_args args;
@@ -65,7 +61,7 @@ void c_main(long *sp) {
             if (p_count < step) { exit_code = 0; goto do_exit; }
 
             char *cwd_buf = workspace.cwd;
-            const char *cwd = (needs_cwd && sys3(SYS_GETCWD, (long)cwd_buf, PATH_MAX, 0) > 0) ? cwd_buf : "/";
+            const char *cwd = (needs_cwd && getcwd(cwd_buf, PATH_MAX)) ? cwd_buf : "/";
             int target_cmd = (args.action == ACTION_RULE_DEL) ? NM_CMD_DEL_RULE : NM_CMD_ADD_RULE;
 
             exit_code = 0;
@@ -292,6 +288,5 @@ void c_main(long *sp) {
     }
 
 do_exit:
-    sys1(SYS_EXIT, exit_code);
-    __builtin_unreachable();
+    return exit_code;
 }

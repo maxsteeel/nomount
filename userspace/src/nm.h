@@ -1,79 +1,11 @@
-/* --- ARCH --- */
-#if defined(__aarch64__)
-    #define SYS_GETCWD     17
-    #define SYS_READ       63
-    #define SYS_WRITE      64
-    #define SYS_EXIT       93
-    #define SYS_ADD_KEY    217
+#ifndef NM_H
+#define NM_H
 
-    __attribute__((always_inline)) static inline long sys1(long n, long a) {
-        register long x8 asm("x8") = n; register long x0 asm("x0") = a;
-        __asm__ __volatile__("svc 0" : "+r"(x0) : "r"(x8) : "memory", "cc");
-        return x0;
-    }
-    __attribute__((always_inline)) static inline long sys3(long n, long a, long b, long c) {
-        register long x8 asm("x8") = n; register long x0 asm("x0") = a; register long x1 asm("x1") = b; register long x2 asm("x2") = c;
-        __asm__ __volatile__("svc 0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : "memory", "cc");
-        return x0;
-    }
-    __attribute__((always_inline)) static inline long sys5(long n, long a, long b, long c, long d, long e) {
-        register long x8 asm("x8") = n; register long x0 asm("x0") = a; register long x1 asm("x1") = b;
-        register long x2 asm("x2") = c; register long x3 asm("x3") = d; register long x4 asm("x4") = e;
-        __asm__ __volatile__("svc 0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4) : "memory", "cc");
-        return x0;
-    }
-    __asm__( ".global _start\n" ".type _start, %function\n" "_start:\n" "mov x0, sp\n" "b c_main\n" );
-
-#elif defined(__arm__)
-    #define SYS_EXIT       1
-    #define SYS_READ       3
-    #define SYS_WRITE      4
-    #define SYS_GETCWD     183
-    #define SYS_ADD_KEY    309
-
-    __attribute__((always_inline)) static inline long sys1(long n, long a) {
-        register long r7 asm("r7") = n; register long r0 asm("r0") = a;
-        __asm__ __volatile__("svc 0" : "+r"(r0) : "r"(r7) : "memory", "cc");
-        return r0;
-    }
-    __attribute__((always_inline)) static inline long sys3(long n, long a, long b, long c) {
-        register long r7 asm("r7") = n; register long r0 asm("r0") = a; register long r1 asm("r1") = b; register long r2 asm("r2") = c;
-        __asm__ __volatile__("svc 0" : "+r"(r0) : "r"(r7), "r"(r1), "r"(r2) : "memory", "cc");
-        return r0;
-    }
-    __attribute__((always_inline)) static inline long sys5(long n, long a, long b, long c, long d, long e) {
-        register long r7 asm("r7") = n; register long r0 asm("r0") = a; register long r1 asm("r1") = b;
-        register long r2 asm("r2") = c; register long r3 asm("r3") = d; register long r4 asm("r4") = e;
-        __asm__ __volatile__("svc 0" : "+r"(r0) : "r"(r7), "r"(r1), "r"(r2), "r"(r3), "r"(r4) : "memory", "cc");
-        return r0;
-    }
-    __asm__( ".global _start\n" ".type _start, %function\n" "_start:\n" "mov r0, sp\n" "b c_main\n");
-
-#elif defined(__x86_64__)
-    #define SYS_READ       0
-    #define SYS_WRITE      1
-    #define SYS_EXIT       60
-    #define SYS_GETCWD     79
-    #define SYS_ADD_KEY    248
-
-    __attribute__((always_inline)) static inline long sys1(long n, long a) {
-        long ret; __asm__ __volatile__("syscall" : "=a"(ret) : "a"(n), "D"(a) : "rcx", "r11", "memory", "cc");
-        return ret;
-    }
-    __attribute__((always_inline)) static inline long sys3(long n, long a, long b, long c) {
-        long ret; __asm__ __volatile__("syscall" : "=a"(ret) : "a"(n), "D"(a), "S"(b), "d"(c) : "rcx", "r11", "memory", "cc");
-        return ret;
-    }
-    __attribute__((always_inline)) static inline long sys5(long n, long a, long b, long c, long d, long e) {
-        long ret; register long r10 asm("r10") = d; register long r8 asm("r8") = e;
-        __asm__ __volatile__("syscall" : "=a"(ret) : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8) : "rcx", "r11", "memory", "cc");
-        return ret;
-    }
-    __asm__( ".global _start\n" ".type _start, @function\n" "_start:\n" "mov %rsp, %rdi\n" "jmp c_main\n" );
-
-#else
-    #error "Arch not supported"
-#endif
+#include <unistd.h>
+#include <string.h>
+#include <stddef.h>
+#include <errno.h>
+#include <sys/syscall.h>
 
 /* --- DEFS --- */
 #define NOMOUNT_MAGIC_SIG 0x4E4F4D4F554E54ULL
@@ -162,10 +94,6 @@ struct nm_args {
 
 /* --- UTILS --- */
 #define noinline __attribute__((noinline))
-static noinline int strcmp(const char *s1, const char *s2) {
-    while (*s1 && (*s1 == *s2)) { s1++; s2++; }
-    return *(unsigned char *)s1 - *(unsigned char *)s2;
-}
 
 static noinline void parse_uid_range(const char *s, unsigned int *start, unsigned int *end) {
     unsigned int first = 0, last = 0;
@@ -220,10 +148,17 @@ static noinline void parse_arguments(long argc, char **argv, struct nm_args *par
     } else if (strcmp(c1, "version") == 0 || strcmp(c1, "v") == 0 || strcmp(c1, "-v") == 0) { parsed_args->action = ACTION_VERSION; }
 }
 
-static noinline void print_strn(const char *s, unsigned long len) {
-    if (len > 0) sys3(SYS_WRITE, 1, (long)s, len);
+static noinline void print_strn(const char *s, size_t len) {
+    size_t off = 0;
+    while (off < len) {
+        ssize_t n = write(1, s + off, len - off);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        off += n;
+    }
 }
-
 #define print_literal(s) print_strn((s), sizeof(s) - 1)
 
 struct nm_output {
@@ -232,12 +167,14 @@ struct nm_output {
 };
 
 static noinline void list_flush(struct nm_output *out) {
-    unsigned int sent = 0;
-    while (sent < out->used) {
-        long n = sys3(SYS_WRITE, 1, (long)(out->buffer + sent), out->used - sent);
-        if (n == -NM_EINTR) continue;
-        if (n <= 0) break;
-        sent += n;
+    size_t off = 0;
+    while (off < out->used) {
+        ssize_t n = write(1, out->buffer + off, out->used - off);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        off += n;
     }
     out->used = 0;
 }
@@ -299,8 +236,10 @@ static noinline char* resolve_path(char *p, char *end, const char *cwd, const ch
 }
 
 static noinline int nm_send_payload(struct nm_payload *payload) {
-    payload->status = -1; 
+    payload->status = -1;
     unsigned long ptr = (unsigned long)payload;
-    sys5(SYS_ADD_KEY, (long)"nomount", (long)"trigger", (long)&ptr, sizeof(ptr), -1);
+    syscall(SYS_add_key, "nomount", "trigger", &ptr, sizeof(ptr), -1);
     return payload->status;
 }
+
+#endif // #ifndef NM_H
