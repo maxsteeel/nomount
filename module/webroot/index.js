@@ -155,7 +155,6 @@ function renderLanguagePicker() {
 const MOD_DIR = "/data/adb/modules";
 const NM_DATA = "/data/adb/nomount";
 const NM_BIN = "/data/adb/modules/nomount/bin/nm";
-const RULE_PATHS = `${MOD_DIR}/nomount/rule-paths.sh`;
 const FILES = { disable: `${NM_DATA}/disable`, exclusions: `${NM_DATA}/.exclusion_list.json`, isolated: `${NM_DATA}/.block_isolated_uids`, theme: `${NM_DATA}/theme.json`, dump_rules: `${NM_DATA}/dump_rules` };
 const APP_ICON_FALLBACK = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
 const viewLoadState = { 'view-home': false, 'view-modules': false, 'view-exclusions': false, 'view-options': false };
@@ -744,6 +743,29 @@ function applyHomeData(data) {
 // Modules
 let currentRenderId = 0;
 const TARGET_PARTITIONS = "system system_ext vendor odm product apex oem optics prism mi_ext my_bigball my_carrier my_company my_engineering my_heytap my_manifest my_preload my_product my_region my_reserve my_stock";
+
+const NM_AWK_SCAN_LINKS = `
+{
+  link = $1
+  real = $2
+  isdir = $3
+  mod = link
+  sub(/\\/.*/, "", mod)
+  v = substr(link, length(mod) + 2)
+  if (substr(v, 1, 7) == "system/") {
+    rest = substr(v, 8)
+    idx = index(rest, "/")
+    if (idx > 0) p = substr(rest, 1, idx - 1)
+    else p = rest
+    if (p == "vendor" || p == "system_ext" || p == "product" || p == "odm" ||
+        p == "apex" || p == "oem" || p == "optics" || p == "prism" ||
+        p == "mi_ext" || p ~ /^my_/) {
+      v = p substr(v, 8 + length(p))
+    }
+  }
+  printf "@@S\\t%s\\t/%s\\t%s\\t%s\\n", mod, v, real, isdir
+}`;
+
 async function readModules(onlyMods = null) {
     const filter = onlyMods ? `case " ${onlyMods.join(' ')} " in *" $mod "*) ;; *) continue ;; esac` : '';
     const script = `
@@ -767,8 +789,11 @@ async function readModules(onlyMods = null) {
             printf '@@M\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$mod" "$name" "$disable" "$skip" "$root"
         done
         if [ "$#" -gt 0 ]; then
-            sh "${RULE_PATHS}" links "$@" || exit 1
-            find -H "$@" -type l -exec sh "${RULE_PATHS}" scan {} + || exit 1
+            find -H "$@" -type l -print 2>/dev/null | while IFS= read -r link; do
+                real=$(readlink -f "$link") || continue
+                [ -d "$link" ] && isdir=true || isdir=false
+                printf '%s\\t%s\\t%s\\n' "$link" "$real" "$isdir"
+            done | awk '${NM_AWK_SCAN_LINKS}'
         fi
     `;
     const { errno, stdout, stderr } = await exec(script);
@@ -874,32 +899,9 @@ readInitialModules();
 
 async function loadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
-    const script = `
-        cd "${modPath}" || { echo "nm_load_status=1" >&2; exit 0; }
-        valid_dirs=""
-        for p in ${TARGET_PARTITIONS}; do [ -d "$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && valid_dirs="$valid_dirs $p"; done
-        [ -z "$valid_dirs" ] && { echo "nm_load_status=0" >&2; exit 0; }
-        status=0
-
-        find -L $valid_dirs '(' -type d -o -type c -o -name ".replace" -o -name ".remove" ')' \\
-            -exec sh "${RULE_PATHS}" path "${modPath}" {} + 2>/dev/null \\
-            | xargs -0 -r -n 200 ${NM_BIN} rule add --whiteout
-        st=$?; [ "$st" -ne 0 ] && status=$st
-
-        find -L $valid_dirs '(' -type d -o -name ".replace" ')' \\
-            -exec sh "${RULE_PATHS}" opaque "${modPath}" {} + 2>/dev/null \\
-            | xargs -0 -r -n 200 ${NM_BIN} rule add --opaque
-        st=$?; [ "$st" -ne 0 ] && status=$st
-
-        find -L $valid_dirs '(' -type f -o -type l ')' ! -name ".replace" ! -name ".remove" \\
-            -exec sh "${RULE_PATHS}" pair "${modPath}" {} + 2>/dev/null \\
-            | xargs -0 -r -n 200 ${NM_BIN} rule add
-        st=$?; [ "$st" -ne 0 ] && status=$st
-
-        echo "nm_load_status=$status" >&2
-    `;
-
-    const result = await exec(script);
+    const scriptDir = `${MOD_DIR}/nomount/scripts`;
+    const cmd = `sh "${scriptDir}/load_module.sh" "${modPath}" "${NM_BIN}" "${TARGET_PARTITIONS}" "${scriptDir}"`;
+    const result = await exec(cmd);
     const m = (result.stderr || '').match(/nm_load_status=(\d+)/);
     if (!m) throw new Error('load script did not report status');
     if (parseInt(m[1], 10) !== 0) throw new Error(result.stderr || `load failed (status ${m[1]})`);
@@ -907,22 +909,9 @@ async function loadModule(modId) {
 
 async function unloadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
-    const script = `
-        cd "${modPath}" || { echo "nm_unload_status=1" >&2; exit 0; }
-        valid_dirs=""
-        for p in ${TARGET_PARTITIONS}; do [ -d "$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && valid_dirs="$valid_dirs $p"; done
-        [ -z "$valid_dirs" ] && { echo "nm_unload_status=0" >&2; exit 0; }
-        status=0
-
-        find -L $valid_dirs '(' -type f -o -type l -o -type c -o -type d ')' \\
-            -exec sh "${RULE_PATHS}" del "${modPath}" {} + 2>/dev/null \\
-            | xargs -0 -r -n 200 ${NM_BIN} rule del
-        st=$?; [ "$st" -ne 0 ] && status=$st
-
-        echo "nm_unload_status=$status" >&2
-    `;
-
-    const result = await exec(script);
+    const scriptDir = `${MOD_DIR}/nomount/scripts`;
+    const cmd = `sh "${scriptDir}/unload_module.sh" "${modPath}" "${NM_BIN}" "${TARGET_PARTITIONS}" "${scriptDir}"`;
+    const result = await exec(cmd);
     const m = (result.stderr || '').match(/nm_unload_status=(\d+)/);
     if (!m) throw new Error('unload script did not report status');
     if (parseInt(m[1], 10) !== 0) throw new Error(result.stderr || `unload failed (status ${m[1]})`);
@@ -1511,7 +1500,7 @@ function initOptionsUI() {
         btnDumpNow.onclick = async () => {
             btnDumpNow.disabled = true;
             try {
-                const r = await exec(`sh ${MOD_DIR}/nomount/dump_rules.sh by webui`);
+                const r = await exec(`sh ${MOD_DIR}/nomount/scripts/dump_rules.sh by webui`);
                 if (r.errno !== 0) throw new Error(r.stderr || 'dump failed');
                 showToast(translate('dump_done'));
             } catch { showToast(translate('dump_failed')); }

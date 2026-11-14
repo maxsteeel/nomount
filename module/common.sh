@@ -108,15 +108,6 @@ ensure_lkm_loaded() {
     return 0
 }
 
-add_rule_and_log() {
-    local out rc
-    out=$(xargs -0 -r -n 200 "$LOADER" rule add "$@" 2>&1)
-    rc=$?
-    if [ "$rc" -ne 0 ]; then
-        klogerr "rule add $* failed rc=$rc: $(echo "$out" | head -n 3 | tr '\n' ' ' | cut -c1-300)"
-    fi
-}
-
 dump_all_rules_logcat() {
     log -t nomount -p i "rules dump started (triggered $*)"
 

@@ -43,23 +43,8 @@ for mod_path in "$MODULES_DIR"/*; do
         continue
     fi
 
-    for partition in $TARGET_PARTITIONS; do
-        if [ -d "$mod_path/$partition" ]; then
-            [ -d "/$partition" ] || [ -d "/system/$partition" ] || continue
-            klog "mounting module $mod_name (/$partition)"
-            find -L "$mod_path/$partition" \( -type d -o -type c -o -name ".replace" -o -name ".remove" \) \
-                -exec sh "$MODDIR/rule-paths.sh" path "$mod_path" {} + 2>/dev/null \
-                | add_rule_and_log --whiteout || status=1
-
-            find -L "$mod_path/$partition" \( -type d -o -name ".replace" \) \
-                -exec sh "$MODDIR/rule-paths.sh" opaque "$mod_path" {} + 2>/dev/null \
-                | add_rule_and_log --opaque || status=1
-
-            find -L "$mod_path/$partition" \( -type f -o -type l \) ! -name ".replace" ! -name ".remove" \
-                -exec sh "$MODDIR/rule-paths.sh" pair "$mod_path" {} + 2>/dev/null \
-                | add_rule_and_log || status=1
-        fi
-    done
+    klog "loading module $mod_name"
+    sh "$MODDIR/scripts/load_module.sh" "$mod_path" "$MODDIR/bin/nm" "$TARGET_PARTITIONS" "$MODDIR/scripts" || status=1
 done
 
 if [ "$status" -eq 0 ]; then
