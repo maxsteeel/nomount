@@ -7,6 +7,10 @@ on:
         description: 'Force build all KMIs'
         default: false
         type: boolean
+      commit:
+        description: 'Commit SHA to build'
+        default: ''
+        type: string
   workflow_dispatch:
     inputs:
       kmi_android12_5_10:
@@ -106,6 +110,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.commit || github.sha }}
           fetch-depth: 0
 
       - name: Validate DDK environment
