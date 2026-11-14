@@ -34,6 +34,23 @@ rm -rf "$MODPATH"/bin/nm-* "$MODPATH"/bin/lkmloader-*
 
 try_load_ko() {
   local output
+  local root_cmd=""
+
+  if command -v ksud >/dev/null 2>&1 && ksud -h 2>&1 | grep -qE '(^|[[:space:]])insmod([[:space:]]|$)'; then
+    root_cmd="ksud"
+  elif command -v apd >/dev/null 2>&1 && apd -h 2>&1 | grep -qE '(^|[[:space:]])insmod([[:space:]]|$)'; then
+    root_cmd="apd"
+  fi
+
+  if [ -n "$root_cmd" ]; then
+    if output=$("$root_cmd" insmod "$1" 2>&1) && "$MODPATH/bin/nm" version >/dev/null 2>&1; then
+      return 0
+    fi
+    if echo "$output" | grep -qi "File exists"; then
+      return 0
+    fi
+    ui_print "  [!] $root_cmd insmod failed: $output"
+  fi
 
   if output=$("$MODPATH/lkm/lkmloader" "$1" 2>&1) && "$MODPATH/bin/nm" version >/dev/null 2>&1; then
     return 0
@@ -43,7 +60,7 @@ try_load_ko() {
     return 0
   fi
 
-  ui_print "  $output"
+  ui_print "  [!] lkmloader failed: $output"
   return 1
 }
 
