@@ -256,6 +256,14 @@ int main(int argc, char **argv) {
             break;
         }
 
+        case ACTION_MODULE_LOAD:
+            exit_code = cmd_module_load_or_unload(&workspace, &args, 1);
+            break;
+
+        case ACTION_MODULE_UNLOAD:
+            exit_code = cmd_module_load_or_unload(&workspace, &args, 0);
+            break;
+
         case ACTION_NONE:
         default: {
             print_literal(
@@ -273,6 +281,12 @@ int main(int argc, char **argv) {
                 "  nm rule del [same UID options] <vpath>  Delete a rule matching the UID scope\n"
                 "  nm rule list [--json]                   List all active rules\n"
                 "  nm rule clear                           Clear all rules\n\n"
+                "Module Commands:\n"
+                "  nm module load <mod_path> [--targets=\"system vendor ...\"]\n"
+                "                                          Inject every partition of a module\n"
+                "                                          (default: all known partitions)\n"
+                "  nm module unload <mod_path> [same --targets]\n"
+                "                                          Remove all rules belonging to a module\n"
                 "UID Commands (Exceptions):\n"
                 "  nm uid add <uid>                        Add app UID to exception list\n"
                 "  nm uid del <uid>                        Remove app UID from exceptions\n"
