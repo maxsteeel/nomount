@@ -264,6 +264,10 @@ int main(int argc, char **argv) {
             exit_code = cmd_module_load_or_unload(&workspace, &args, 0);
             break;
 
+        case ACTION_MODULE_LIST:
+            exit_code = cmd_module_list(&workspace, &args);
+            break;
+
         case ACTION_NONE:
         default: {
             print_literal(
@@ -287,6 +291,8 @@ int main(int argc, char **argv) {
                 "                                          (default: all known partitions)\n"
                 "  nm module unload <mod_path> [same --targets]\n"
                 "                                          Remove all rules belonging to a module\n"
+                "  nm module list [--json] [--only=<a,b,...>]\n"
+                "                                          List modules, rules and links\n\n"
                 "UID Commands (Exceptions):\n"
                 "  nm uid add <uid>                        Add app UID to exception list\n"
                 "  nm uid del <uid>                        Remove app UID from exceptions\n"
