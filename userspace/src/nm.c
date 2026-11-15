@@ -12,6 +12,10 @@ int main(int argc, char **argv) {
     parse_arguments(argc, argv, &args);
     payload->magic = NOMOUNT_MAGIC_SIG;
 
+    if (args.action == ACTION_MODULE_LIST) return cmd_module_list(&workspace, &args);
+    if (args.action == ACTION_MODULE_LOAD || args.action == ACTION_MODULE_UNLOAD)
+        return cmd_module_load_or_unload(&workspace, &args, args.action == ACTION_MODULE_LOAD);
+
     int p_count = 0, needs_cwd = 0;
     if (argc >= 2) {
         for (int i = args.data_start_idx; i < argc; i++) {
@@ -68,46 +72,12 @@ int main(int argc, char **argv) {
             payload->cmd = target_cmd;
             payload->arg1 = 0;
             payload->data_size = 0;
-            char *cursor = payload->buffer;
-
+            unsigned flags = (args.is_whiteout ? NM_FLAG_WHITEOUT : 0) | (args.is_opaque ? NM_FLAG_OPAQUE : 0);
             for (int i = 0; i + step - 1 < p_count; i += step) {
-                int header_size = (target_cmd == NM_CMD_ADD_RULE) ? sizeof(struct nm_rule_hdr) : sizeof(struct nm_del_hdr);
-                char *end = payload->buffer + sizeof(payload->buffer);
-                if (end - cursor < header_size) goto batch_full;
-                char *v = cursor + header_size;
-                char *v_end = resolve_path(v, end, cwd, argv[i]);
-                if (!v_end) goto batch_full;
-                char *r_end = v_end;
-                if (step == 2 && !(r_end = resolve_path(v_end, end, cwd, argv[i+1]))) goto batch_full;
-                int v_len = v_end - v, r_len = r_end - v_end;
-
-                if (target_cmd == NM_CMD_ADD_RULE) {
-                    struct nm_rule_hdr *h = (void *)cursor;
-                    h->flags = (args.is_whiteout ? 4 : 0) | (args.is_opaque ? 8 : 0);
-                    h->uid = args.target_uid; h->uid_end = args.target_uid_end;
-                    h->deny_start = args.deny_start; h->deny_end = args.deny_end;
-                    h->v_len = v_len; h->r_len = r_len;
-                } else {
-                    struct nm_del_hdr *h = (void *)cursor;
-                    h->uid = args.target_uid; h->v_len = v_len;
-                    h->uid_end = args.target_uid_end;
-                    h->deny_start = args.deny_start; h->deny_end = args.deny_end;
-                }
-                cursor = r_end;
-                continue;
-            batch_full:
-                if (cursor == payload->buffer) { exit_code = 3; continue; }
-                payload->data_size = cursor - payload->buffer;
-                exit_code |= (nm_send_payload(payload) < 0);
-                payload->arg1 = 0;
-                cursor = payload->buffer;
-                i -= step;
+                int rc = nm_queue_rule(payload, &args, flags, cwd, argv[i], step == 2 ? argv[i + 1] : NULL);
+                exit_code |= rc == -E2BIG ? 3 : rc < 0;
             }
-
-            if (cursor > payload->buffer) {
-                payload->data_size = cursor - payload->buffer;
-                exit_code |= (nm_send_payload(payload) < 0);
-            }
+            exit_code |= nm_flush_rules(payload) < 0;
             break;
         }
 
@@ -171,7 +141,7 @@ int main(int argc, char **argv) {
 
         case ACTION_RULE_LIST:
         case ACTION_UID_LIST: {
-            struct nm_output output = { workspace.cwd, 0 };
+            struct nm_output output = { workspace.cwd, 0, STDOUT_FILENO };
             int is_uids = (args.action == ACTION_UID_LIST);
             if (is_uids) args.is_json = 1;
             if (args.is_json) list_print_literal(&output, "[\n");
@@ -201,9 +171,9 @@ int main(int argc, char **argv) {
 
                         char *v = data + pos; pos += vlen;
                         char *r = data + pos; pos += rlen;
-                        int is_white_flag  = (flags & 4);
-                        int is_virtual_dir = (flags & 2);
-                        int is_opaque      = (flags & 8);
+                        int is_white_flag  = (flags & NM_FLAG_WHITEOUT);
+                        int is_virtual_dir = (flags & NM_FLAG_VIRTUAL_DIR);
+                        int is_opaque      = (flags & NM_FLAG_OPAQUE);
 
                         if (args.is_json) {
                             list_print_literal_offset(&output, ",\n  {\n    \"virtual\": \"", offset); offset = 0;
@@ -255,18 +225,6 @@ int main(int argc, char **argv) {
             list_flush(&output);
             break;
         }
-
-        case ACTION_MODULE_LOAD:
-            exit_code = cmd_module_load_or_unload(&workspace, &args, 1);
-            break;
-
-        case ACTION_MODULE_UNLOAD:
-            exit_code = cmd_module_load_or_unload(&workspace, &args, 0);
-            break;
-
-        case ACTION_MODULE_LIST:
-            exit_code = cmd_module_list(&workspace, &args);
-            break;
 
         case ACTION_NONE:
         default: {
