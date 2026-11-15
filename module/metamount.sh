@@ -24,7 +24,8 @@ if ! _lock_acquire "$_lock_dir" 120; then
     klogerr "inject lock timed out after 120s"
     exit 1
 fi
-trap '_lock_release "$_lock_dir"' EXIT INT TERM
+trap '_lock_release "$_lock_dir"' EXIT
+trap '_lock_release "$_lock_dir"; exit 1' INT TERM
 
 klog "Injection started"
 set -o pipefail

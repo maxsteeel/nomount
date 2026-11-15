@@ -50,10 +50,14 @@ _lock_acquire() {
     while ! mkdir "$lockdir" 2>/dev/null; do
         local pid
         pid=$(cat "$lockdir/pid" 2>/dev/null)
-        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
-            klogwarn "cleaning stale lock $lockdir (pid $pid is dead)"
+        if [ -n "$pid" ]; then
+            if ! kill -0 "$pid" 2>/dev/null; then
+                klogwarn "cleaning stale lock $lockdir (pid $pid is dead)"
+                rm -rf "$lockdir"
+            fi
+        elif [ "$n" -ge 2 ]; then
+            klogwarn "cleaning orphan lock $lockdir (no owner)"
             rm -rf "$lockdir"
-            continue
         fi
         n=$((n + 1))
         if [ "$n" -ge "$timeout" ]; then
