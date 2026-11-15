@@ -749,31 +749,25 @@ async function readModules(onlyMods = null) {
     if (errno) throw new Error(stderr || 'Failed to read modules');
 
     const data = JSON.parse(stdout);
-    const modules = new Map();
+    const modules = [];
+    const roots = new Map();
+    const links = new Map();
     for (const m of data.mods) {
-        modules.set(m.modId, {
+        if (!m.hasInjectable) continue;
+        const mod = {
             modId: m.modId,
             realName: m.realName,
             disable: m.disable,
             skipMount: m.skipMount,
             fileCount: 0,
-        });
-    }
-
-    const roots = new Map();
-    for (const m of data.mods) {
+        };
+        modules.push(mod);
         if (!roots.has(m.root)) roots.set(m.root, []);
-        roots.get(m.root).push(modules.get(m.modId));
-    }
-
-    const links = new Map();
-    for (const link of data.links) {
-        if (!links.has(link.virtual)) links.set(link.virtual, []);
-        links.get(link.virtual).push({
-            mod: modules.get(link.modId),
-            real: link.real,
-            dir: link.dir,
-        });
+        roots.get(m.root).push(mod);
+        for (const link of m.links) {
+            if (!links.has(link.virtual)) links.set(link.virtual, []);
+            links.get(link.virtual).push({ mod, real: link.real, dir: link.dir });
+        }
     }
 
     for (const { virtual, real } of data.rules) {
@@ -791,13 +785,13 @@ async function readModules(onlyMods = null) {
         for (const mod of owners) mod.fileCount++;
     }
 
-    for (const mod of modules.values()) {
+    for (const mod of modules) {
         const { fileCount, disable, skipMount } = mod;
         mod.statusKey = fileCount > 0
             ? ((disable || skipMount) ? 'status_loaded' : 'status_active')
             : (disable ? 'status_disabled' : (skipMount ? 'status_skipped' : 'status_inactive'));
     }
-    return [...modules.values()];
+    return modules;
 }
 
 function buildModuleCard({ modId, realName, disable, skipMount, fileCount, statusKey }) {

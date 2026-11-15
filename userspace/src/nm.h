@@ -112,9 +112,9 @@ struct nm_args {
 struct nm_walk {
     struct nm_payload *payload;
     struct nm_output *output;
-    const char *mod_id;
     size_t root_len;
     int first_link;
+    int has_injectable;
     char path[PATH_MAX];
 };
 
@@ -481,15 +481,6 @@ static int nm_check_partition(const char *mod_path, const char *part_name) {
     return nm_dir_exists(path);
 }
 
-static int nm_mod_has_injectable(const char *mod_path, const char *targets) {
-    char part[PATH_MAX];
-    int rc;
-    while ((rc = nm_next_partition(&targets, part)) > 0) {
-        if ((rc = nm_check_partition(mod_path, part))) return rc;
-    }
-    return rc;
-}
-
 /* --- module traversal --- */
 
 static int nm_marker(int fd, const char *name) {
@@ -527,9 +518,7 @@ static noinline int nm_emit_link(struct nm_walk *ctx, int is_dir) {
     struct nm_output *out = ctx->output;
     if (!ctx->first_link) list_print_literal(out, ",");
     ctx->first_link = 0;
-    list_print_literal(out, "\n    {\"modId\": \"");
-    list_print_json_strn(out, ctx->mod_id, strlen(ctx->mod_id));
-    list_print_literal(out, "\", \"virtual\": \"");
+    list_print_literal(out, "\n        {\"virtual\": \"");
     list_print_json_strn(out, virtual, strlen(virtual));
     list_print_literal(out, "\", \"real\": \"");
     list_print_json_strn(out, target, strlen(target));
@@ -588,6 +577,7 @@ static int nm_walk_partitions(struct nm_walk *ctx, const char *targets) {
     while ((rc = nm_next_partition(&targets, part)) > 0) {
         if ((rc = nm_check_partition(ctx->path, part)) < 0) return rc;
         if (!rc) continue;
+        ctx->has_injectable = 1;
         rc = nm_path_join(ctx->path + ctx->root_len, sizeof(ctx->path) - ctx->root_len, "", part);
         if (rc) return rc;
         rc = nm_walk_module(ctx, AT_FDCWD, ctx->path, DT_UNKNOWN, NULL);
@@ -626,7 +616,6 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
     if (!d) return nm_error("module list", -errno);
     struct nm_output out = { ws->cwd, 0, STDOUT_FILENO };
     list_print_literal(&out, "{\n  \"mods\": [");
-    char mod_ids[64][64];
     int mod_count = 0, rc = 0;
     const char *targets = args->mod_targets ? args->mod_targets : NM_DEFAULT_TARGETS;
     for (;;) {
@@ -637,7 +626,8 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
         if (mod_id[0] == '.' || !strcmp(mod_id, "nomount")) continue;
         if (args->mod_only && !nm_mod_in_list(mod_id, args->mod_only)) continue;
         if (mod_count >= 64) break;
-        char mod_path[PATH_MAX], prop_path[PATH_MAX], name[256], real_root[PATH_MAX];
+        char mod_path[PATH_MAX], prop_path[PATH_MAX], name[256];
+        struct nm_walk ctx = { .output = &out, .first_link = 1 };
         if ((rc = nm_path_join(mod_path, sizeof(mod_path), modules_dir, mod_id))) break;
         if ((rc = nm_dir_exists(mod_path)) < 0) break;
         if (!rc) continue;
@@ -645,9 +635,8 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
         rc = nm_read_module_name(prop_path, name, sizeof(name));
         if (rc == -ENOENT) { rc = 0; continue; }
         if (rc) break;
-        int has_injectable = nm_mod_has_injectable(mod_path, targets);
-        if (has_injectable < 0) { rc = has_injectable; break; }
-        if (!realpath(mod_path, real_root)) { rc = -errno; break; }
+        if (!realpath(mod_path, ctx.path)) { rc = -errno; break; }
+        ctx.root_len = strlen(ctx.path);
         if ((rc = nm_path_join(prop_path, sizeof(prop_path), mod_path, "disable"))) break;
         int disable = access(prop_path, F_OK) == 0;
         if (!disable && errno != ENOENT && errno != ENOTDIR) { rc = -errno; break; }
@@ -664,11 +653,13 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
         if (skip) list_print_literal(&out, ", \"skipMount\": true");
         else list_print_literal(&out, ", \"skipMount\": false");
         list_print_literal(&out, ", \"root\": \"");
-        list_print_json_strn(&out, real_root, strlen(real_root));
-        if (has_injectable) list_print_literal(&out, "\", \"hasInjectable\": true}");
-        else list_print_literal(&out, "\", \"hasInjectable\": false}");
-        strncpy(mod_ids[mod_count++], mod_id, 63);
-        mod_ids[mod_count - 1][63] = '\0';
+        list_print_json_strn(&out, ctx.path, ctx.root_len);
+        list_print_literal(&out, "\", \"links\": [");
+        rc = nm_walk_partitions(&ctx, targets);
+        if (ctx.has_injectable) list_print_literal(&out, "\n      ], \"hasInjectable\": true}");
+        else list_print_literal(&out, "\n      ], \"hasInjectable\": false}");
+        mod_count++;
+        if (rc) break;
     }
     closedir(d);
     list_print_literal(&out, "\n  ],\n  \"rules\": [");
@@ -695,16 +686,6 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
             list_print_literal(&out, "\"}");
         }
         if (ws->payload.arg1 == ~0U) break;
-    }
-    list_print_literal(&out, "\n  ],\n  \"links\": [");
-    struct nm_walk ctx = { .output = &out, .first_link = 1 };
-    for (int m = 0; m < mod_count && !rc; m++) {
-        char mod_path[PATH_MAX];
-        if ((rc = nm_path_join(mod_path, sizeof(mod_path), modules_dir, mod_ids[m]))) break;
-        if (!realpath(mod_path, ctx.path)) { rc = -errno; break; }
-        ctx.mod_id = mod_ids[m];
-        ctx.root_len = strlen(ctx.path);
-        rc = nm_walk_partitions(&ctx, targets);
     }
     list_print_literal(&out, "\n  ]\n}\n");
     list_flush(&out);
