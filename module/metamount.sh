@@ -3,9 +3,6 @@ MODDIR=${0%/*}
 . "$MODDIR/common.sh"
 
 MODULES_DIR="/data/adb/modules"
-TARGET_PARTITIONS="system system_ext vendor odm product apex oem optics prism
-                    mi_ext my_bigball my_carrier my_company my_engineering my_heytap
-                    my_manifest my_preload my_product my_region my_reserve my_stock"
 
 [ -d "$NOMOUNT_DATA" ] || mkdir -p "$NOMOUNT_DATA"
 
@@ -44,7 +41,7 @@ for mod_path in "$MODULES_DIR"/*; do
     fi
 
     klog "loading module $mod_name"
-    sh "$MODDIR/scripts/load_module.sh" "$mod_path" "$MODDIR/bin/nm" "$TARGET_PARTITIONS" "$MODDIR/scripts" || status=1
+    "$MODDIR/bin/nm" module load "$mod_path" || status=1
 done
 
 if [ "$status" -eq 0 ]; then
