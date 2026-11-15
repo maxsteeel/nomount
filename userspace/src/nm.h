@@ -2,6 +2,7 @@
 #define NM_H
 
 #include <unistd.h>
+#include <fcntl.h>
 #include <string.h>
 #include <stddef.h>
 #include <errno.h>
@@ -48,6 +49,7 @@ enum nm_cli_action {
     ACTION_BLOCK_ISOLATED_UIDS,
     ACTION_MODULE_LOAD,
     ACTION_MODULE_UNLOAD,
+    ACTION_MODULE_LIST,
 };
 
 struct nm_payload {
@@ -99,6 +101,7 @@ struct nm_args {
     unsigned int deny_end;
     const char *mod_path;
     const char *mod_targets;     /* space-separated, NULL = default */
+    const char *mod_only;        /* comma-separated, NULL = all */
 };
 
 #define NM_DEFAULT_TARGETS \
@@ -136,6 +139,7 @@ static noinline void parse_arguments(long argc, char **argv, struct nm_args *par
     parsed_args->data_start_idx = 2;
     parsed_args->mod_path = NULL;
     parsed_args->mod_targets = NULL;
+    parsed_args->mod_only = NULL;
 
     if (argc < 2) return;
 
@@ -164,10 +168,12 @@ static noinline void parse_arguments(long argc, char **argv, struct nm_args *par
         const char *c2 = argv[2];
         if (strcmp(c2, "load") == 0) parsed_args->action = ACTION_MODULE_LOAD;
         else if (strcmp(c2, "unload") == 0) parsed_args->action = ACTION_MODULE_UNLOAD;
+        else if (strcmp(c2, "list") == 0) parsed_args->action = ACTION_MODULE_LIST;
         parsed_args->data_start_idx = 3;
         for (int i = 3; i < argc; i++) {
             const char *a = argv[i];
             if (!strncmp(a, "--targets=", 10)) parsed_args->mod_targets = a + 10;
+            else if (!strncmp(a, "--only=", 7)) parsed_args->mod_only = a + 7;
             else if (strcmp(a, "--json") == 0) parsed_args->is_json = 1;
             else if (!parsed_args->mod_path) parsed_args->mod_path = a;
         }
@@ -380,6 +386,85 @@ static int nm_emit_pair(struct nm_walk *ctx, unsigned int flags, const char *rel
     return nm_emit(ctx, flags, vpath, strlen(vpath), abs, strlen(abs));
 }
 
+/* --- module list helpers --- */
+
+static noinline int nm_mod_in_list(const char *mod_id, const char *list) {
+    size_t id_len = strlen(mod_id);
+    const char *p = list;
+    while (*p) {
+        const char *comma = strchr(p, ',');
+        size_t plen = comma ? (size_t)(comma - p) : strlen(p);
+        if (plen == id_len && !memcmp(p, mod_id, id_len)) return 1;
+        if (!comma) break;
+        p = comma + 1;
+    }
+    return 0;
+}
+
+static noinline int nm_read_module_name(const char *prop_path, char *name_out, size_t name_size) {
+    name_out[0] = '\0';
+    int fd = open(prop_path, O_RDONLY);
+    if (fd < 0) return -1;
+
+    char buf[512];
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    buf[n] = '\0';
+
+    const char *p = buf;
+    while (*p) {
+        if (!strncmp(p, "name=", 5)) {
+            const char *val = p + 5;
+            const char *end = strchr(val, '\n');
+            if (!end) end = buf + n;
+            size_t len = end - val;
+            if (len >= name_size) len = name_size - 1;
+            memcpy(name_out, val, len);
+            name_out[len] = '\0';
+            return 0;
+        }
+        p = strchr(p, '\n');
+        if (!p) break;
+        p++;
+    }
+    return -1;
+}
+
+static noinline int nm_check_partition(const char *mod_path, const char *part_name) {
+    char path[PATH_MAX];
+    struct stat st;
+
+    if (nm_path_join(path, sizeof(path), mod_path, part_name)) return 0;
+    if (stat(path, &st) < 0 || !S_ISDIR(st.st_mode)) return 0;
+
+    if (nm_path_join(path, sizeof(path), "", part_name) == 0 &&
+        stat(path, &st) == 0 && S_ISDIR(st.st_mode))
+        return 1;
+
+    if (nm_path_join(path, sizeof(path), "/system", part_name) == 0 &&
+        stat(path, &st) == 0 && S_ISDIR(st.st_mode))
+        return 1;
+
+    return 0;
+}
+
+static noinline int nm_mod_has_injectable(const char *mod_path, const char *targets) {
+    char buf[PATH_MAX];
+    strncpy(buf, targets, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    char *save = buf;
+    char *p;
+    while ((p = strchr(save, ' '))) {
+        *p = '\0';
+        if (*save && nm_check_partition(mod_path, save)) return 1;
+        save = p + 1;
+    }
+    if (*save && nm_check_partition(mod_path, save)) return 1;
+    return 0;
+}
+
 /* --- load walker --- */
 
 static int walk_load(struct nm_walk *ctx, const char *abs_dir, const char *rel_dir) {
@@ -490,6 +575,57 @@ static int walk_unload(struct nm_walk *ctx, const char *abs_dir, const char *rel
     return 0;
 }
 
+/* --- list walker --- */
+
+static int walk_links(struct nm_output *out, const char *abs_dir, const char *rel_dir, const char *mod_id, int *first, int depth) {
+    if (depth > 16) return 0;
+    DIR *d = opendir(abs_dir);
+    if (!d) return 0;
+
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        const char *name = e->d_name;
+        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
+
+        char abs_entry[PATH_MAX];
+        char rel_entry[PATH_MAX];
+        if (nm_path_join(abs_entry, sizeof(abs_entry), abs_dir, name)) continue;
+        if (nm_path_join(rel_entry, sizeof(rel_entry), rel_dir, name)) continue;
+
+        struct stat lst;
+        if (lstat(abs_entry, &lst) < 0) continue;
+
+        if (S_ISLNK(lst.st_mode)) {
+            char target[PATH_MAX];
+            ssize_t tlen = readlink(abs_entry, target, sizeof(target) - 1);
+            if (tlen < 0) continue;
+            target[tlen] = '\0';
+
+            struct stat tgt;
+            int isdir = (stat(abs_entry, &tgt) == 0 && S_ISDIR(tgt.st_mode));
+
+            if (!*first) list_print_literal(out, ",");
+            *first = 0;
+            list_print_literal(out, "\n    {\"modId\": \"");
+            list_print_json_strn(out, mod_id, strlen(mod_id));
+            list_print_literal(out, "\", \"virtual\": \"/");
+            list_print_json_strn(out, rel_entry, strlen(rel_entry));
+            list_print_literal(out, "\", \"real\": \"");
+            list_print_json_strn(out, target, (size_t)tlen);
+            if (isdir)
+                list_print_literal(out, "\", \"dir\": true}");
+            else
+                list_print_literal(out, "\", \"dir\": false}");
+
+            if (isdir) walk_links(out, abs_entry, rel_entry, mod_id, first, depth + 1);
+        } else if (S_ISDIR(lst.st_mode)) {
+            walk_links(out, abs_entry, rel_entry, mod_id, first, depth);
+        }
+    }
+    closedir(d);
+    return 0;
+}
+
 /* --- module target iteration --- */
 
 static int cmd_module_load_or_unload(struct nm_workspace *ws, struct nm_args *args, int is_load) {
@@ -582,6 +718,146 @@ static int cmd_module_load_or_unload(struct nm_workspace *ws, struct nm_args *ar
     write(2, out2, n2);
 
     return ctx.status;
+}
+
+/* --- module listing iteration --- */
+
+static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
+    static const char *modules_dir = "/data/adb/modules";
+    struct nm_output out = { ws->cwd, 0 };
+
+    list_print_literal(&out, "{\n  \"mods\": [");
+    int first = 1;
+
+    DIR *d = opendir(modules_dir);
+    if (!d) {
+        list_print_literal(&out, "],\n  \"rules\": [],\n  \"links\": []\n}\n");
+        list_flush(&out);
+        return 1;
+    }
+
+    char mod_ids[64][64];
+    int mod_count = 0;
+
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        const char *mod_id = e->d_name;
+        if (mod_id[0] == '.') continue;
+        if (!strcmp(mod_id, "nomount")) continue;
+        if (args->mod_only && !nm_mod_in_list(mod_id, args->mod_only)) continue;
+        if (mod_count >= 64) break;
+
+        char mod_path[PATH_MAX];
+        if (nm_path_join(mod_path, sizeof(mod_path), modules_dir, mod_id)) continue;
+
+        struct stat st;
+        if (stat(mod_path, &st) < 0 || !S_ISDIR(st.st_mode)) continue;
+
+        char prop_path[PATH_MAX];
+        if (nm_path_join(prop_path, sizeof(prop_path), mod_path, "module.prop")) continue;
+        if (access(prop_path, F_OK) != 0) continue;
+
+        const char *targets_for_check = args->mod_targets ? args->mod_targets : NM_DEFAULT_TARGETS;
+        if (!nm_mod_has_injectable(mod_path, targets_for_check)) continue;
+
+        char name_buf[256];
+        nm_read_module_name(prop_path, name_buf, sizeof(name_buf));
+
+        int disable = 0, skip = 0;
+        if (nm_path_join(prop_path, sizeof(prop_path), mod_path, "disable") == 0 &&
+            stat(prop_path, &st) == 0) disable = 1;
+        if (nm_path_join(prop_path, sizeof(prop_path), mod_path, "skip_mount") == 0 &&
+            stat(prop_path, &st) == 0) skip = 1;
+
+        char real_root[PATH_MAX];
+        const char *root = realpath(mod_path, real_root) ? real_root : mod_path;
+
+        if (!first) list_print_literal(&out, ",");
+        first = 0;
+        list_print_literal(&out, "\n    {\"modId\": \"");
+        list_print_json_strn(&out, mod_id, strlen(mod_id));
+        list_print_literal(&out, "\", \"realName\": \"");
+        list_print_json_strn(&out, name_buf, strlen(name_buf));
+        if (disable)
+            list_print_literal(&out, "\", \"disable\": true, \"skipMount\": ");
+        else
+            list_print_literal(&out, "\", \"disable\": false, \"skipMount\": ");
+        if (skip)
+            list_print_literal(&out, "true, \"root\": \"");
+        else
+            list_print_literal(&out, "false, \"root\": \"");
+        list_print_json_strn(&out, root, strlen(root));
+        list_print_literal(&out, "\"}");
+
+        strncpy(mod_ids[mod_count++], mod_id, 63);
+        mod_ids[mod_count - 1][63] = '\0';
+    }
+    closedir(d);
+    list_print_literal(&out, "\n  ],\n  \"rules\": [");
+
+    ws->payload.cmd = NM_CMD_GET_LIST;
+    ws->payload.arg1 = 0;
+    int first_rule = 1;
+    do {
+        if (nm_send_payload(&ws->payload) < 0) break;
+        if (ws->payload.data_size == 0) break;
+        char *data = ws->payload.buffer;
+        int pos = 0;
+        while (pos < (int)ws->payload.data_size) {
+            struct nm_rule_hdr *h = (void *)(data + pos);
+            unsigned short vlen = h->v_len, rlen = h->r_len;
+            pos += sizeof(*h);
+            char *v = data + pos; pos += vlen;
+            char *r = data + pos; pos += rlen;
+
+            if (!first_rule) list_print_literal(&out, ",");
+            first_rule = 0;
+            list_print_literal(&out, "\n    {\"virtual\": \"");
+            list_print_json_strn(&out, v, vlen);
+            list_print_literal(&out, "\", \"real\": \"");
+            list_print_json_strn(&out, r, rlen);
+            list_print_literal(&out, "\"}");
+        }
+    } while (ws->payload.arg1 != ~0U);
+
+    list_print_literal(&out, "\n  ],\n  \"links\": [");
+    int first_link = 1;
+
+    for (int m = 0; m < mod_count; m++) {
+        char mod_path[PATH_MAX];
+        if (nm_path_join(mod_path, sizeof(mod_path), modules_dir, mod_ids[m])) continue;
+
+        char targets_buf[PATH_MAX];
+        strncpy(targets_buf, NM_DEFAULT_TARGETS, sizeof(targets_buf) - 1);
+        targets_buf[sizeof(targets_buf) - 1] = '\0';
+
+        char *save = targets_buf;
+        char *p;
+        while ((p = strchr(save, ' '))) {
+            *p = '\0';
+            if (*save) {
+                char part_path[PATH_MAX];
+                if (nm_path_join(part_path, sizeof(part_path), mod_path, save) == 0) {
+                    struct stat st;
+                    if (stat(part_path, &st) == 0 && S_ISDIR(st.st_mode))
+                        walk_links(&out, part_path, save, mod_ids[m], &first_link, 0);
+                }
+            }
+            save = p + 1;
+        }
+        if (*save) {
+            char part_path[PATH_MAX];
+            if (nm_path_join(part_path, sizeof(part_path), mod_path, save) == 0) {
+                struct stat st;
+                if (stat(part_path, &st) == 0 && S_ISDIR(st.st_mode))
+                    walk_links(&out, part_path, save, mod_ids[m], &first_link, 0);
+            }
+        }
+    }
+
+    list_print_literal(&out, "\n  ]\n}\n");
+    list_flush(&out);
+    return 0;
 }
 
 #endif // #ifndef NM_H
