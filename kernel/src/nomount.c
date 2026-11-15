@@ -1518,11 +1518,15 @@ static int nm_prepare_rule(const char *r_path, u32 flags, unsigned int uid, unsi
     if (backed) {
         int err = kern_path(r_path, LOOKUP_FOLLOW, &out->r_path);
         if (err) return err;
+        struct inode *inode = d_backing_inode(out->r_path.dentry);
+        if (nm_inode_is_virtual(inode)) {
+            path_put(&out->r_path);
+            return -EINVAL;
+        }
         if ((err = nm_hijack_superblock(out->r_path.dentry->d_sb, false))) {
             path_put(&out->r_path);
             return err;
         }
-        struct inode *inode = d_backing_inode(out->r_path.dentry);
         if (S_ISDIR(inode->i_mode)) out->flags |= NM_FLAG_IS_DIR;
     }
     return 0;
