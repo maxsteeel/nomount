@@ -45,21 +45,35 @@ load_ko() {
     return 0
 }
 
-_lock_fd() {
-    local fd="$1" timeout="$2" n=0
-    while ! flock -n "$fd"; do
+_lock_acquire() {
+    local lockdir="$1" timeout="$2" n=0
+    while ! mkdir "$lockdir" 2>/dev/null; do
+        local pid
+        pid=$(cat "$lockdir/pid" 2>/dev/null)
+        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+            klogwarn "cleaning stale lock $lockdir (pid $pid is dead)"
+            rm -rf "$lockdir"
+            continue
+        fi
         n=$((n + 1))
-        [ "$n" -ge "$timeout" ] && return 1
+        if [ "$n" -ge "$timeout" ]; then
+            return 1
+        fi
         sleep 1
     done
+    echo $$ > "$lockdir/pid"
+    return 0
+}
+
+_lock_release() {
+    rm -rf "$1" 2>/dev/null
     return 0
 }
 
 bootloop_check() {
-    exec 8>"$NOMOUNT_DATA/.boot.lock"
-    if ! _lock_fd 8 15; then
+    local lockdir="$NOMOUNT_DATA/.boot.lock"
+    if ! _lock_acquire "$lockdir" 15; then
         klogerr "boot lock timeout after 15s"
-        exec 8>&-
         return 1
     fi
 
@@ -71,7 +85,7 @@ bootloop_check() {
         prev=$(cat "$BOOT_SEMAPHORE" 2>/dev/null || echo "MISSING")
         if [ "$prev" != "$current" ]; then
             klogerr "Bootloop detected (prev=$prev current=$current)"
-            exec 8>&-
+            _lock_release "$lockdir"
             disable_module "🚨 Bootloop Prevented"
             return 1
         fi
@@ -80,31 +94,30 @@ bootloop_check() {
         echo "$current" > "$BOOT_SEMAPHORE"
     fi
 
-    exec 8>&-
+    _lock_release "$lockdir"
     return 0
 }
 
 ensure_lkm_loaded() {
-    exec 7>"$NOMOUNT_DATA/.lkm.lock"
-    if ! _lock_fd 7 60; then
+    local lockdir="$NOMOUNT_DATA/.lkm.lock"
+    if ! _lock_acquire "$lockdir" 60; then
         klogerr "LKM lock timed out after 60s"
-        exec 7>&-
         return 1
     fi
 
     if "$LOADER" version >/dev/null 2>&1; then
-        exec 7>&-
+        _lock_release "$lockdir"
         return 0
     fi
 
     klog "Loading LKM..."
     if ! load_ko "$MODDIR/lkm/nomount.ko"; then
         klogerr "LKM load failed."
-        exec 7>&-
+        _lock_release "$lockdir"
         return 1
     fi
     klog "LKM loaded and initialized correctly."
-    exec 7>&-
+    _lock_release "$lockdir"
     return 0
 }
 

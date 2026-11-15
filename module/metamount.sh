@@ -19,12 +19,12 @@ if ! ensure_lkm_loaded; then
     exit 1
 fi
 
-exec 6>"$NOMOUNT_DATA/.inject.lock"
-if ! _lock_fd 6 120; then
+_lock_dir="$NOMOUNT_DATA/.inject.lock"
+if ! _lock_acquire "$_lock_dir" 120; then
     klogerr "inject lock timed out after 120s"
-    exec 6>&-
     exit 1
 fi
+trap '_lock_release "$_lock_dir"' EXIT INT TERM
 
 klog "Injection started"
 set -o pipefail
@@ -51,5 +51,5 @@ else
     klogerr "Injection completed with errors."
 fi
 
-exec 6>&-
+_lock_release "$_lock_dir"
 exit "$status"
