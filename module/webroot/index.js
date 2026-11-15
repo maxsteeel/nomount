@@ -415,12 +415,120 @@ function computePalette(seedHex, scheme) {
     return out;
 }
 
-let _nmSeed = null, _nmMqDark = null;
+let _nmSeed = null, _nmSeedSource = null, _nmLastAppliedPrimary = null, _nmMqDark = null;
+let _nmSystemProbeInFlight = false;
+const NM_SEED_CACHE = 'nm_seed_cache';
+
+function normalizeColor(v) {
+    if (!v) return null;
+    v = v.trim();
+    if (/^#[0-9a-f]{8}$/i.test(v)) return v.slice(0, 7);
+    if (/^#[0-9a-f]{6}$/i.test(v)) return v;
+    if (/^#[0-9a-f]{3}$/i.test(v)) return '#' + v[1]+v[1] + v[2]+v[2] + v[3]+v[3];
+    const m = v.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+    if (m) return '#' + [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
+    return null;
+}
+
+function isBaselineGray(hex) {
+    const { s } = hexToHSL(hex);
+    return s < 0.1;
+}
+
+function readThemePrimary() {
+    const sources = [document.documentElement, document.body, document.querySelector('.root_layout')];
+    for (const el of sources) {
+        if (!el) continue;
+        const cs = getComputedStyle(el);
+        const p = normalizeColor(cs.getPropertyValue('--primary'));
+        if (p && !isBaselineGray(p)) return p;
+
+        const m3 = normalizeColor(cs.getPropertyValue('--md-sys-color-primary'));
+        if (!m3 || isBaselineGray(m3) || m3.toLowerCase() === '#6750a4' || m3 === _nmLastAppliedPrimary) continue;
+        return m3;
+    }
+    return null;
+}
+
+function setSeed(seed, source) {
+    _nmSeed = seed;
+    _nmSeedSource = source;
+}
+
+function cacheSeed(hex) {
+    if (!hex) return;
+    try { localStorage.setItem(NM_SEED_CACHE, hex); } catch {}
+}
+function readCachedSeed() {
+    try {
+        const c = localStorage.getItem(NM_SEED_CACHE);
+        return (c && /^#[0-9a-f]{6}$/i.test(c)) ? c : null;
+    } catch { return null; }
+}
+
+async function tryGetMonetSeedFromSystem() {
+    try {
+        const sdkOut = await exec('getprop ro.build.version.sdk 2>/dev/null');
+        const sdk = parseInt(sdkOut.stdout.trim(), 10) || 0;
+        if (sdk < 31) return null;
+
+        const tryHex = (raw) => {
+            if (!raw) return null;
+            for (const m of raw.matchAll(/#([0-9a-f]{6}|[0-9a-f]{8})\b/gi)) {
+                const s = m[1].toLowerCase();
+                const hex = '#' + (s.length === 8 ? s.slice(-6) : s);
+                if (isBaselineGray(hex) || hex === '#000000' || hex === '#ffffff') continue;
+                return hex;
+            }
+            return null;
+        };
+
+        const scheme = resolveScheme();
+        const darkMode = scheme === 'dark' || scheme === 'amoled';
+        const tones = darkMode ? ['200', '300', '400', '500']
+                                  : ['600', '700', '500', '400'];
+        for (const tone of tones) {
+            const { stdout, errno } = await exec(`cmd overlay lookup android android:color/system_accent1_${tone} 2>/dev/null`);
+            if (errno !== 0 || !stdout) continue;
+            const hex = tryHex(stdout);
+            if (hex) return hex;
+        }
+    } catch { }
+    return null;
+}
+
+function scheduleSystemProbe() {
+    if (_nmSystemProbeInFlight) return;
+    _nmSystemProbeInFlight = true;
+    tryGetMonetSeedFromSystem().then(s => {
+        _nmSystemProbeInFlight = false;
+        if (s && _nmSeedSource === 'default') {
+            setSeed(s, 'probe');
+            cacheSeed(s);
+            applyAppearance();
+        }
+    });
+}
+
 function getSeedColor() {
     if (!isMaterial) return customColor;
     if (_nmSeed) return _nmSeed;
-    const v = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim();
-    _nmSeed = /^#[0-9a-f]{6}$/i.test(v) ? v : '#6750a4';
+
+    const live = readThemePrimary();
+    if (live) {
+        setSeed(live, 'manager');
+        cacheSeed(live);
+        return _nmSeed;
+    }
+
+    const cached = readCachedSeed();
+    if (cached) {
+        setSeed(cached, 'cache');
+        return _nmSeed;
+    }
+
+    setSeed('#6750a4', 'default');
+    scheduleSystemProbe();
     return _nmSeed;
 }
 
@@ -441,6 +549,8 @@ function applyAppearance() {
     root.setAttribute('data-scheme', scheme);
 
     const palette = computePalette(getSeedColor(), scheme);
+    _nmLastAppliedPrimary = palette['--md-sys-color-primary'];
+
     for (const [name, value] of Object.entries(palette))
         root.style.setProperty(name, value);
 
@@ -474,7 +584,7 @@ applyAppearance();
 let nmThemeDirty = false;
 async function syncThemeToDisk() {
     nmThemeDirty = true;
-    const config = { theme: activeTheme, material: isMaterial, color: customColor };
+    const config = { theme: activeTheme, material: isMaterial, color: customColor, seed: _nmSeed || null };
     const jsonStr = JSON.stringify(config);
     const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
     await exec(`mkdir -p ${NM_DATA} && echo "${b64}" | base64 -d > ${FILES.theme}.tmp && mv -f ${FILES.theme}.tmp ${FILES.theme}`);
@@ -489,6 +599,10 @@ async function restoreThemeFromDisk() {
         try { config = JSON.parse(stdout.trim()); } catch { return; }
 
         if (nmThemeDirty) return;
+        if (!_nmSeed && typeof config.seed === 'string' && /^#[0-9a-f]{6}$/i.test(config.seed)) {
+            _nmSeed = config.seed;
+            applyAppearance();
+        }
 
         const diskTheme = (config.theme && config.theme in THEME_NAMES) ? config.theme : activeTheme;
         const diskMaterial = config.material !== undefined ? Boolean(config.material) : isMaterial;
@@ -1297,6 +1411,7 @@ function initOptionsUI() {
 
         swMat.onchange = (e) => {
             isMaterial = e.target.checked;
+            if (isMaterial) { _nmSeed = null; _nmSeedSource = null; }
             localStorage.setItem('nm_material', isMaterial);
             updateAppearanceCards();
             applyAppearance();
