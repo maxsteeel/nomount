@@ -156,6 +156,7 @@ const MOD_DIR = "/data/adb/modules";
 const NM_DATA = "/data/adb/nomount";
 const NM_BIN = "/data/adb/modules/nomount/bin/nm";
 const FILES = { disable: `${NM_DATA}/disable`, exclusions: `${NM_DATA}/.exclusion_list.json`, isolated: `${NM_DATA}/.block_isolated_uids`, theme: `${NM_DATA}/theme.json`, dump_rules: `${NM_DATA}/dump_rules` };
+const shellQuote = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
 const APP_ICON_FALLBACK = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
 const viewLoadState = { 'view-home': false, 'view-modules': false, 'view-exclusions': false, 'view-options': false };
 
@@ -858,7 +859,7 @@ function applyHomeData(data) {
 let currentRenderId = 0;
 
 async function readModules(onlyMods = null) {
-    const filter = onlyMods && onlyMods.length ? ` --only=${onlyMods.join(',')}` : '';
+    const filter = onlyMods && onlyMods.length ? ` --only=${shellQuote(onlyMods.join(','))}` : '';
     const { errno, stdout, stderr } = await exec(`${NM_BIN} module list --json${filter}`);
     if (errno) throw new Error(stderr || 'Failed to read modules');
 
@@ -971,7 +972,7 @@ readInitialModules();
 
 async function loadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
-    const { stderr } = await exec(`${NM_BIN} module load "${modPath}"`);
+    const { stderr } = await exec(`${NM_BIN} module load ${shellQuote(modPath)}`);
     const m = (stderr || '').match(/nm_load_status=(\d+)/);
     if (!m) throw new Error('load did not report status');
     if (parseInt(m[1], 10) !== 0) throw new Error(stderr || `load failed (status ${m[1]})`);
@@ -979,7 +980,7 @@ async function loadModule(modId) {
 
 async function unloadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
-    const { stderr } = await exec(`${NM_BIN} module unload "${modPath}"`);
+    const { stderr } = await exec(`${NM_BIN} module unload ${shellQuote(modPath)}`);
     const m = (stderr || '').match(/nm_unload_status=(\d+)/);
     if (!m) throw new Error('unload did not report status');
     if (parseInt(m[1], 10) !== 0) throw new Error(stderr || `unload failed (status ${m[1]})`);
@@ -1791,8 +1792,8 @@ function initDelegationAndAttach() {
 
             setTimeout(async () => {
                 try {
-                    if (isChecked) { await exec(`rm ${MOD_DIR}/${modId}/disable`); await loadModule(modId); }
-                    else { await unloadModule(modId); await exec(`touch ${MOD_DIR}/${modId}/disable`); }
+                    if (isChecked) { await exec(`rm -f ${shellQuote(`${MOD_DIR}/${modId}/disable`)}`); await loadModule(modId); }
+                    else { await unloadModule(modId); await exec(`touch ${shellQuote(`${MOD_DIR}/${modId}/disable`)}`); }
                     await updateModuleCardDOM(card, modId);
                 } catch (err) {
                     showToast(`Error: ${err.message}`);
@@ -1845,7 +1846,7 @@ function initDelegationAndAttach() {
 
         setTimeout(async () => {
             try {
-                await exec(wasSkipped ? `rm -f ${skipFile}` : `touch ${skipFile}`);
+                await exec(wasSkipped ? `rm -f ${shellQuote(skipFile)}` : `touch ${shellQuote(skipFile)}`);
                 skipBtn.classList.toggle('unskip', !wasSkipped);
                 skipBtn.querySelector('span').textContent = translate(!wasSkipped ? 'modules_unskip' : 'modules_skip');
                 await updateModuleCardDOM(card, modId);
