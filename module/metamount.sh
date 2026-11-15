@@ -25,7 +25,7 @@ if ! _lock_acquire "$_lock_dir" 120; then
     exit 1
 fi
 trap '_lock_release "$_lock_dir"' EXIT
-trap '_lock_release "$_lock_dir"; exit 1' INT TERM
+trap 'exit 1' INT TERM
 
 klog "Injection started"
 set -o pipefail
@@ -52,5 +52,4 @@ else
     klogerr "Injection completed with errors."
 fi
 
-_lock_release "$_lock_dir"
 exit "$status"
