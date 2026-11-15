@@ -742,80 +742,41 @@ function applyHomeData(data) {
 
 // Modules
 let currentRenderId = 0;
-const TARGET_PARTITIONS = "system system_ext vendor odm product apex oem optics prism mi_ext my_bigball my_carrier my_company my_engineering my_heytap my_manifest my_preload my_product my_region my_reserve my_stock";
-
-const NM_AWK_SCAN_LINKS = `
-{
-  link = $1
-  real = $2
-  isdir = $3
-  mod = link
-  sub(/\\/.*/, "", mod)
-  v = substr(link, length(mod) + 2)
-  if (substr(v, 1, 7) == "system/") {
-    rest = substr(v, 8)
-    idx = index(rest, "/")
-    if (idx > 0) p = substr(rest, 1, idx - 1)
-    else p = rest
-    if (p == "vendor" || p == "system_ext" || p == "product" || p == "odm" ||
-        p == "apex" || p == "oem" || p == "optics" || p == "prism" ||
-        p == "mi_ext" || p ~ /^my_/) {
-      v = p substr(v, 8 + length(p))
-    }
-  }
-  printf "@@S\\t%s\\t/%s\\t%s\\t%s\\n", mod, v, real, isdir
-}`;
 
 async function readModules(onlyMods = null) {
-    const filter = onlyMods ? `case " ${onlyMods.join(' ')} " in *" $mod "*) ;; *) continue ;; esac` : '';
-    const script = `
-        ${NM_BIN} rule list --json || exit $?; echo "|||"
-        cd -P ${MOD_DIR} || exit 1
-        set --
-        for mod in *; do
-            [ ! -d "$mod" ] && continue
-            [ "$mod" = "nomount" ] && continue
-            [ ! -f "$mod/module.prop" ] && continue
-            ${filter}
-            count=$#
-            for p in ${TARGET_PARTITIONS}; do [ -d "$mod/$p" ] && { [ -d "/$p" ] || [ -d "/system/$p" ]; } && set -- "$@" "$mod/$p"; done
-            [ "$#" -eq "$count" ] && continue
-            name=""
-            while IFS='=' read -r k v; do case "$k" in name) name="$v"; break;; esac; done < "$mod/module.prop"
-            disable=false; [ -f "$mod/disable" ] && disable=true
-            skip=false; [ -f "$mod/skip_mount" ] && skip=true
-            root="\${PWD%/}/$mod"
-            if [ -L "$mod" ]; then root=$(readlink -f "$mod") || exit 1; fi
-            printf '@@M\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$mod" "$name" "$disable" "$skip" "$root"
-        done
-        if [ "$#" -gt 0 ]; then
-            find -H "$@" -type l -print 2>/dev/null | while IFS= read -r link; do
-                real=$(readlink -f "$link") || continue
-                [ -d "$link" ] && isdir=true || isdir=false
-                printf '%s\\t%s\\t%s\\n' "$link" "$real" "$isdir"
-            done | awk '${NM_AWK_SCAN_LINKS}'
-        fi
-    `;
-    const { errno, stdout, stderr } = await exec(script);
+    const filter = onlyMods && onlyMods.length ? ` --only=${onlyMods.join(',')}` : '';
+    const { errno, stdout, stderr } = await exec(`${NM_BIN} module list --json${filter}`);
     if (errno) throw new Error(stderr || 'Failed to read modules');
-    const [jsonPart, modulesPart = ''] = stdout.split('|||');
-    const rules = JSON.parse(jsonPart.trim() || '[]');
-    const modules = new Map(), roots = new Map(), links = new Map();
-    for (const line of modulesPart.split('\n')) {
-        const [kind, modId, ...fields] = line.split('\t');
-        if (kind === '@@M') {
-            const [realName, disable, skipMount, root] = fields;
-            const mod = { modId, realName, disable: disable === 'true', skipMount: skipMount === 'true', fileCount: 0 };
-            modules.set(modId, mod);
-            if (!roots.has(root)) roots.set(root, []);
-            roots.get(root).push(mod);
-        } else if (kind === '@@S') {
-            const [virtual, real, dir] = fields;
-            if (!links.has(virtual)) links.set(virtual, []);
-            links.get(virtual).push({ mod: modules.get(modId), real, dir: dir === 'true' });
-        }
+
+    const data = JSON.parse(stdout);
+    const modules = new Map();
+    for (const m of data.mods) {
+        modules.set(m.modId, {
+            modId: m.modId,
+            realName: m.realName,
+            disable: m.disable,
+            skipMount: m.skipMount,
+            fileCount: 0,
+        });
     }
-    for (const { virtual, real } of rules) {
+
+    const roots = new Map();
+    for (const m of data.mods) {
+        if (!roots.has(m.root)) roots.set(m.root, []);
+        roots.get(m.root).push(modules.get(m.modId));
+    }
+
+    const links = new Map();
+    for (const link of data.links) {
+        if (!links.has(link.virtual)) links.set(link.virtual, []);
+        links.get(link.virtual).push({
+            mod: modules.get(link.modId),
+            real: link.real,
+            dir: link.dir,
+        });
+    }
+
+    for (const { virtual, real } of data.rules) {
         if (!real) continue;
         const owners = new Set();
         for (let path = real; path; path = path.slice(0, path.lastIndexOf('/'))) {
@@ -829,9 +790,12 @@ async function readModules(onlyMods = null) {
         }
         for (const mod of owners) mod.fileCount++;
     }
+
     for (const mod of modules.values()) {
         const { fileCount, disable, skipMount } = mod;
-        mod.statusKey = fileCount > 0 ? ((disable || skipMount) ? 'status_loaded' : 'status_active') : (disable ? 'status_disabled' : (skipMount ? 'status_skipped' : 'status_inactive'));
+        mod.statusKey = fileCount > 0
+            ? ((disable || skipMount) ? 'status_loaded' : 'status_active')
+            : (disable ? 'status_disabled' : (skipMount ? 'status_skipped' : 'status_inactive'));
     }
     return [...modules.values()];
 }
@@ -899,22 +863,18 @@ readInitialModules();
 
 async function loadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
-    const scriptDir = `${MOD_DIR}/nomount/scripts`;
-    const cmd = `sh "${scriptDir}/load_module.sh" "${modPath}" "${NM_BIN}" "${TARGET_PARTITIONS}" "${scriptDir}"`;
-    const result = await exec(cmd);
-    const m = (result.stderr || '').match(/nm_load_status=(\d+)/);
-    if (!m) throw new Error('load script did not report status');
-    if (parseInt(m[1], 10) !== 0) throw new Error(result.stderr || `load failed (status ${m[1]})`);
+    const { stderr } = await exec(`${NM_BIN} module load "${modPath}"`);
+    const m = (stderr || '').match(/nm_load_status=(\d+)/);
+    if (!m) throw new Error('load did not report status');
+    if (parseInt(m[1], 10) !== 0) throw new Error(stderr || `load failed (status ${m[1]})`);
 }
 
 async function unloadModule(modId) {
     const modPath = `${MOD_DIR}/${modId}`;
-    const scriptDir = `${MOD_DIR}/nomount/scripts`;
-    const cmd = `sh "${scriptDir}/unload_module.sh" "${modPath}" "${NM_BIN}" "${TARGET_PARTITIONS}" "${scriptDir}"`;
-    const result = await exec(cmd);
-    const m = (result.stderr || '').match(/nm_unload_status=(\d+)/);
-    if (!m) throw new Error('unload script did not report status');
-    if (parseInt(m[1], 10) !== 0) throw new Error(result.stderr || `unload failed (status ${m[1]})`);
+    const { stderr } = await exec(`${NM_BIN} module unload "${modPath}"`);
+    const m = (stderr || '').match(/nm_unload_status=(\d+)/);
+    if (!m) throw new Error('unload did not report status');
+    if (parseInt(m[1], 10) !== 0) throw new Error(stderr || `unload failed (status ${m[1]})`);
 }
 
 // Apps & Exclusions
@@ -1500,7 +1460,7 @@ function initOptionsUI() {
         btnDumpNow.onclick = async () => {
             btnDumpNow.disabled = true;
             try {
-                const r = await exec(`sh ${MOD_DIR}/nomount/scripts/dump_rules.sh by webui`);
+                const r = await exec(`sh -c 'MODDIR=${MOD_DIR}/nomount; . "$MODDIR/common.sh"; dump_all_rules_logcat by webui'`);
                 if (r.errno !== 0) throw new Error(r.stderr || 'dump failed');
                 showToast(translate('dump_done'));
             } catch { showToast(translate('dump_failed')); }
