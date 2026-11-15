@@ -115,6 +115,7 @@ struct nm_walk {
     size_t root_len;
     int first_link;
     int has_injectable;
+    int error;
     char path[PATH_MAX];
 };
 
@@ -376,9 +377,12 @@ static int nm_emit(struct nm_walk *ctx, unsigned flags) {
     static const struct nm_args global_rule;
     char vpath[PATH_MAX];
     int rc = nm_to_vpath(ctx->path + ctx->root_len + 1, vpath, sizeof(vpath));
-    if (rc) return rc;
-    const char *real = ctx->payload->cmd == NM_CMD_ADD_RULE && !(flags & NM_FLAG_WHITEOUT) ? ctx->path : NULL;
-    return nm_queue_rule(ctx->payload, &global_rule, flags, NULL, vpath, real);
+    if (!rc) {
+        const char *real = ctx->payload->cmd == NM_CMD_ADD_RULE && !(flags & NM_FLAG_WHITEOUT) ? ctx->path : NULL;
+        rc = nm_queue_rule(ctx->payload, &global_rule, flags, NULL, vpath, real);
+    }
+    if (rc && !ctx->error) ctx->error = rc;
+    return 0;
 }
 
 static DIR *nm_open_dir(int parent, const char *name) {
@@ -415,6 +419,7 @@ static int nm_dir_has_content(int parent, const char *name) {
 
 static noinline int nm_mod_in_list(const char *mod_id, const char *list) {
     size_t id_len = strlen(mod_id);
+    if (id_len == strlen(list) && !memcmp(mod_id, list, id_len)) return 1;
     const char *p = list;
     while (*p) {
         const char *comma = strchr(p, ',');
@@ -600,6 +605,7 @@ static int cmd_module_load_or_unload(struct nm_workspace *ws, struct nm_args *ar
         ctx.payload->arg1 = ctx.payload->data_size = 0;
         rc = nm_walk_partitions(&ctx, args->mod_targets ? args->mod_targets : NM_DEFAULT_TARGETS);
         if (!rc) rc = nm_flush_rules(ctx.payload);
+        if (!rc) rc = ctx.error;
     } else if (!rc) rc = -ENOTDIR;
     if (rc) nm_error(is_load ? "module load" : "module unload", rc);
     const char *status = is_load ? "nm_load_status=" : "nm_unload_status=";
@@ -625,7 +631,6 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
         const char *mod_id = e->d_name;
         if (mod_id[0] == '.' || !strcmp(mod_id, "nomount")) continue;
         if (args->mod_only && !nm_mod_in_list(mod_id, args->mod_only)) continue;
-        if (mod_count >= 64) break;
         char mod_path[PATH_MAX], prop_path[PATH_MAX], name[256];
         struct nm_walk ctx = { .output = &out, .first_link = 1 };
         if ((rc = nm_path_join(mod_path, sizeof(mod_path), modules_dir, mod_id))) break;
