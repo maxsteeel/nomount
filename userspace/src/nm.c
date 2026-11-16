@@ -266,7 +266,7 @@ int main(int argc, char **argv) {
                 "  nm module unload <mod_path> [same --targets]\n"
                 "                                          Remove all rules belonging to a module\n"
                 "  nm module list [--json] [--only=<a,b,...>]\n"
-                "                                          List modules, rules and links\n\n"
+                "                                          List modules with their injected file count\n\n"
                 "UID Commands (Exceptions):\n"
                 "  nm uid add <uid>                        Add app UID to exception list\n"
                 "  nm uid del <uid>                        Remove app UID from exceptions\n"

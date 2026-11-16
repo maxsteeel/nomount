@@ -109,15 +109,144 @@ struct nm_args {
     "my_bigball my_carrier my_company my_engineering my_heytap my_manifest " \
     "my_preload my_product my_region my_reserve my_stock"
 
+struct nm_modinfo {
+    char *mod_id;
+    char *name;
+    char *root;
+    int disable;
+    int skip;
+    int has_injectable;
+    int count;
+    int first_map;
+    int nmaps;
+};
+
+struct nm_mapping {
+    int module;
+    char *vpath;
+    char *real;
+    int dir;
+};
+
+struct nm_catalog {
+    struct nm_modinfo *mods;
+    int nmods, mods_cap;
+    struct nm_mapping *maps;
+    int nmaps, maps_cap;
+};
+
 struct nm_walk {
     struct nm_payload *payload;
-    struct nm_output *output;
+    struct nm_catalog *catalog;
+    int module_index;
+    int list_mode;
     size_t root_len;
-    int first_link;
     int has_injectable;
     int error;
     char path[PATH_MAX];
 };
+
+static char *nm_strdup(const char *s) {
+    size_t n = strlen(s) + 1;
+    char *p = malloc(n);
+    if (p) memcpy(p, s, n);
+    return p;
+}
+
+static int nm_catalog_add_module(struct nm_catalog *cat, const char *mod_id, const char *name,
+                                 const char *root, int disable, int skip) {
+    if (cat->nmods >= cat->mods_cap) {
+        int cap = cat->mods_cap ? cat->mods_cap * 2 : 16;
+        struct nm_modinfo *m = realloc(cat->mods, (size_t)cap * sizeof(*m));
+        if (!m) return -ENOMEM;
+        cat->mods = m;
+        cat->mods_cap = cap;
+    }
+    struct nm_modinfo *m = &cat->mods[cat->nmods];
+    memset(m, 0, sizeof(*m));
+    m->mod_id = nm_strdup(mod_id);
+    m->name = nm_strdup(name);
+    m->root = nm_strdup(root);
+    if (!m->mod_id || !m->name || !m->root) return -ENOMEM;
+    m->disable = disable;
+    m->skip = skip;
+    m->first_map = cat->nmaps;
+    return cat->nmods++;
+}
+
+static int nm_catalog_add_mapping(struct nm_catalog *cat, int module, const char *vpath,
+                                  const char *real, int dir) {
+    if (cat->nmaps >= cat->maps_cap) {
+        int cap = cat->maps_cap ? cat->maps_cap * 2 : 32;
+        struct nm_mapping *m = realloc(cat->maps, (size_t)cap * sizeof(*m));
+        if (!m) return -ENOMEM;
+        cat->maps = m;
+        cat->maps_cap = cap;
+    }
+    struct nm_mapping *m = &cat->maps[cat->nmaps];
+    m->module = module;
+    m->vpath = nm_strdup(vpath);
+    m->real = nm_strdup(real);
+    if (!m->vpath || !m->real) return -ENOMEM;
+    m->dir = dir;
+    cat->nmaps++;
+    cat->mods[module].nmaps++;
+    return 0;
+}
+
+static void nm_catalog_free(struct nm_catalog *cat) {
+    for (int i = 0; i < cat->nmods; i++) {
+        free(cat->mods[i].mod_id);
+        free(cat->mods[i].name);
+        free(cat->mods[i].root);
+    }
+    for (int i = 0; i < cat->nmaps; i++) {
+        free(cat->maps[i].vpath);
+        free(cat->maps[i].real);
+    }
+    free(cat->mods);
+    free(cat->maps);
+    memset(cat, 0, sizeof(*cat));
+}
+
+static int nm_real_matches(const char *map_real, const char *suffix, const char *real) {
+    if (!suffix[0]) return !strcmp(map_real, real);
+    size_t rl = strlen(map_real);
+    if (rl && map_real[rl - 1] == '/') rl--;
+    if (strlen(real) != rl + strlen(suffix)) return 0;
+    return !strncmp(map_real, real, rl) && !strcmp(real + rl, suffix);
+}
+
+static void nm_catalog_count(struct nm_catalog *cat, const char *virtual, const char *real) {
+    int matched = 0;
+
+    for (int i = 0; i < cat->nmods; i++) {
+        struct nm_modinfo *m = &cat->mods[i];
+        if (!m->has_injectable) continue;
+        size_t rl = strlen(m->root);
+        if (strncmp(real, m->root, rl)) continue;
+        if (real[rl] && real[rl] != '/') continue;
+        m->count++;
+        matched = 1;
+    }
+    if (matched) return;
+
+    for (int i = 0; i < cat->nmods; i++) {
+        struct nm_modinfo *m = &cat->mods[i];
+        if (!m->has_injectable) continue;
+        for (int k = 0; k < m->nmaps; k++) {
+            struct nm_mapping *mp = &cat->maps[m->first_map + k];
+            size_t vl = strlen(mp->vpath);
+            if (strncmp(virtual, mp->vpath, vl)) continue;
+            if (virtual[vl] && virtual[vl] != '/') continue;
+            const char *suffix = virtual + vl;
+            if (!mp->dir && suffix[0]) continue;
+            if (!nm_real_matches(mp->real, suffix, real)) continue;
+            m->count++;
+            break;
+        }
+    }
+}
 
 struct nm_ancestor {
     const struct nm_ancestor *parent;
@@ -270,6 +399,10 @@ static noinline void list_print_json_strn(struct nm_output *out, const char *s, 
 #define list_print_literal(out, s) list_print_strn((out), (s), sizeof(s) - 1)
 #define list_print_literal_offset(out, s, offset) list_print_strn((out), (s) + (offset), sizeof(s) - 1 - (offset))
 
+static inline void list_print_str(struct nm_output *out, const char *s) {
+    list_print_strn(out, s, strlen(s));
+}
+
 static noinline void list_print_uint(struct nm_output *out, unsigned int n) {
     char buf[10];
     int i = sizeof(buf);
@@ -395,30 +528,23 @@ static int nm_queue_rule(struct nm_payload *p, const struct nm_args *args, unsig
     }
 }
 
-static noinline int nm_list_mapping(struct nm_walk *ctx, unsigned flags) {
+static noinline int nm_collect_mapping(struct nm_walk *ctx, unsigned flags) {
     char target[PATH_MAX], virtual[PATH_MAX];
     target[0] = '\0';
     if (!(flags & NM_FLAG_WHITEOUT) && !realpath(ctx->path, target)) return -errno;
     int rc = nm_to_vpath(ctx->path + ctx->root_len + 1, virtual, sizeof(virtual));
     if (rc) return rc;
-    struct nm_output *out = ctx->output;
-    if (!ctx->first_link) list_print_literal(out, ",");
-    ctx->first_link = 0;
-    list_print_literal(out, "\n        {\"virtual\": \"");
-    list_print_json_strn(out, virtual, strlen(virtual));
-    list_print_literal(out, "\", \"real\": \"");
-    list_print_json_strn(out, target, strlen(target));
-    if (flags & NM_FLAG_VIRTUAL_DIR) list_print_literal(out, "\", \"dir\": true}");
-    else list_print_literal(out, "\", \"dir\": false}");
-    return 0;
+    if (!ctx->catalog) return 0;
+    return nm_catalog_add_mapping(ctx->catalog, ctx->module_index, virtual, target,
+                                   (flags & NM_FLAG_VIRTUAL_DIR) ? 1 : 0);
 }
 
 static void nm_emit(struct nm_walk *ctx, unsigned flags) {
     static const struct nm_args global_rule;
     int rc;
-    if (ctx->output) {
+    if (ctx->list_mode) {
         if (!(flags & NM_FLAG_WHITEOUT)) return;
-        rc = nm_list_mapping(ctx, flags);
+        rc = nm_collect_mapping(ctx, flags);
     } else {
         char vpath[PATH_MAX];
         rc = nm_to_vpath(ctx->path + ctx->root_len + 1, vpath, sizeof(vpath));
@@ -583,12 +709,12 @@ static int nm_walk_module(struct nm_walk *ctx, int parent_fd, const char *name,
     if (type == DT_LNK) {
         if (fstatat(parent_fd, name, &st, 0)) return errno == ENOENT || errno == ENOTDIR ? 0 : -errno;
         type = st.st_mode >> 12;
-        if (ctx->output && (rc = nm_list_mapping(ctx, type == DT_DIR ? NM_FLAG_VIRTUAL_DIR : 0))) return rc;
+        if (ctx->list_mode && (rc = nm_collect_mapping(ctx, type == DT_DIR ? NM_FLAG_VIRTUAL_DIR : 0))) return rc;
     }
     if (type != DT_DIR) {
         if (!strcmp(name, ".replace") || !strcmp(name, ".remove")) return 0;
         if (type == DT_CHR) nm_emit(ctx, NM_FLAG_WHITEOUT);
-        else if (type == DT_REG && !ctx->output) nm_emit(ctx, 0);
+        else if (type == DT_REG && !ctx->list_mode) nm_emit(ctx, 0);
         return 0;
     }
     DIR *d = nm_open_dir(parent_fd, name);
@@ -604,7 +730,7 @@ static int nm_walk_module(struct nm_walk *ctx, int parent_fd, const char *name,
         struct dirent *e = readdir(d);
         if (!e) { if (errno) rc = -errno; break; }
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        if (e->d_type == DT_REG && ctx->output) continue;
+        if (e->d_type == DT_REG && ctx->list_mode) continue;
         rc = nm_path_join(ctx->path + len, sizeof(ctx->path) - len, "", e->d_name);
         if (rc) break;
         rc = nm_walk_module(ctx, dirfd(d), e->d_name, e->d_type, &here);
@@ -661,9 +787,10 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
     DIR *d = opendir(modules_dir);
     if (!d) return nm_error("module list", -errno);
     struct nm_output out = { ws->cwd, 0, STDOUT_FILENO };
-    list_print_literal(&out, "{\n  \"mods\": [");
-    int mod_count = 0, rc = 0;
+    struct nm_catalog cat = { 0 };
+    int rc = 0;
     const char *targets = args->mod_targets ? args->mod_targets : NM_DEFAULT_TARGETS;
+
     for (;;) {
         errno = 0;
         struct dirent *e = readdir(d);
@@ -672,7 +799,7 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
         if (mod_id[0] == '.' || !strcmp(mod_id, "nomount")) continue;
         if (args->mod_only && !nm_mod_in_list(mod_id, args->mod_only)) continue;
         char mod_path[PATH_MAX], prop_path[PATH_MAX], name[256];
-        struct nm_walk ctx = { .output = &out, .first_link = 1 };
+        struct nm_walk ctx = { .list_mode = 1, .catalog = &cat };
         if ((rc = nm_path_join(mod_path, sizeof(mod_path), modules_dir, mod_id))) break;
         if ((rc = nm_dir_exists(mod_path)) < 0) break;
         if (!rc) continue;
@@ -688,30 +815,18 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
         if ((rc = nm_path_join(prop_path, sizeof(prop_path), mod_path, "skip_mount"))) break;
         int skip = access(prop_path, F_OK) == 0;
         if (!skip && errno != ENOENT && errno != ENOTDIR) { rc = -errno; break; }
-        if (mod_count) list_print_literal(&out, ",");
-        list_print_literal(&out, "\n    {\"modId\": \"");
-        list_print_json_strn(&out, mod_id, strlen(mod_id));
-        list_print_literal(&out, "\", \"realName\": \"");
-        list_print_json_strn(&out, name, strlen(name));
-        if (disable) list_print_literal(&out, "\", \"disable\": true");
-        else list_print_literal(&out, "\", \"disable\": false");
-        if (skip) list_print_literal(&out, ", \"skipMount\": true");
-        else list_print_literal(&out, ", \"skipMount\": false");
-        list_print_literal(&out, ", \"root\": \"");
-        list_print_json_strn(&out, ctx.path, ctx.root_len);
-        list_print_literal(&out, "\", \"links\": [");
+        int index = nm_catalog_add_module(&cat, mod_id, name, ctx.path, disable, skip);
+        if (index < 0) { rc = -ENOMEM; break; }
+        ctx.module_index = index;
         rc = nm_walk_partitions(&ctx, targets);
         if (!rc) rc = ctx.error;
-        if (ctx.has_injectable) list_print_literal(&out, "\n      ], \"hasInjectable\": true}");
-        else list_print_literal(&out, "\n      ], \"hasInjectable\": false}");
-        mod_count++;
+        cat.mods[index].has_injectable = ctx.has_injectable;
         if (rc) break;
     }
     closedir(d);
-    list_print_literal(&out, "\n  ],\n  \"rules\": [");
+
     ws->payload.cmd = NM_CMD_GET_LIST;
     ws->payload.arg1 = 0;
-    int first_rule = 1;
     while (!rc) {
         rc = nm_send_payload(&ws->payload);
         if (rc || !ws->payload.data_size) break;
@@ -723,18 +838,48 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
             pos += sizeof(*h);
             char *v = data + pos; pos += vlen;
             char *r = data + pos; pos += rlen;
-            if (!first_rule) list_print_literal(&out, ",");
-            first_rule = 0;
-            list_print_literal(&out, "\n    {\"virtual\": \"");
-            list_print_json_strn(&out, v, vlen);
-            list_print_literal(&out, "\", \"real\": \"");
-            list_print_json_strn(&out, r, rlen);
-            list_print_literal(&out, "\"}");
+            if (vlen >= PATH_MAX || rlen >= PATH_MAX) continue;
+            char vbuf[PATH_MAX], rbuf[PATH_MAX];
+            memcpy(vbuf, v, vlen); vbuf[vlen] = '\0';
+            memcpy(rbuf, r, rlen); rbuf[rlen] = '\0';
+            nm_catalog_count(&cat, vbuf, rbuf);
         }
         if (ws->payload.arg1 == ~0U) break;
     }
+    if (rc) goto skip_list;
+
+    list_print_literal(&out, "{\n  \"mods\": [");
+    for (int i = 0; i < cat.nmods; i++) {
+        struct nm_modinfo *m = &cat.mods[i];
+        if (i) list_print_literal(&out, ",");
+        list_print_literal(&out, "\n    {\"modId\": \"");
+        list_print_json_strn(&out, m->mod_id, strlen(m->mod_id));
+        list_print_literal(&out, "\", \"realName\": \"");
+        list_print_json_strn(&out, m->name, strlen(m->name));
+        list_print_str(&out, m->disable ? "\", \"disable\": true" : "\", \"disable\": false");
+        list_print_str(&out, m->skip ? ", \"skipMount\": true" : ", \"skipMount\": false");
+        list_print_literal(&out, ", \"root\": \"");
+        list_print_json_strn(&out, m->root, strlen(m->root));
+        list_print_literal(&out, "\", \"links\": [");
+        for (int k = 0; k < m->nmaps; k++) {
+            struct nm_mapping *mp = &cat.maps[m->first_map + k];
+            if (k) list_print_literal(&out, ",");
+            list_print_literal(&out, "\n        {\"virtual\": \"");
+            list_print_json_strn(&out, mp->vpath, strlen(mp->vpath));
+            list_print_literal(&out, "\", \"real\": \"");
+            list_print_json_strn(&out, mp->real, strlen(mp->real));
+            list_print_str(&out, mp->dir ? "\", \"dir\": true}" : "\", \"dir\": false}");
+        }
+        list_print_str(&out, m->nmaps ? "\n      ], " : "], ");
+        list_print_str(&out, m->has_injectable ? "\"hasInjectable\": true, " : "\"hasInjectable\": false, ");
+        list_print_literal(&out, "\"fileCount\": ");
+        list_print_uint(&out, m->count);
+        list_print_literal(&out, "}");
+    }
     list_print_literal(&out, "\n  ]\n}\n");
     list_flush(&out);
+skip_list:
+    nm_catalog_free(&cat);
     return rc ? nm_error("module list", rc) : 0;
 }
 
