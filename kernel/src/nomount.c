@@ -960,6 +960,16 @@ static int nm_xattr_set(const struct xattr_handler *handler, IDMAP_ARG struct de
     return proxy->orig->set(proxy->orig, IDMAP_CALL dentry, inode, name, buffer, size, flags);
 }
 
+static int nm_encode_fh(struct inode *inode, __u32 *fh, int *max_len, struct inode *parent)
+{
+    struct nm_sop *nm_sop;
+    if (nm_inode_is_virtual(inode)) return -ESTALE;
+    nm_sop = nm_get_nm_sop(smp_load_acquire(&inode->i_sb->s_op));
+    if (!nm_sop || !nm_sop->orig_export_op || !nm_sop->orig_export_op->encode_fh)
+        return -EOPNOTSUPP;
+    return nm_sop->orig_export_op->encode_fh(inode, fh, max_len, parent);
+}
+
 static int nm_shutdown_sync_fs(struct super_block *sb, int wait)
 {
     struct nm_sop *nm_sop = nm_get_nm_sop(smp_load_acquire(&sb->s_op));
@@ -1129,6 +1139,17 @@ static const struct inode_operations nm_dir_iops = {
 
 /* --- Hijacking Management --- */
 
+static void nm_install_export_hook(struct nm_sop *nm_sop)
+{
+    struct super_block *sb = nm_sop->sb;
+    if (!sb->s_export_op || nm_sop->orig_export_op) return;
+    nm_sop->orig_export_op = sb->s_export_op;
+    nm_sop->fake_export_op = *sb->s_export_op;
+    nm_sop->fake_export_op.encode_fh = nm_encode_fh;
+    smp_store_release(&sb->s_export_op, &nm_sop->fake_export_op);
+    nm_debug("export_ops hijacked for dev: 0x%x\n", sb->s_dev);
+}
+
 static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
 {
     struct nm_sop *nm_sop = nm_get_nm_sop(smp_load_acquire(&sb->s_op));
@@ -1149,6 +1170,7 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
             if (with_xattr) {
                 nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
                 nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
+                nm_install_export_hook(nm_sop);
             }
             if (!sb_rdonly(sb) && !nm_is_pseudo_fs(sb))
                 nm_sop->fake_sop.sync_fs = nm_shutdown_sync_fs;
@@ -1161,6 +1183,7 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
     } else {
         WRITE_ONCE(nm_sop->fake_sop.drop_inode, nm_hijacked_drop_inode);
         WRITE_ONCE(nm_sop->fake_sop.evict_inode, nm_hijacked_evict_inode);
+        nm_install_export_hook(nm_sop);
     }
 
     if (with_xattr && sb->s_xattr) {
@@ -1336,6 +1359,8 @@ static void nm_restore_superblocks(void)
             spin_unlock(&nm_sop->sb->s_inode_list_lock);
             if (READ_ONCE(nm_sop->sb->s_op) == &nm_sop->fake_sop)
                 smp_store_release(&nm_sop->sb->s_op, nm_sop->orig_sop);
+            if (nm_sop->orig_export_op && READ_ONCE(nm_sop->sb->s_export_op) == &nm_sop->fake_export_op)
+                smp_store_release(&nm_sop->sb->s_export_op, nm_sop->orig_export_op);
             if (nm_sop->fake_xattr) {
                 if (READ_ONCE(nm_sop->sb->s_xattr) == nm_sop->fake_xattr)
                     smp_store_release((const struct xattr_handler ***)&nm_sop->sb->s_xattr, nm_sop->orig_xattr);

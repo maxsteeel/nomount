@@ -11,6 +11,7 @@
 #include <linux/atomic.h>
 #include <linux/file.h>
 #include <linux/magic.h>
+#include <linux/exportfs.h>
 #include <linux/key-type.h>
 #include <linux/highmem.h>
 #include <linux/version.h>
@@ -67,6 +68,8 @@ struct nm_sop {
     const struct super_operations *orig_sop;
     const struct xattr_handler **orig_xattr;
     const struct xattr_handler **fake_xattr;
+    struct export_operations fake_export_op;
+    const struct export_operations *orig_export_op;
     struct super_block *sb;
     struct rcu_head rcu;
     struct list_head list;
