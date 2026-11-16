@@ -864,47 +864,26 @@ async function readModules(onlyMods = null) {
     if (errno) throw new Error(stderr || 'Failed to read modules');
 
     const data = JSON.parse(stdout);
+    const liveWhiteouts = new Set();
+    for (const r of data.rules) if (!r.real) liveWhiteouts.add(r.virtual);
+
     const modules = [];
-    const roots = new Map();
-    const links = new Map();
     for (const m of data.mods) {
         if (!m.hasInjectable) continue;
+        const inactive = m.disable || m.skipMount;
+        let activeCount = 0;
+        if (!inactive) {
+            const prefix = m.root + '/';
+            for (const r of data.rules) if (r.real && r.real.startsWith(prefix)) activeCount++;
+            for (const v of m.whiteoutPaths || []) if (liveWhiteouts.has(v)) activeCount++;
+        }
         const mod = {
-            modId: m.modId,
-            realName: m.realName,
-            disable: m.disable,
-            skipMount: m.skipMount,
-            fileCount: 0,
+            modId: m.modId, realName: m.realName,
+            disable: m.disable, skipMount: m.skipMount,
+            fileCount: activeCount,
         };
+        mod.statusKey = m.disable ? 'status_disabled' : m.skipMount ? 'status_skipped' : (activeCount > 0 ? 'status_active' : 'status_inactive');
         modules.push(mod);
-        if (!roots.has(m.root)) roots.set(m.root, []);
-        roots.get(m.root).push(mod);
-        for (const link of m.links) {
-            if (!links.has(link.virtual)) links.set(link.virtual, []);
-            links.get(link.virtual).push({ mod, real: link.real, dir: link.dir });
-        }
-    }
-
-    for (const { virtual, real } of data.rules) {
-        if (!real) continue;
-        const owners = new Set();
-        for (let path = real; path; path = path.slice(0, path.lastIndexOf('/'))) {
-            for (const mod of roots.get(path) || []) owners.add(mod);
-        }
-        for (let path = virtual; path; path = path.slice(0, path.lastIndexOf('/'))) {
-            const suffix = virtual.slice(path.length);
-            for (const link of links.get(path) || []) {
-                if ((link.dir || !suffix) && real === (suffix ? link.real.replace(/\/$/, '') + suffix : link.real)) owners.add(link.mod);
-            }
-        }
-        for (const mod of owners) mod.fileCount++;
-    }
-
-    for (const mod of modules) {
-        const { fileCount, disable, skipMount } = mod;
-        mod.statusKey = fileCount > 0
-            ? ((disable || skipMount) ? 'status_loaded' : 'status_active')
-            : (disable ? 'status_disabled' : (skipMount ? 'status_skipped' : 'status_inactive'));
     }
     return modules;
 }

@@ -109,6 +109,8 @@ struct nm_args {
     "my_bigball my_carrier my_company my_engineering my_heytap my_manifest " \
     "my_preload my_product my_region my_reserve my_stock"
 
+#define NM_MAX_WHITEOUTS 256
+
 struct nm_walk {
     struct nm_payload *payload;
     struct nm_output *output;
@@ -116,6 +118,9 @@ struct nm_walk {
     int first_link;
     int has_injectable;
     int error;
+    int rule_count;
+    int whiteout_count;
+    char whiteouts[NM_MAX_WHITEOUTS][PATH_MAX];
     char path[PATH_MAX];
 };
 
@@ -380,6 +385,7 @@ static int nm_emit(struct nm_walk *ctx, unsigned flags) {
     if (!rc) {
         const char *real = ctx->payload->cmd == NM_CMD_ADD_RULE && !(flags & NM_FLAG_WHITEOUT) ? ctx->path : NULL;
         rc = nm_queue_rule(ctx->payload, &global_rule, flags, NULL, vpath, real);
+        if (!rc) ctx->rule_count++;
     }
     if (rc && !ctx->error) ctx->error = rc;
     return 0;
@@ -496,10 +502,22 @@ static int nm_marker(int fd, const char *name) {
     return !S_ISDIR(st.st_mode);
 }
 
-static int nm_directory_rule(struct nm_walk *ctx, int fd) {
+static int nm_directory_rule(struct nm_walk *ctx, int fd, int emit) {
     int rc = nm_marker(fd, ".remove");
     if (rc < 0) return rc;
-    if (rc && (rc = nm_emit(ctx, NM_FLAG_WHITEOUT))) return rc;
+    if (rc) {
+        if (emit) return nm_emit(ctx, NM_FLAG_WHITEOUT);
+        if (ctx->whiteout_count < NM_MAX_WHITEOUTS) {
+            char vpath[PATH_MAX];
+            if (!nm_to_vpath(ctx->path + ctx->root_len + 1, vpath, sizeof(vpath))) {
+                size_t n = strlen(vpath);
+                memcpy(ctx->whiteouts[ctx->whiteout_count], vpath, n + 1);
+                ctx->whiteout_count++;
+            }
+        }
+        ctx->rule_count++;
+        return 0;
+    }
     int opaque = nm_marker(fd, ".replace");
     if (opaque < 0) return opaque;
     if (!opaque) {
@@ -508,11 +526,20 @@ static int nm_directory_rule(struct nm_walk *ctx, int fd) {
         if (n < 0 && errno != ENODATA && errno != ENOTSUP && errno != ERANGE) return -errno;
         opaque = n == 1 && value == 'y';
     }
-
     if (!opaque) return 0;
     int entries = nm_dir_has_content(fd, ".");
     if (entries < 0) return entries;
-    return nm_emit(ctx, entries ? NM_FLAG_OPAQUE : NM_FLAG_WHITEOUT);
+    if (emit) return nm_emit(ctx, entries ? NM_FLAG_OPAQUE : NM_FLAG_WHITEOUT);
+    if (!entries && ctx->whiteout_count < NM_MAX_WHITEOUTS) {
+        char vpath[PATH_MAX];
+        if (!nm_to_vpath(ctx->path + ctx->root_len + 1, vpath, sizeof(vpath))) {
+            size_t n = strlen(vpath);
+            memcpy(ctx->whiteouts[ctx->whiteout_count], vpath, n + 1);
+            ctx->whiteout_count++;
+        }
+    }
+    ctx->rule_count++;
+    return 0;
 }
  
 static noinline int nm_emit_link(struct nm_walk *ctx, int is_dir) {
@@ -543,10 +570,30 @@ static int nm_walk_module(struct nm_walk *ctx, int parent_fd, const char *name,
     if (type == DT_LNK) {
         if (fstatat(parent_fd, name, &st, 0)) return errno == ENOENT || errno == ENOTDIR ? 0 : -errno;
         type = st.st_mode >> 12;
-        if (ctx->output && (rc = nm_emit_link(ctx, type == DT_DIR))) return rc;
+        if (ctx->output) {
+            ctx->rule_count++;
+            if ((rc = nm_emit_link(ctx, type == DT_DIR))) return rc;
+            if (type == DT_DIR) return 0;
+        }
     }
     if (type != DT_DIR) {
-        if (ctx->output || !strcmp(name, ".replace") || !strcmp(name, ".remove")) return 0;
+        if (!strcmp(name, ".replace") || !strcmp(name, ".remove")) return 0;
+        if (ctx->output) {
+            if (type == DT_CHR) {
+                if (ctx->whiteout_count < NM_MAX_WHITEOUTS) {
+                    char vpath[PATH_MAX];
+                    if (!nm_to_vpath(ctx->path + ctx->root_len + 1, vpath, sizeof(vpath))) {
+                        size_t n = strlen(vpath);
+                        memcpy(ctx->whiteouts[ctx->whiteout_count], vpath, n + 1);
+                        ctx->whiteout_count++;
+                    }
+                }
+                ctx->rule_count++;
+            } else if (type == DT_REG) {
+                ctx->rule_count++;
+            }
+            return 0;
+        }
         if (type == DT_CHR) return nm_emit(ctx, NM_FLAG_WHITEOUT);
         if (type == DT_REG) return nm_emit(ctx, 0);
         return 0;
@@ -557,14 +604,13 @@ static int nm_walk_module(struct nm_walk *ctx, int parent_fd, const char *name,
     struct nm_ancestor here = { parent, st.st_dev, st.st_ino };
     for (const struct nm_ancestor *a = parent; a; a = a->parent)
         if (a->dev == here.dev && a->ino == here.ino) { rc = -ELOOP; goto done; }
-    if (!ctx->output && (rc = nm_directory_rule(ctx, dirfd(d)))) goto done;
+    if ((rc = nm_directory_rule(ctx, dirfd(d), !ctx->output))) goto done;
     size_t len = strlen(ctx->path);
     for (;;) {
         errno = 0;
         struct dirent *e = readdir(d);
         if (!e) { if (errno) rc = -errno; break; }
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        if (e->d_type == DT_REG && ctx->output) continue;
         rc = nm_path_join(ctx->path + len, sizeof(ctx->path) - len, "", e->d_name);
         if (rc) break;
         rc = nm_walk_module(ctx, dirfd(d), e->d_name, e->d_type, &here);
@@ -660,9 +706,21 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
         list_print_literal(&out, ", \"root\": \"");
         list_print_json_strn(&out, ctx.path, ctx.root_len);
         list_print_literal(&out, "\", \"links\": [");
+        ctx.rule_count = 0;
+        ctx.whiteout_count = 0;
         rc = nm_walk_partitions(&ctx, targets);
-        if (ctx.has_injectable) list_print_literal(&out, "\n      ], \"hasInjectable\": true}");
-        else list_print_literal(&out, "\n      ], \"hasInjectable\": false}");
+        if (ctx.has_injectable) list_print_literal(&out, "\n      ], \"hasInjectable\": true");
+        else list_print_literal(&out, "\n      ], \"hasInjectable\": false");
+        list_print_literal(&out, ", \"ruleCount\": ");
+        list_print_uint(&out, ctx.rule_count);
+        list_print_literal(&out, ", \"whiteoutPaths\": [");
+        for (int i = 0; i < ctx.whiteout_count; i++) {
+            if (i) list_print_literal(&out, ",");
+            list_print_literal(&out, "\"");
+            list_print_json_strn(&out, ctx.whiteouts[i], strlen(ctx.whiteouts[i]));
+            list_print_literal(&out, "\"");
+        }
+        list_print_literal(&out, "]}");
         mod_count++;
         if (rc) break;
     }
