@@ -1142,7 +1142,7 @@ static const struct inode_operations nm_dir_iops = {
 static void nm_install_export_hook(struct nm_sop *nm_sop)
 {
     struct super_block *sb = nm_sop->sb;
-    if (!sb->s_export_op || nm_sop->orig_export_op) return;
+    if (!sb->s_export_op || !sb->s_export_op->encode_fh || nm_sop->orig_export_op) return;
     nm_sop->orig_export_op = sb->s_export_op;
     nm_sop->fake_export_op = *sb->s_export_op;
     nm_sop->fake_export_op.encode_fh = nm_encode_fh;
@@ -1170,11 +1170,11 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
             if (with_xattr) {
                 nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
                 nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
-                nm_install_export_hook(nm_sop);
             }
             if (!sb_rdonly(sb) && !nm_is_pseudo_fs(sb))
                 nm_sop->fake_sop.sync_fs = nm_shutdown_sync_fs;
             smp_store_release(&sb->s_op, &nm_sop->fake_sop);
+            if (with_xattr) nm_install_export_hook(nm_sop);
         }
         list_add_tail_rcu(&nm_sop->list, &nm_sb_list);
         nm_debug("Superblock successfully hijacked for dev: 0x%x\n", sb->s_dev);
