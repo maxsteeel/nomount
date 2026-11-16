@@ -775,7 +775,10 @@ function initNavigation() {
 
 // Home
 async function loadHome(readModuleInfo = readModules) {
-    try { applyHomeData(JSON.parse(localStorage.getItem('nm_home_cache'))); } catch (e) { console.error("Error loading cache:", e); }
+    const cachedHome = localStorage.getItem('nm_home_cache');
+    if (cachedHome) {
+        try { applyHomeData(JSON.parse(cachedHome)); } catch (e) { console.error("Error loading cache:", e); }
+    }
 
     const script = `
         uname -r; echo "|||"
