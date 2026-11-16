@@ -867,6 +867,8 @@ async function readModules(onlyMods = null) {
     const modules = [];
     const roots = new Map();
     const links = new Map();
+    const byName = new Map();
+    let parent = null;
     for (const m of data.mods) {
         if (!m.hasInjectable) continue;
         const mod = {
@@ -879,21 +881,42 @@ async function readModules(onlyMods = null) {
         modules.push(mod);
         if (!roots.has(m.root)) roots.set(m.root, []);
         roots.get(m.root).push(mod);
+        const slash = m.root.lastIndexOf('/');
+        const name = m.root.slice(slash + 1);
+        const dir = m.root.slice(0, slash);
+        if (parent === null) parent = dir;
+        else if (parent !== dir) parent = false;
+        if (!byName.has(name)) byName.set(name, []);
+        byName.get(name).push(mod);
         for (const link of m.links) {
             if (!links.has(link.virtual)) links.set(link.virtual, []);
             links.get(link.virtual).push({ mod, real: link.real, dir: link.dir });
         }
     }
 
+    const rootPrefix = parent ? parent + '/' : null;
+
     for (const { virtual, real } of data.rules) {
         const owners = new Set();
-        for (let path = real; path; path = path.slice(0, path.lastIndexOf('/'))) {
-            for (const mod of roots.get(path) || []) owners.add(mod);
+        let matched = false;
+        if (rootPrefix && real.startsWith(rootPrefix)) {
+            const rest = real.slice(rootPrefix.length);
+            const cut = rest.indexOf('/');
+            const ownersByName = byName.get(cut < 0 ? rest : rest.slice(0, cut));
+            if (ownersByName) {
+                for (const mod of ownersByName) owners.add(mod);
+                matched = true;
+            }
         }
-        for (let path = links.size ? virtual : ''; path; path = path.slice(0, path.lastIndexOf('/'))) {
-            const suffix = virtual.slice(path.length);
-            for (const link of links.get(path) || []) {
-                if ((link.dir || !suffix) && real === (suffix ? link.real.replace(/\/$/, '') + suffix : link.real)) owners.add(link.mod);
+        if (!matched) {
+            for (let path = real; path; path = path.slice(0, path.lastIndexOf('/'))) {
+                for (const mod of roots.get(path) || []) owners.add(mod);
+            }
+            for (let path = links.size ? virtual : ''; path; path = path.slice(0, path.lastIndexOf('/'))) {
+                const suffix = virtual.slice(path.length);
+                for (const link of links.get(path) || []) {
+                    if ((link.dir || !suffix) && real === (suffix ? link.real.replace(/\/$/, '') + suffix : link.real)) owners.add(link.mod);
+                }
             }
         }
         for (const mod of owners) mod.fileCount++;
