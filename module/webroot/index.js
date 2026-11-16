@@ -993,7 +993,13 @@ let allAppsCache = [], showSystemApps = localStorage.getItem('nm_show_system_app
 async function readExclusionsJson() {
     try {
         const { stdout } = await exec(`cat ${FILES.exclusions} 2>/dev/null || echo "[]"`);
-        const parsed = JSON.parse(stdout.trim());
+        return parseExclusionsJson(stdout);
+    } catch (e) { return []; }
+}
+
+function parseExclusionsJson(text) {
+    try {
+        const parsed = JSON.parse(text.trim());
         return Array.isArray(parsed) ? parsed : [];
     } catch (e) { return []; }
 }
@@ -1024,20 +1030,47 @@ function buildExclusionCard(uid, app) {
     );
 }
 
+const NM_STATE_SEP = '<<<NMSTATE>>>';
+let uiStatePromise = null;
+
+function readUiState() {
+    if (!uiStatePromise) {
+        const clear = () => { uiStatePromise = null; };
+        uiStatePromise = (async () => {
+            const { stdout } = await exec(
+                `${NM_BIN} uid list 2>/dev/null || echo "[]"; echo "${NM_STATE_SEP}"; ` +
+                `[ -f "${FILES.disable}" ] && echo yes || echo no; echo "${NM_STATE_SEP}"; ` +
+                `[ -f "${FILES.dump_rules}" ] && echo yes || echo no; echo "${NM_STATE_SEP}"; ` +
+                `${NM_BIN} uid block_isolated 2>/dev/null; echo "${NM_STATE_SEP}"; ` +
+                `cat "${FILES.exclusions}" 2>/dev/null || echo "[]"`);
+            const parts = stdout.split(NM_STATE_SEP);
+            return {
+                uids: parts[0].trim(),
+                safeMode: parts[1].trim() === 'yes',
+                dumpRules: parts[2].trim() === 'yes',
+                isolated: parts[3].trim(),
+                exclusions: parts.slice(4).join(NM_STATE_SEP).trim(),
+            };
+        })();
+        uiStatePromise.then(clear, clear);
+    }
+    return uiStatePromise;
+}
+
 async function loadExclusions() {
     const listContainer = document.getElementById('exclusions-list');
     if (!listContainer) return;
     const loadId = ++exclusionsLoadId;
 
     try {
-        const { stdout } = await exec(`${NM_BIN} uid list 2>/dev/null`);
+        const state = await readUiState();
         let blockedUids = [];
         try {
-            const parsed = JSON.parse(stdout.trim());
+            const parsed = JSON.parse(state.uids);
             if (Array.isArray(parsed)) blockedUids = parsed.map(String);
         } catch (e) { console.warn("No UIDs found or parse error"); }
 
-        const savedData = await readExclusionsJson();
+        const savedData = parseExclusionsJson(state.exclusions);
         const appsMap = new Map(savedData.map(app => [String(app.uid), app]));
 
         requestAnimationFrame(() => {
@@ -1389,20 +1422,21 @@ async function loadOptions() {
     const swIso = document.querySelector('#setting-isolated input');
     const swIsoCard = document.getElementById('setting-isolated-card');
 
+    const state = await readUiState();
+
     if (swSafe)
-        swSafe.checked = (await exec(`[ -f ${FILES.disable} ] && echo yes`)).stdout.includes('yes');
+        swSafe.checked = state.safeMode;
 
     if (swDumpRules) {
-        swDumpRules.checked = (await exec(`[ -f ${FILES.dump_rules} ] && echo yes`)).stdout.includes('yes');
-        setDumpNowVisible(swDumpRules.checked);
+        swDumpRules.checked = state.dumpRules;
+        setDumpNowVisible(state.dumpRules);
     }
 
     if (swIso && swIsoCard) {
         const safeModeCard = document.getElementById('setting-safemode').closest('.segment-card');
-        const isoCheck = await exec(`${NM_BIN} uid block_isolated`);
-        const out = isoCheck.stdout.trim();
+        const out = state.isolated;
 
-        if (isoCheck.errno === 0 && (out === '1' || out === '0')) {
+        if (out === '1' || out === '0') {
             swIsoCard.style.display = '';
             if (safeModeCard) {
                 safeModeCard.style.borderStartStartRadius = '';
