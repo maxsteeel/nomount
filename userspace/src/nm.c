@@ -23,7 +23,10 @@ int main(int argc, char **argv) {
             else if (strcmp(argv[i], "--uid") == 0 && i + 1 < argc) {
                 const char *s = argv[++i];
                 unsigned int uid = 0;
-                while (*s) uid = (uid << 3) + (uid << 1) + (*s++ - '0');
+                if (nm_parse_uid(s, &uid)) {
+                    print_literal("nm: invalid --uid value\n");
+                    goto do_exit;
+                }
                 args.target_uid = uid;
                 args.target_uid_end = uid;
             }
@@ -32,10 +35,16 @@ int main(int argc, char **argv) {
                 if (strcmp(s, "all") == 0) {
                     args.target_uid = 0;
                     args.target_uid_end = 0xFFFFFFFFU;
-                } else parse_uid_range(s, &args.target_uid, &args.target_uid_end);
+                } else if (parse_uid_range(s, &args.target_uid, &args.target_uid_end)) {
+                    print_literal("nm: invalid --uid-range value\n");
+                    goto do_exit;
+                }
             }
             else if (strcmp(argv[i], "--uid-excluded") == 0 && i + 1 < argc) {
-                parse_uid_range(argv[++i], &args.deny_start, &args.deny_end);
+                if (parse_uid_range(argv[++i], &args.deny_start, &args.deny_end)) {
+                    print_literal("nm: invalid --uid-excluded value\n");
+                    goto do_exit;
+                }
             }
             else if (strcmp(argv[i], "--json") == 0 || strcmp(argv[i], "json") == 0) { args.is_json = 1; }
             else if (strcmp(argv[i], "--whiteout") == 0) { args.is_whiteout = 1; }
@@ -84,12 +93,19 @@ int main(int argc, char **argv) {
         case ACTION_UID_ADD:
         case ACTION_UID_DEL: {
             if (p_count < 1) goto do_exit;
+            for (int i = 0; i < p_count; i++) {
+                unsigned int uid = 0;
+                if (nm_parse_uid(argv[i], &uid)) {
+                    print_literal("nm: invalid uid value\n");
+                    exit_code = 1;
+                    goto do_exit;
+                }
+            }
             payload->cmd = (args.action == ACTION_UID_ADD) ? NM_CMD_ADD_UID : NM_CMD_DEL_UID;
             exit_code = 0;
             for (int i = 0; i < p_count; i++) {
                 unsigned int uid = 0;
-                const char *s = argv[i];
-                while (*s) uid = (uid << 3) + (uid << 1) + (*s++ - '0');
+                nm_parse_uid(argv[i], &uid);
                 payload->target_uid = uid;
                 exit_code |= (nm_send_payload(payload) < 0);
             }

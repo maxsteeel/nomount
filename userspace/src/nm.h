@@ -128,15 +128,37 @@ struct nm_ancestor {
 /* --- UTILS --- */
 #define noinline __attribute__((noinline))
 
-static noinline void parse_uid_range(const char *s, unsigned int *start, unsigned int *end) {
+static noinline int nm_parse_uid(const char *s, unsigned int *out) {
+    unsigned int uid = 0;
+    if (!*s) return -EINVAL;
+    for (; *s; s++) {
+        if (*s < '0' || *s > '9') return -EINVAL;
+        uid = (uid << 3) + (uid << 1) + (*s - '0');
+    }
+    *out = uid;
+    return 0;
+}
+
+static noinline int parse_uid_range(const char *s, unsigned int *start, unsigned int *end) {
     unsigned int first = 0, last = 0;
-    while (*s && *s != '-') first = (first << 3) + (first << 1) + (*s++ - '0');
-    if (*s == '-') s++;
-    if (*s) while (*s) last = (last << 3) + (last << 1) + (*s++ - '0');
-    else last = first;
+    const char *dash = strchr(s, '-');
+    size_t head = dash ? (size_t)(dash - s) : strlen(s);
+    char buf[16];
+    if (head >= sizeof(buf)) return -EINVAL;
+    memcpy(buf, s, head);
+    buf[head] = '\0';
+    if (nm_parse_uid(buf, &first)) return -EINVAL;
+    if (!dash) {
+        last = first;
+    } else if (!dash[1]) {
+        last = first;
+    } else {
+        if (nm_parse_uid(dash + 1, &last)) return -EINVAL;
+    }
     if (last < first) { unsigned int t = first; first = last; last = t; }
     *start = first;
     *end = last;
+    return 0;
 }
 
 static noinline void parse_arguments(long argc, char **argv, struct nm_args *parsed_args) {
@@ -442,6 +464,7 @@ static int nm_dir_has_content(int parent, const char *name) {
 
 static noinline int nm_mod_in_list(const char *mod_id, const char *list) {
     size_t id_len = strlen(mod_id);
+    if (id_len == strlen(list) && !memcmp(mod_id, list, id_len)) return 1;
     const char *p = list;
     while (*p) {
         const char *comma = strchr(p, ',');
@@ -457,13 +480,22 @@ static int nm_read_module_name(const char *prop_path, char *name_out, size_t nam
     name_out[0] = '\0';
     int fd = open(prop_path, O_RDONLY);
     if (fd < 0) return -errno;
-    char buf[512];
-    ssize_t n;
-    do { n = read(fd, buf, sizeof(buf) - 1); } while (n < 0 && errno == EINTR);
-    int error = n < 0 ? -errno : 0;
+    char buf[4096];
+    size_t used = 0;
+    int error = 0;
+    while (used < sizeof(buf) - 1) {
+        ssize_t n = read(fd, buf + used, sizeof(buf) - 1 - used);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            error = -errno;
+            break;
+        }
+        if (n == 0) break;
+        used += n;
+    }
     close(fd);
     if (error) return error;
-    buf[n] = '\0';
+    buf[used] = '\0';
 
     const char *p = buf;
     while (*p) {
