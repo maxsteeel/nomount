@@ -1065,8 +1065,10 @@ async function getRealUidEntries() {
     let userIds = [...usersOut.matchAll(/UserInfo\{(\d+):/g)].map(m => m[1]);
     if (userIds.length === 0) userIds = ['0'];
 
-    for (const userId of userIds) {
-        const { stdout } = await exec(`pm list packages -U --user ${userId} 2>/dev/null`);
+    const results = await Promise.all(userIds.map(userId =>
+        exec(`pm list packages -U --user ${userId} 2>/dev/null`)));
+    results.forEach(({ stdout }, i) => {
+        const userId = userIds[i];
         for (const line of stdout.split('\n')) {
             const m = line.match(/^package:(\S+)\s+uid:(\d+)/);
             if (!m) continue;
@@ -1074,33 +1076,30 @@ async function getRealUidEntries() {
             if (!entries.has(pkgName)) entries.set(pkgName, []);
             entries.get(pkgName).push({ uid, userId });
         }
-    }
+    });
     return entries;
 }
 
-async function ensureAppsCache(force = false) {
-    if (!force && allAppsCache.length > 0) return;
+const NM_APPS_CACHE_TTL = 300000;
 
-    if (!force) {
-        try {
-            const cachedApps = localStorage.getItem('nm_apps_cache');
-            if (cachedApps) {
-                allAppsCache = JSON.parse(cachedApps);
-                return;
-            }
-        } catch (e) {
-            console.warn("Failed to load apps from LocalStorage, fetching fresh data...", e);
-        }
+function readAppsCache() {
+    try {
+        const raw = localStorage.getItem('nm_apps_cache');
+        if (!raw) return null;
+        const apps = JSON.parse(raw);
+        if (!Array.isArray(apps)) return null;
+        const ts = parseInt(localStorage.getItem('nm_apps_cache_ts') || '0', 10) || 0;
+        return { apps, fresh: Date.now() - ts < NM_APPS_CACHE_TTL };
+    } catch (e) {
+        console.warn("Failed to load apps from LocalStorage", e);
+        return null;
     }
+}
 
-    if (appLoadingPromise) {
-        await appLoadingPromise;
-        if (!force || allAppsCache.length > 0) return;
-    }
-
+function refreshAppsCache() {
+    if (appLoadingPromise) return appLoadingPromise;
     appLoadingPromise = (async () => {
         try {
-            if (force) allAppsCache = [];
             let ksuWait = 10;
             while ((typeof ksu === 'undefined' || !ksu.listPackages) && ksuWait > 0) {
                 await delay(200); ksuWait--;
@@ -1156,6 +1155,7 @@ async function ensureAppsCache(force = false) {
 
             try {
                 localStorage.setItem('nm_apps_cache', JSON.stringify(allAppsCache));
+                localStorage.setItem('nm_apps_cache_ts', String(Date.now()));
             } catch (e) {
                 console.warn("Failed to save apps cache to LocalStorage. Data might be too large.", e);
             }
@@ -1168,13 +1168,46 @@ async function ensureAppsCache(force = false) {
                 }
             }, 100);
 
+            renderAppsIfOpen();
         } catch (e) {
             console.error("Error in ensureAppsCache:", e);
+            if (!allAppsCache.length) {
+                const fb = readAppsCache();
+                if (fb) allAppsCache = fb.apps;
+            }
         } finally { 
             appLoadingPromise = null; 
         }
     })();
     return appLoadingPromise;
+}
+
+async function ensureAppsCache(force = false) {
+    if (!force && allAppsCache.length > 0) return;
+
+    if (!force) {
+        const cached = readAppsCache();
+        if (cached) {
+            allAppsCache = cached.apps;
+            if (cached.fresh) return;
+            refreshAppsCache();
+            return;
+        }
+    }
+
+    if (appLoadingPromise) {
+        await appLoadingPromise;
+        if (!force || allAppsCache.length > 0) return;
+    }
+
+    await refreshAppsCache();
+}
+
+function renderAppsIfOpen() {
+    const modal = document.getElementById('app-selector-modal');
+    if (!modal?.classList.contains('active')) return;
+    const search = document.getElementById('app-search-input');
+    renderFilteredApps(search ? search.value : '');
 }
 
 function closeAppSelector(fromHistory = false) {
@@ -2031,9 +2064,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     restoreThemeFromDisk();
     document.body.classList.remove('loading');
     if ('requestIdleCallback' in window) {
-        requestIdleCallback(() => ensureAppsCache(true));
+        requestIdleCallback(() => ensureAppsCache());
     } else {
-        setTimeout(() => ensureAppsCache(true), 200);
+        setTimeout(() => ensureAppsCache(), 200);
     }
 
     try {
