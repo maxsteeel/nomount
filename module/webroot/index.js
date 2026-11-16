@@ -723,15 +723,13 @@ function switchToTab(target, pushToHistory = true) {
         }
     }
 
-    setTimeout(() => {
-        if (!viewLoadState[target]) {
-            viewLoadState[target] = true;
-            if (target === 'view-home') loadHome();
-            else if (target === 'view-modules') loadModules();
-            else if (target === 'view-exclusions') loadExclusions();
-            else if (target === 'view-options') loadOptions();
-        }
-    }, 0);
+    if (!viewLoadState[target]) {
+        viewLoadState[target] = true;
+        if (target === 'view-home') loadHome();
+        else if (target === 'view-modules') loadModules();
+        else if (target === 'view-exclusions') loadExclusions();
+        else if (target === 'view-options') loadOptions();
+    }
 }
 
 function updateTopAppBar() {
@@ -750,14 +748,15 @@ function updateTopAppBar() {
         return;
     }
 
-    const titleOpacity = Math.max(0, Math.min(1, (UI.c.scrollTop - 18) / 24));
+    const scrollTop = UI.c.scrollTop;
+    const titleOpacity = Math.max(0, Math.min(1, (scrollTop - 18) / 24));
 
     if (UI.title.textContent !== currentActiveViewTitle)
         UI.title.textContent = currentActiveViewTitle;
- 
-    UI.bar.style.setProperty('--top-app-bar-opacity', UI.c.scrollTop > 0.5 ? '1' : '0');
+
+    UI.bar.style.setProperty('--top-app-bar-opacity', scrollTop > 0.5 ? '1' : '0');
     UI.bar.style.setProperty('--top-app-title-opacity', titleOpacity.toFixed(3));
-    UI.bar.classList.toggle('visible', UI.c.scrollTop > 0.5);
+    UI.bar.classList.toggle('visible', scrollTop > 0.5);
     UI.bar.classList.toggle('show-title', titleOpacity > 0);
     UI.bar.setAttribute('aria-hidden', titleOpacity > 0.5 ? 'false' : 'true');
 }
@@ -1865,38 +1864,35 @@ function initDelegationAndAttach() {
         }
     };
 
-    document.getElementById('modules-list')?.addEventListener('change', (e) => {
+    document.getElementById('modules-list')?.addEventListener('change', async (e) => {
         const toggle = e.target.closest('.switch-input');
-        if (toggle) {
-            const labelContainer = toggle.closest('.custom-switch');
-            if (labelContainer.dataset.busy) {
-                e.preventDefault();
-                return;
-            }
-            const card = toggle.closest('.module-card');
-            const modId = card.dataset.moduleId;
-            labelContainer.dataset.busy = 'true';
-            labelContainer.classList.add('switch-busy');
-            const isChecked = toggle.checked;
+        if (!toggle) return;
+        const labelContainer = toggle.closest('.custom-switch');
+        if (labelContainer.dataset.busy) {
+            e.preventDefault();
+            return;
+        }
+        const card = toggle.closest('.module-card');
+        const modId = card.dataset.moduleId;
+        labelContainer.dataset.busy = 'true';
+        labelContainer.classList.add('switch-busy');
+        const isChecked = toggle.checked;
 
-            setTimeout(async () => {
-                try {
-                    if (isChecked) { await exec(`rm -f ${shellQuote(`${MOD_DIR}/${modId}/disable`)}`); await loadModule(modId); }
-                    else { await unloadModule(modId); await exec(`touch ${shellQuote(`${MOD_DIR}/${modId}/disable`)}`); }
-                    await updateModuleCardDOM(card, modId);
-                } catch (err) {
-                    showToast(`Error: ${err.message}`);
-                    toggle.checked = !isChecked;
-                } finally {
-                    labelContainer.classList.remove('switch-busy');
-                    delete labelContainer.dataset.busy;
-                    loadHome();
-                }
-            }, 0);
+        try {
+            if (isChecked) { await exec(`rm -f ${shellQuote(`${MOD_DIR}/${modId}/disable`)}`); await loadModule(modId); }
+            else { await unloadModule(modId); await exec(`touch ${shellQuote(`${MOD_DIR}/${modId}/disable`)}`); }
+            await updateModuleCardDOM(card, modId);
+        } catch (err) {
+            showToast(`Error: ${err.message}`);
+            toggle.checked = !isChecked;
+        } finally {
+            labelContainer.classList.remove('switch-busy');
+            delete labelContainer.dataset.busy;
+            loadHome();
         }
     });
 
-    document.getElementById('modules-list')?.addEventListener('click', (e) => {
+    document.getElementById('modules-list')?.addEventListener('click', async (e) => {
         const hotBtn = e.target.closest('.btn-hot-action');
         if (hotBtn && !hotBtn.disabled) {
             hotBtn.disabled = true;
@@ -1907,24 +1903,22 @@ function initDelegationAndAttach() {
             const originalText = btnSpan.textContent;
             btnSpan.textContent = translate('loading') || '...';
 
-            setTimeout(async () => {
-                try {
-                    isLoaded ? await unloadModule(modId) : await loadModule(modId);
-                    await updateModuleCardDOM(card, modId);
-                }
-                catch (err) {
-                    showToast(`Error: ${err.message}`);
-                    btnSpan.textContent = originalText;
-                }
-                finally {
-                    hotBtn.disabled = false;
-                    loadHome();
-                }
-            }, 0);
+            try {
+                isLoaded ? await unloadModule(modId) : await loadModule(modId);
+                await updateModuleCardDOM(card, modId);
+            }
+            catch (err) {
+                showToast(`Error: ${err.message}`);
+                btnSpan.textContent = originalText;
+            }
+            finally {
+                hotBtn.disabled = false;
+                loadHome();
+            }
         }
     });
 
-    document.getElementById('modules-list')?.addEventListener('click', (e) => {
+    document.getElementById('modules-list')?.addEventListener('click', async (e) => {
     const skipBtn = e.target.closest('.btn-skip-action');
     if (skipBtn && !skipBtn.disabled) {
         skipBtn.disabled = true;
@@ -1933,18 +1927,16 @@ function initDelegationAndAttach() {
         const wasSkipped = skipBtn.classList.contains('unskip');
         const skipFile = `${MOD_DIR}/${modId}/skip_mount`;
 
-        setTimeout(async () => {
-            try {
-                await exec(wasSkipped ? `rm -f ${shellQuote(skipFile)}` : `touch ${shellQuote(skipFile)}`);
-                skipBtn.classList.toggle('unskip', !wasSkipped);
-                skipBtn.querySelector('span').textContent = translate(!wasSkipped ? 'modules_unskip' : 'modules_skip');
-                await updateModuleCardDOM(card, modId);
-            } catch (err) {
-                showToast(`Error: ${err.message}`);
-            } finally {
-                skipBtn.disabled = false;
-            }
-        }, 0);
+        try {
+            await exec(wasSkipped ? `rm -f ${shellQuote(skipFile)}` : `touch ${shellQuote(skipFile)}`);
+            skipBtn.classList.toggle('unskip', !wasSkipped);
+            skipBtn.querySelector('span').textContent = translate(!wasSkipped ? 'modules_unskip' : 'modules_skip');
+            await updateModuleCardDOM(card, modId);
+        } catch (err) {
+            showToast(`Error: ${err.message}`);
+        } finally {
+            skipBtn.disabled = false;
+        }
     }
 });
 
@@ -1956,9 +1948,7 @@ function initDelegationAndAttach() {
             const label = item.dataset.label;
             item.style.opacity = '0.5';
             item.style.pointerEvents = 'none';
-            setTimeout(() => {
-                removeExclusion(uid, label, item);
-            }, 0);
+            removeExclusion(uid, label, item);
         }
     });
 
