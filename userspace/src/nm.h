@@ -122,7 +122,6 @@ struct nm_modinfo {
 };
 
 struct nm_mapping {
-    int module;
     char *vpath;
     char *real;
     int dir;
@@ -139,7 +138,6 @@ struct nm_walk {
     struct nm_payload *payload;
     struct nm_catalog *catalog;
     int module_index;
-    int list_mode;
     size_t root_len;
     int has_injectable;
     int error;
@@ -184,7 +182,6 @@ static int nm_catalog_add_mapping(struct nm_catalog *cat, int module, const char
         cat->maps_cap = cap;
     }
     struct nm_mapping *m = &cat->maps[cat->nmaps];
-    m->module = module;
     m->vpath = nm_strdup(vpath);
     m->real = nm_strdup(real);
     if (!m->vpath || !m->real) return -ENOMEM;
@@ -206,7 +203,6 @@ static void nm_catalog_free(struct nm_catalog *cat) {
     }
     free(cat->mods);
     free(cat->maps);
-    memset(cat, 0, sizeof(*cat));
 }
 
 static int nm_real_matches(const char *map_real, const char *suffix, const char *real) {
@@ -218,22 +214,13 @@ static int nm_real_matches(const char *map_real, const char *suffix, const char 
 }
 
 static void nm_catalog_count(struct nm_catalog *cat, const char *virtual, const char *real) {
-    int matched = 0;
-
     for (int i = 0; i < cat->nmods; i++) {
         struct nm_modinfo *m = &cat->mods[i];
-        if (!m->has_injectable) continue;
         size_t rl = strlen(m->root);
-        if (strncmp(real, m->root, rl)) continue;
-        if (real[rl] && real[rl] != '/') continue;
-        m->count++;
-        matched = 1;
-    }
-    if (matched) return;
-
-    for (int i = 0; i < cat->nmods; i++) {
-        struct nm_modinfo *m = &cat->mods[i];
-        if (!m->has_injectable) continue;
+        if (!strncmp(real, m->root, rl) && (!real[rl] || real[rl] == '/')) {
+            m->count++;
+            continue;
+        }
         for (int k = 0; k < m->nmaps; k++) {
             struct nm_mapping *mp = &cat->maps[m->first_map + k];
             size_t vl = strlen(mp->vpath);
@@ -277,9 +264,7 @@ static noinline int parse_uid_range(const char *s, unsigned int *start, unsigned
     memcpy(buf, s, head);
     buf[head] = '\0';
     if (nm_parse_uid(buf, &first)) return -EINVAL;
-    if (!dash) {
-        last = first;
-    } else if (!dash[1]) {
+    if (!dash || !dash[1]) {
         last = first;
     } else {
         if (nm_parse_uid(dash + 1, &last)) return -EINVAL;
@@ -534,7 +519,6 @@ static noinline int nm_collect_mapping(struct nm_walk *ctx, unsigned flags) {
     if (!(flags & NM_FLAG_WHITEOUT) && !realpath(ctx->path, target)) return -errno;
     int rc = nm_to_vpath(ctx->path + ctx->root_len + 1, virtual, sizeof(virtual));
     if (rc) return rc;
-    if (!ctx->catalog) return 0;
     return nm_catalog_add_mapping(ctx->catalog, ctx->module_index, virtual, target,
                                    (flags & NM_FLAG_VIRTUAL_DIR) ? 1 : 0);
 }
@@ -542,7 +526,7 @@ static noinline int nm_collect_mapping(struct nm_walk *ctx, unsigned flags) {
 static void nm_emit(struct nm_walk *ctx, unsigned flags) {
     static const struct nm_args global_rule;
     int rc;
-    if (ctx->list_mode) {
+    if (ctx->catalog) {
         if (!(flags & NM_FLAG_WHITEOUT)) return;
         rc = nm_collect_mapping(ctx, flags);
     } else {
@@ -709,12 +693,12 @@ static int nm_walk_module(struct nm_walk *ctx, int parent_fd, const char *name,
     if (type == DT_LNK) {
         if (fstatat(parent_fd, name, &st, 0)) return errno == ENOENT || errno == ENOTDIR ? 0 : -errno;
         type = st.st_mode >> 12;
-        if (ctx->list_mode && (rc = nm_collect_mapping(ctx, type == DT_DIR ? NM_FLAG_VIRTUAL_DIR : 0))) return rc;
+        if (ctx->catalog && (rc = nm_collect_mapping(ctx, type == DT_DIR ? NM_FLAG_VIRTUAL_DIR : 0))) return rc;
     }
     if (type != DT_DIR) {
         if (!strcmp(name, ".replace") || !strcmp(name, ".remove")) return 0;
         if (type == DT_CHR) nm_emit(ctx, NM_FLAG_WHITEOUT);
-        else if (type == DT_REG && !ctx->list_mode) nm_emit(ctx, 0);
+        else if (type == DT_REG && !ctx->catalog) nm_emit(ctx, 0);
         return 0;
     }
     DIR *d = nm_open_dir(parent_fd, name);
@@ -730,7 +714,7 @@ static int nm_walk_module(struct nm_walk *ctx, int parent_fd, const char *name,
         struct dirent *e = readdir(d);
         if (!e) { if (errno) rc = -errno; break; }
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        if (e->d_type == DT_REG && ctx->list_mode) continue;
+        if (e->d_type == DT_REG && ctx->catalog) continue;
         rc = nm_path_join(ctx->path + len, sizeof(ctx->path) - len, "", e->d_name);
         if (rc) break;
         rc = nm_walk_module(ctx, dirfd(d), e->d_name, e->d_type, &here);
@@ -799,7 +783,7 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
         if (mod_id[0] == '.' || !strcmp(mod_id, "nomount")) continue;
         if (args->mod_only && !nm_mod_in_list(mod_id, args->mod_only)) continue;
         char mod_path[PATH_MAX], prop_path[PATH_MAX], name[256];
-        struct nm_walk ctx = { .list_mode = 1, .catalog = &cat };
+        struct nm_walk ctx = { .catalog = &cat };
         if ((rc = nm_path_join(mod_path, sizeof(mod_path), modules_dir, mod_id))) break;
         if ((rc = nm_dir_exists(mod_path)) < 0) break;
         if (!rc) continue;
