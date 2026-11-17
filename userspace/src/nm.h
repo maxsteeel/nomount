@@ -610,7 +610,8 @@ static int nm_read_module_name(const char *prop_path, char *name_out, size_t nam
     const char *p = buf;
     while (*p) {
         if (!strncmp(p, "name=", 5)) {
-            size_t len = strcspn(p + 5, "\r\n");
+            size_t len = 0;
+            while (p[5 + len] && p[5 + len] != '\r' && p[5 + len] != '\n') len++;
             if (len >= name_size) len = name_size - 1;
             memcpy(name_out, p + 5, len);
             name_out[len] = '\0';
@@ -630,8 +631,10 @@ static int nm_dir_exists(const char *path) {
 }
 
 static int nm_next_partition(const char **targets, char *part) {
-    const char *p = *targets + strspn(*targets, " ");
-    size_t n = strcspn(p, " ");
+    const char *p = *targets;
+    while (*p == ' ') p++;
+    size_t n = 0;
+    while (p[n] && p[n] != ' ') n++;
     if (n >= PATH_MAX) return -ENAMETOOLONG;
     memcpy(part, p, n);
     part[n] = '\0';
@@ -842,20 +845,7 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
         list_print_json_strn(&out, m->name, strlen(m->name));
         list_print_str(&out, m->disable ? "\", \"disable\": true" : "\", \"disable\": false");
         list_print_str(&out, m->skip ? ", \"skipMount\": true" : ", \"skipMount\": false");
-        list_print_literal(&out, ", \"root\": \"");
-        list_print_json_strn(&out, m->root, strlen(m->root));
-        list_print_literal(&out, "\", \"links\": [");
-        for (int k = 0; k < m->nmaps; k++) {
-            struct nm_mapping *mp = &cat.maps[m->first_map + k];
-            if (k) list_print_literal(&out, ",");
-            list_print_literal(&out, "\n        {\"virtual\": \"");
-            list_print_json_strn(&out, mp->vpath, strlen(mp->vpath));
-            list_print_literal(&out, "\", \"real\": \"");
-            list_print_json_strn(&out, mp->real, strlen(mp->real));
-            list_print_str(&out, mp->dir ? "\", \"dir\": true}" : "\", \"dir\": false}");
-        }
-        list_print_str(&out, m->nmaps ? "\n      ], " : "], ");
-        list_print_str(&out, m->has_injectable ? "\"hasInjectable\": true, " : "\"hasInjectable\": false, ");
+        list_print_str(&out, m->has_injectable ? ", \"hasInjectable\": true, " : ", \"hasInjectable\": false, ");
         list_print_literal(&out, "\"fileCount\": ");
         list_print_uint(&out, m->count);
         list_print_literal(&out, "}");
