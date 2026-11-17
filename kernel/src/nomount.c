@@ -76,6 +76,11 @@ static struct nm_rule *nm_select_rule(struct nm_leaf *leaf, unsigned int uid)
     return fallback;
 }
 
+static inline u32 nm_name_hash(const char *name, size_t len)
+{
+    return full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, name, len);
+}
+
 static struct nm_leaf *nm_find_leaf_in_dir(struct nm_dir_node *dir_node, const char *name, size_t len)
 {
     struct nm_child_array *children;
@@ -85,7 +90,7 @@ static struct nm_leaf *nm_find_leaf_in_dir(struct nm_dir_node *dir_node, const c
     if (!dir_node || !(children = rcu_dereference_check(dir_node->children, lockdep_is_held(&nm_mutex))))
         return NULL;
     entries = nm_entries(children);
-    hash = full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, name, len);
+    hash = nm_name_hash(name, len);
     if (!children->bucket_slots) {
         for (i = 0; i < children->count; i++)
             if (entries[i].hash == hash && nm_child_matches(entries[i].leaf, name, len))
@@ -1454,7 +1459,7 @@ static int nm_inject_child_locked(struct nm_dir_node *dir_node, struct nm_leaf *
 
     if (nm_find_leaf_in_dir(dir_node, name, name_len)) return -EEXIST;
     leaf->child_len = name_len;
-    struct nm_child child = { .leaf = leaf, .hash = full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, name, name_len) };
+    struct nm_child child = { .leaf = leaf, .hash = nm_name_hash(name, name_len) };
     leaf->child_hash = (u16)child.hash;
 
     if (!(array = nm_alloc_child_array(count + 1))) return -ENOMEM;
@@ -1511,10 +1516,9 @@ static struct nm_dir_node *nm_delete_child_locked(struct nm_leaf *leaf, bool cle
     return dir_node;
 }
 
-static struct nm_leaf *nm_find_leaf(const char *path, u16 len)
+static struct nm_leaf *nm_find_leaf(const char *path, u16 len, u32 hash)
 {
     struct nm_leaf *leaf;
-    u32 hash = full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, path, len);
     hash_for_each_possible(nm_leaves_ht, leaf, ht_node, hash) {
         if (leaf->v_hash == hash && leaf->v_len == len && !memcmp(leaf->paths, path, len)) return leaf;
     }
@@ -1563,7 +1567,7 @@ static inline void nm_copy_rule(struct nm_rule *dst, const struct nm_rule *src)
     if (dst->r_path.dentry) path_get(&dst->r_path);
 }
 
-static struct nm_leaf *nm_alloc_leaf(const char *path, u16 len)
+static struct nm_leaf *nm_alloc_leaf(const char *path, u16 len, u32 hash)
 {
     struct nm_leaf *leaf = kzalloc(sizeof(*leaf) + len + 1, GFP_KERNEL);
     if (!leaf) return ERR_PTR(-ENOMEM);
@@ -1571,8 +1575,8 @@ static struct nm_leaf *nm_alloc_leaf(const char *path, u16 len)
     atomic_set(&leaf->refs, 1);
     memcpy(leaf->paths, path, len);
     leaf->v_len = len;
-    leaf->v_hash = full_name_hash((const void *)(unsigned long)NM_MAGIC_SIG, path, len);
-    leaf->v_ino = (unsigned long)leaf->v_hash;
+    leaf->v_hash = hash;
+    leaf->v_ino = hash;
     return leaf;
 }
 
@@ -1667,6 +1671,11 @@ static void nm_shutdown_release(void)
     flush_work(&nm_reclaim_work);
 }
 
+static struct nm_rule_array nm_virtual_parent_rules = {
+    .count = 1,
+    .rules = { { .flags = NM_FLAG_IS_DIR | NM_FLAG_VIRTUAL_DIR } },
+};
+
 static void nm_retire_array_locked(struct nm_rule_array *arr)
 {
     arr->next = nm_retired_arrays;
@@ -1677,13 +1686,13 @@ static void nm_retire_array_locked(struct nm_rule_array *arr)
 static void nm_publish_rules_locked(struct nm_leaf *leaf, struct nm_rule_array *array, struct nm_rule_array *old)
 {
     struct nm_dir_node *parent = leaf->parent_dir;
-    bool before = old && nm_rules_need_readdir(leaf, old);
+    bool before = nm_rules_need_readdir(leaf, old);
     bool after = nm_rules_need_readdir(leaf, array);
 
     if (parent && !before && after) WRITE_ONCE(parent->readdir_count, parent->readdir_count + 1);
     rcu_assign_pointer(leaf->rules, array);
     if (parent && before && !after) WRITE_ONCE(parent->readdir_count, parent->readdir_count - 1);
-    if (old) nm_retire_array_locked(old);
+    if (old != &nm_virtual_parent_rules) nm_retire_array_locked(old);
 }
 
 static void nm_retire_leaf_locked(struct nm_leaf *leaf)
@@ -1693,7 +1702,7 @@ static void nm_retire_leaf_locked(struct nm_leaf *leaf)
     RCU_INIT_POINTER(leaf->rules, NULL);
     leaf->next = nm_retired_leaves;
     nm_retired_leaves = leaf;
-    if (array) nm_retire_array_locked(array);
+    if (array != &nm_virtual_parent_rules) nm_retire_array_locked(array);
     else schedule_work(&nm_reclaim_work);
 }
 
@@ -1735,8 +1744,9 @@ static int nm_generate_virtual_topology(struct nm_leaf *target, unsigned int uid
         int parent_len = slash ? slash : 1;
         const char *name = target->paths + slash + 1;
         int name_len = len - slash - 1;
+        u32 hash = nm_name_hash(target->paths, parent_len);
 
-        if ((parent = nm_find_leaf(target->paths, parent_len))) {
+        if ((parent = nm_find_leaf(target->paths, parent_len, hash))) {
             struct nm_rule *rule = nm_select_rule(parent, uid);
             if ((rule && !(rule->flags & NM_FLAG_IS_DIR)) || !parent->this_dir) { err = -ENOTDIR; break; }
             if (parent->anchor.dentry && (err = nm_hijack_dir_ops(parent->this_dir, d_backing_inode(parent->anchor.dentry)))) break;
@@ -1785,7 +1795,7 @@ static int nm_generate_virtual_topology(struct nm_leaf *target, unsigned int uid
             break;
         }
 
-        parent = nm_alloc_leaf(target->paths, parent_len);
+        parent = nm_alloc_leaf(target->paths, parent_len, hash);
         if (IS_ERR(parent)) { err = PTR_ERR(parent); break; }
 
         if (!(parent->this_dir = nm_alloc_dir_node())) {
@@ -1794,16 +1804,7 @@ static int nm_generate_virtual_topology(struct nm_leaf *target, unsigned int uid
             break;
         }
         parent->this_dir->owner = parent;
-        struct nm_rule_array *rules = nm_alloc_rule_array(1);
-        if (!rules) {
-            err = -ENOMEM;
-            nm_free_leaf(parent, false);
-            break;
-        }
-        memset(&rules->rules[0], 0, sizeof(struct nm_rule));
-        rules->rules[0].flags = NM_FLAG_IS_DIR | NM_FLAG_VIRTUAL_DIR;
-        rules->uid_count = 0;
-        RCU_INIT_POINTER(parent->rules, rules);
+        RCU_INIT_POINTER(parent->rules, &nm_virtual_parent_rules);
 
         hlist_add_head(&parent->ht_node, &pending);
         err = nm_inject_child_locked(parent->this_dir, child, name, name_len);
@@ -1879,8 +1880,9 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
 
     while (v_len > 1 && v_path[v_len - 1] == '/') v_len--;
 
-    fresh = !(leaf = nm_find_leaf(v_path, v_len));
-    if (fresh && IS_ERR((leaf = nm_alloc_leaf(v_path, v_len)))) {
+    u32 hash = nm_name_hash(v_path, v_len);
+    fresh = !(leaf = nm_find_leaf(v_path, v_len, hash));
+    if (fresh && IS_ERR((leaf = nm_alloc_leaf(v_path, v_len, hash)))) {
         err = PTR_ERR(leaf);
         goto out_rule;
     }
@@ -1952,7 +1954,7 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
     bool stub_virtual = false;
 
     while (len > 1 && path[len - 1] == '/') len--;
-    if (!(leaf = nm_find_leaf(path, len)) || !(old = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex)))) return 0;
+    if (!(leaf = nm_find_leaf(path, len, nm_name_hash(path, len))) || !(old = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex)))) return 0;
     while (pos < old->count &&
            (old->rules[pos].target_uid != uid || old->rules[pos].uid_end != uid_end ||
             old->rules[pos].deny_start != deny_start || old->rules[pos].deny_end != deny_end)) pos++;
