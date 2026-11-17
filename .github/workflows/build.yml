@@ -45,14 +45,14 @@ jobs:
         run: |
           mkdir bin
           cd userspace/src
-          zig cc -target aarch64-linux -Oz -mcmodel=tiny -static -ffreestanding -fno-unwind-tables -fno-ident -Wno-invalid-noreturn \
-            -mllvm -enable-machine-outliner=always nm.c -o ../../bin/nm-arm64
+          zig cc -target aarch64-linux -Oz -Xclang -Oz -mcmodel=tiny -static -ffreestanding -flto -fno-ident -fno-unwind-tables \
+            -fno-asynchronous-unwind-tables -Wl,--gc-sections,-z,norelro -mllvm -enable-machine-outliner=always nm.c -o ../../bin/nm-arm64
 
-          zig cc -target arm-linux -Oz -static -ffreestanding -fno-unwind-tables -fno-ident -Wno-invalid-noreturn \
-            -ffunction-sections -fdata-sections -Wl,--gc-sections nm.c -o ../../bin/nm-arm
+          zig cc -target arm-linux -Oz -Xclang -Oz -static -ffreestanding -flto -ffunction-sections -fdata-sections \
+            -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-ident -Wl,--gc-sections,-z,norelro nm.c -o ../../bin/nm-arm
 
-          zig cc -target x86_64-linux -Oz -static -ffreestanding -fno-unwind-tables -fno-ident -Wno-invalid-noreturn \
-            nm.c -o ../../bin/nm-x86_64
+          zig cc -target x86_64-linux -Oz -Xclang -Oz -static -ffreestanding -flto -ffunction-sections -fdata-sections \
+            -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-ident -Wl,--gc-sections,-z,norelro nm.c -o ../../bin/nm-x86_64
 
           cd ../../bin
           wc -c nm-*
