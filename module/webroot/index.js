@@ -821,14 +821,18 @@ async function loadHome(readModuleInfo = readModules) {
                 });
             }),
             readModuleInfo().then(modules => {
-                const count = modules.filter(mod => mod.fileCount > 0).length;
-                requestAnimationFrame(() => {
-                    const stats = getHomeElements().stats;
-                    if (stats) stats.textContent = count === 1 ? translate('module_injected_count') : translate('modules_injected_count', { count });
-                });
+                moduleInfoCache = modules;
+                updateHomeStats();
             })
         ]);
     } catch (e) { console.error("Delayed Home update error:", e); }
+}
+
+function updateHomeStats() {
+    const stats = getHomeElements().stats;
+    if (!stats) return;
+    const count = moduleInfoCache.filter(m => m.fileCount > 0).length;
+    stats.textContent = count === 1 ? translate('module_injected_count') : translate('modules_injected_count', { count });
 }
 
 function applyHomeData(data) {
@@ -859,6 +863,7 @@ function applyHomeData(data) {
 
 // Modules
 let currentRenderId = 0;
+let moduleInfoCache = [];
 
 async function readModules(onlyMods = null) {
     const filter = onlyMods && onlyMods.length ? ` --only=${shellQuote(onlyMods.join(','))}` : '';
@@ -932,6 +937,8 @@ async function loadModules(readModuleInfo = readModules) {
     try {
         const moduleInfo = await readModuleInfo();
         if (renderId !== currentRenderId) return;
+        moduleInfoCache = moduleInfo;
+        updateHomeStats();
         if (moduleInfo.length === 0) {
             renderEmptyState(listContainer, '(._.)', translate('no_modules_found'));
             return;
@@ -1797,6 +1804,9 @@ function initDelegationAndAttach() {
         const statusKey = mod?.statusKey ?? 'status_inactive';
         const nowLoaded = newFileCount > 0;
 
+        const cached = moduleInfoCache.find(m => m.modId === modId);
+        if (cached) { cached.fileCount = newFileCount; cached.statusKey = statusKey; }
+
         const filesChip = card.querySelector('.files-chip');
         if (newFileCount > 0) {
             filesChip.style.display = '';
@@ -1811,6 +1821,8 @@ function initDelegationAndAttach() {
 
         const hotBtn = card.querySelector('.btn-hot-action');
         const btnSpan = hotBtn.querySelector('span');
+
+        updateHomeStats();
 
         if (nowLoaded) {
             hotBtn.classList.add('unload');
@@ -1845,7 +1857,6 @@ function initDelegationAndAttach() {
         } finally {
             labelContainer.classList.remove('switch-busy');
             delete labelContainer.dataset.busy;
-            loadHome();
         }
     });
 
@@ -1870,7 +1881,6 @@ function initDelegationAndAttach() {
             }
             finally {
                 hotBtn.disabled = false;
-                loadHome();
             }
         }
     });
