@@ -224,7 +224,7 @@ static NM_ACTOR_RET nm_actor_proxy(struct dir_context *ctx, const char *name, in
     struct dir_context *orig_ctx = proxy->orig_ctx;
     NM_ACTOR_RET ret;
 
-    {
+    if (likely(namelen > 0 && !(namelen <= 2 && name[0] == '.' && (namelen == 1 || name[1] == '.')))) {
         rcu_guard();
         struct nm_leaf *leaf = nm_find_leaf_in_dir(proxy->dir_node, name, namelen);
         struct nm_rule *rule = leaf ? nm_select_rule(leaf, proxy->fsuid) : NULL;
@@ -1956,6 +1956,21 @@ static int nm_prune_empty_virtual_dirs_locked(struct nm_dir_node *dir)
 
 /*** Rule Operations ***/
 
+/* nm_actor_proxy() skips these, so the rule could never match on readdir. */
+static bool nm_vpath_has_dot_component(const char *path, u16 len)
+{
+    u16 i = 0;
+
+    while (i < len) {
+        u16 start = i;
+        while (i < len && path[i] != '/') i++;
+        if (i - start == 1 && path[start] == '.') return true;
+        if (i - start == 2 && path[start] == '.' && path[start + 1] == '.') return true;
+        i++;
+    }
+    return false;
+}
+
 static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len, u16 r_len, u32 flags,
                               unsigned int uid, unsigned int uid_end, unsigned int deny_start, unsigned int deny_end)
 {
@@ -1973,6 +1988,8 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     if (v_len <= 1 || v_path[0] != '/' || uid > uid_end) return -EINVAL;
     for (u16 i = 1; i < v_len; i++)
         if (!v_path[i] || (v_path[i] == '/' && v_path[i - 1] == '/')) return -EINVAL;
+    if (nm_vpath_has_dot_component(v_path, v_len))
+        return -EINVAL;
 
     if (deny_start || deny_end) {
         if (!deny_start || !deny_end) return -EINVAL;
