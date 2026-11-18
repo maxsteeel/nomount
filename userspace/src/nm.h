@@ -736,6 +736,7 @@ static int nm_walk_partitions(struct nm_walk *ctx, const char *targets) {
         if ((rc = nm_check_partition(ctx->path, part)) < 0) return rc;
         if (!rc) continue;
         ctx->has_injectable = 1;
+        if (!ctx->payload && !ctx->catalog) continue;
         rc = nm_path_join(ctx->path + ctx->root_len, sizeof(ctx->path) - ctx->root_len, "", part);
         if (rc) return rc;
         rc = nm_walk_module(ctx, AT_FDCWD, ctx->path, DT_UNKNOWN, NULL);
@@ -775,10 +776,12 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
     if (!d) return nm_error("module list", -errno);
     struct nm_output out = { ws->cwd, 0, STDOUT_FILENO };
     struct nm_catalog cat = { 0 };
-    int rc = 0;
     const char *targets = args->mod_targets ? args->mod_targets : NM_DEFAULT_TARGETS;
 
-    for (;;) {
+    ws->payload.cmd = NM_CMD_GET_LIST;
+    ws->payload.arg1 = 0;
+    int rc = nm_send_payload(&ws->payload);
+    while (!rc) {
         errno = 0;
         struct dirent *e = readdir(d);
         if (!e) { if (errno) rc = -errno; break; }
@@ -786,7 +789,7 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
         if (mod_id[0] == '.' || !strcmp(mod_id, "nomount")) continue;
         if (args->mod_only && !nm_mod_in_list(mod_id, args->mod_only)) continue;
         char mod_path[PATH_MAX], prop_path[PATH_MAX], name[256];
-        struct nm_walk ctx = { .catalog = &cat };
+        struct nm_walk ctx = { .catalog = ws->payload.data_size ? &cat : NULL };
         if ((rc = nm_path_join(mod_path, sizeof(mod_path), modules_dir, mod_id))) break;
         if ((rc = nm_dir_exists(mod_path)) < 0) break;
         if (!rc) continue;
@@ -812,11 +815,7 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
     }
     closedir(d);
 
-    ws->payload.cmd = NM_CMD_GET_LIST;
-    ws->payload.arg1 = 0;
-    while (!rc) {
-        rc = nm_send_payload(&ws->payload);
-        if (rc || !ws->payload.data_size) break;
+    while (!rc && ws->payload.data_size) {
         char *data = ws->payload.buffer;
         int pos = 0;
         while (pos < (int)ws->payload.data_size) {
@@ -832,6 +831,7 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
             nm_catalog_count(&cat, vbuf, rbuf);
         }
         if (ws->payload.arg1 == ~0U) break;
+        rc = nm_send_payload(&ws->payload);
     }
     if (rc) goto skip_list;
 
