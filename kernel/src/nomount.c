@@ -242,6 +242,20 @@ static NM_ACTOR_RET nm_actor_proxy(struct dir_context *ctx, const char *name, in
     return ret;
 }
 
+static inline unsigned char nm_mode_to_dtype(umode_t mode)
+{
+	switch (mode & S_IFMT) {
+	case S_IFREG:  return DT_REG;
+	case S_IFDIR:  return DT_DIR;
+	case S_IFLNK:  return DT_LNK;
+	case S_IFCHR:  return DT_CHR;
+	case S_IFBLK:  return DT_BLK;
+	case S_IFIFO:  return DT_FIFO;
+	case S_IFSOCK: return DT_SOCK;
+	default:       return DT_UNKNOWN;
+	}
+}
+
 static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_dir_node *dir_node, uid_t fsuid, bool native_view)
 {
 	if (!dir_node) return;
@@ -280,9 +294,10 @@ static inline void nm_emit_virtual_children(struct dir_context *ctx, struct nm_d
 			if (rule && !(rule->flags & NM_FLAG_WHITEOUT) && (!native_view || nm_rule_needs_readdir(leaf, rule))) {
 				name_len = leaf->child_len;
 				if (likely(name_len <= NAME_MAX)) {
+					struct inode *r_inode = rule->r_path.dentry ? d_backing_inode(rule->r_path.dentry) : NULL;
 					memcpy(name_buf, nm_get_child_name(leaf), name_len);
 					v_ino = leaf->v_ino;
-					d_type = (rule->flags & NM_FLAG_IS_DIR) ? DT_DIR : DT_REG;
+					d_type = r_inode ? nm_mode_to_dtype(r_inode->i_mode) : DT_DIR;
 					do_emit = true;
 				}
 			}
