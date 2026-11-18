@@ -1172,6 +1172,7 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
         nm_sop->sb = sb;
         if (!kernfs) {
             nm_sop->fake_sop = *sb->s_op;
+            nm_sop->fake_sop.put_super = nm_hijacked_put_super;
             if (with_xattr) {
                 nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
                 nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
@@ -1355,6 +1356,32 @@ static void nm_sop_rcu_free(struct rcu_head *head)
     struct nm_sop *nm_sop = container_of(head, struct nm_sop, rcu);
     kfree(nm_sop->fake_xattr);
     kfree(nm_sop);
+}
+
+static void nm_hijacked_put_super(struct super_block *sb)
+{
+    const struct super_operations *orig_sop;
+    struct nm_sop *nm_sop;
+
+    mutex_lock(&nm_mutex);
+    orig_sop = smp_load_acquire(&sb->s_op);
+    if ((nm_sop = nm_get_nm_sop(orig_sop))) {
+        orig_sop = nm_sop->orig_sop;
+        if (nm_sop->sb == sb) {
+            nm_sop->sb = NULL;
+            smp_store_release(&sb->s_op, orig_sop);
+            if (nm_sop->orig_export_op && READ_ONCE(sb->s_export_op) == &nm_sop->fake_export_op)
+                smp_store_release(&sb->s_export_op, nm_sop->orig_export_op);
+            if (nm_sop->fake_xattr && READ_ONCE(sb->s_xattr) == nm_sop->fake_xattr)
+                smp_store_release((const struct xattr_handler ***)&sb->s_xattr, nm_sop->orig_xattr);
+            list_del_rcu(&nm_sop->list);
+            call_rcu(&nm_sop->rcu, nm_sop_rcu_free);
+        }
+    }
+    mutex_unlock(&nm_mutex);
+
+    if (orig_sop && orig_sop->put_super)
+        orig_sop->put_super(sb);
 }
 
 static void nm_restore_superblocks(void)

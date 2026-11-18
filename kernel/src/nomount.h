@@ -190,6 +190,7 @@ extern int vfs_path_lookup(struct dentry *, struct vfsmount *, const char *, uns
 static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags);
 static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx);
 static void nm_hijacked_evict_inode(struct inode *inode);
+static void nm_hijacked_put_super(struct super_block *sb);
 static void nm_hijack_dentry_ops(struct inode *dir, struct dentry *dentry, bool injected);
 static void nm_dir_put(struct nm_dir_node *dir_node);
 static void nm_leaf_put(struct nm_leaf *leaf);
@@ -451,7 +452,7 @@ static inline struct nm_dir_ops *nm_get_nm_fop(const struct file_operations *fop
 }
 
 static inline struct nm_sop *nm_get_nm_sop(const struct super_operations *sop) {
-    if (likely(sop) && (sop->evict_inode == nm_hijacked_evict_inode || sop->sync_fs == nm_shutdown_sync_fs))
+    if (likely(sop) && (sop->put_super == nm_hijacked_put_super || sop->evict_inode == nm_hijacked_evict_inode || sop->sync_fs == nm_shutdown_sync_fs))
         return container_of(sop, struct nm_sop, fake_sop);
     return NULL;
 }
