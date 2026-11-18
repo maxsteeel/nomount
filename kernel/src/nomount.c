@@ -1096,7 +1096,7 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
             if (IS_ERR(backing)) return PTR_ERR(backing);
             valid = (backing == info->r_path.dentry && d_is_positive(backing) && nm_inode_matches_attrs(inode, d_inode(backing)));
             dput(backing);
-            return valid ? 1 : 0;
+            return valid ? 1 : nm_drop_dentry(dentry, flags, weak);
         }
     }
 
