@@ -1486,6 +1486,7 @@ static int nm_inject_child_locked(struct nm_dir_node *dir_node, struct nm_leaf *
     struct nm_child_array *array, *old = rcu_dereference_protected(dir_node->children, lockdep_is_held(&nm_mutex));
     int count = old ? old->count : 0;
 
+    if (unlikely(!name_len || name_len > NAME_MAX)) return -EINVAL;
     if (nm_find_leaf_in_dir(dir_node, name, name_len)) return -EEXIST;
     leaf->child_len = name_len;
     struct nm_child child = { .leaf = leaf, .hash = nm_name_hash(name, name_len) };
@@ -1564,8 +1565,11 @@ static struct nm_rule_array *nm_alloc_rule_array(int count)
 static int nm_prepare_rule(const char *r_path, u32 flags, unsigned int uid, unsigned int uid_end,
                            unsigned int deny_start, unsigned int deny_end, struct nm_rule *out)
 {
+    if (flags & ~(NM_FLAG_VIRTUAL_DIR | NM_FLAG_WHITEOUT | NM_FLAG_OPAQUE)) return -EINVAL;
+    if ((flags & NM_FLAG_WHITEOUT) && (flags & (NM_FLAG_VIRTUAL_DIR | NM_FLAG_OPAQUE))) return -EINVAL;
     bool backed = !(flags & (NM_FLAG_WHITEOUT | NM_FLAG_VIRTUAL_DIR));
     if (backed && !r_path) return -EINVAL;
+    if (flags & NM_FLAG_VIRTUAL_DIR) flags |= NM_FLAG_IS_DIR;
 
     memset(out, 0, sizeof(*out));
     out->flags = flags;
@@ -1577,7 +1581,7 @@ static int nm_prepare_rule(const char *r_path, u32 flags, unsigned int uid, unsi
         int err = kern_path(r_path, LOOKUP_FOLLOW, &out->r_path);
         if (err) return err;
         struct inode *inode = d_backing_inode(out->r_path.dentry);
-        if (nm_inode_is_virtual(inode)) {
+        if (nm_inode_is_virtual(inode) || (!S_ISDIR(inode->i_mode) && (flags & NM_FLAG_OPAQUE))) {
             path_put(&out->r_path);
             return -EINVAL;
         }
@@ -1894,6 +1898,11 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     if (READ_ONCE(nm_shutdown_released))
         return -ESHUTDOWN;
 
+    while (v_len > 1 && v_path[v_len - 1] == '/') v_len--;
+    if (v_len <= 1 || v_path[0] != '/' || uid > uid_end) return -EINVAL;
+    for (u16 i = 1; i < v_len; i++)
+        if (!v_path[i] || (v_path[i] == '/' && v_path[i - 1] == '/')) return -EINVAL;
+
     if (deny_start || deny_end) {
         if (!deny_start || !deny_end) return -EINVAL;
         if (deny_start > deny_end) { unsigned int t = deny_start; deny_start = deny_end; deny_end = t; }
@@ -1906,8 +1915,6 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     err = nm_prepare_rule(r_buf, flags, uid, uid_end, deny_start, deny_end, &new_rule);
     kfree(r_buf);
     if (err) return err;
-
-    while (v_len > 1 && v_path[v_len - 1] == '/') v_len--;
 
     u32 hash = nm_name_hash(v_path, v_len);
     fresh = !(leaf = nm_find_leaf(v_path, v_len, hash));
