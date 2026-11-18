@@ -373,7 +373,8 @@ static int nm_cached_inode_test(struct inode *inode, void *data)
     return nm_inode_is_virtual(inode) && nm_inode_matches_binding(inode, &info->r_path, info->node, info->opaque);
 }
 
-static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dentry, struct nm_rule_info *rule_info)
+static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dentry,
+                                          struct nm_rule_info *rule_info, unsigned int flags)
 {
     struct nm_inode_info probe, *info = NULL;
     struct inode *inode;
@@ -385,6 +386,7 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
     }
 
     if (rule_info->flags & NM_FLAG_WHITEOUT) goto negative_dentry;
+    if (flags & LOOKUP_RENAME_TARGET) { res = ERR_PTR(-EPERM); goto out; }
 
     probe = (struct nm_inode_info){
         .r_path = rule_info->r_path, .dir_node = rule_info->this_dir,
@@ -442,7 +444,7 @@ static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentr
     rcu_read_unlock();
 
     if (found)
-        return nm_materialize_rule(dir, dentry, &rule_info);
+        return nm_materialize_rule(dir, dentry, &rule_info, flags);
 
     if (likely(orig_iop && orig_iop->lookup)) {
         target = (res = orig_iop->lookup(dir, dentry, flags)) ? res : dentry;
@@ -583,6 +585,22 @@ static int nm_hijacked_rmdir(struct inode *dir, struct dentry *dentry)
         orig_iop = iop->orig_iop;
     if (orig_iop && orig_iop->rmdir)
         return orig_iop->rmdir(dir, dentry);
+    return -EPERM;
+}
+
+static int nm_hijacked_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_dentry)
+{
+    const struct inode_operations *orig_iop;
+    struct inode *inode = d_inode(old_dentry);
+    struct nm_dir_ops *iop;
+
+    if (inode && nm_inode_is_virtual(inode))
+        return -EPERM;
+    orig_iop = smp_load_acquire(&dir->i_op);
+    if ((iop = nm_get_nm_iop(orig_iop)))
+        orig_iop = iop->orig_iop;
+    if (orig_iop && orig_iop->link)
+        return orig_iop->link(old_dentry, dir, new_dentry);
     return -EPERM;
 }
 
@@ -877,7 +895,7 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     has_leaf = leaf != NULL;
     if (leaf && !uid_blocked) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
     rcu_read_unlock();
-    if (found) return nm_materialize_rule(dir, dentry, &rule_info);
+    if (found) return nm_materialize_rule(dir, dentry, &rule_info, flags);
 
     if (info->opaque && !uid_blocked)
         goto negative_dentry;
@@ -908,7 +926,7 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
         rule_info.r_path.dentry = backing;
         path_get(&rule_info.r_path);
         dput(backing);
-        return nm_materialize_rule(dir, dentry, &rule_info);
+        return nm_materialize_rule(dir, dentry, &rule_info, flags);
     }
 
     if (r_dir->i_op->lookup) {
@@ -1264,6 +1282,7 @@ static inline int nm_hijack_dir_ops(struct nm_dir_node *dir_node, struct inode *
         ops->fake_iop.unlink = nm_hijacked_unlink;
         ops->fake_iop.rename = nm_hijacked_rename;
         ops->fake_iop.rmdir  = nm_hijacked_rmdir;
+        if (iop->link) ops->fake_iop.link = nm_hijacked_link;
     }
     if (fop) {
         ops->fake_fop = *fop;
