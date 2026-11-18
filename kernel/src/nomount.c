@@ -1358,6 +1358,20 @@ static void nm_sop_rcu_free(struct rcu_head *head)
     kfree(nm_sop);
 }
 
+static void nm_unhook_superblock_locked(struct nm_sop *nm_sop)
+{
+    struct super_block *sb = nm_sop->sb;
+
+    if (READ_ONCE(sb->s_op) == &nm_sop->fake_sop)
+        smp_store_release(&sb->s_op, nm_sop->orig_sop);
+    if (nm_sop->orig_export_op && READ_ONCE(sb->s_export_op) == &nm_sop->fake_export_op)
+        smp_store_release(&sb->s_export_op, nm_sop->orig_export_op);
+    if (nm_sop->fake_xattr && READ_ONCE(sb->s_xattr) == nm_sop->fake_xattr)
+        smp_store_release((const struct xattr_handler ***)&sb->s_xattr, nm_sop->orig_xattr);
+    list_del_rcu(&nm_sop->list);
+    call_rcu(&nm_sop->rcu, nm_sop_rcu_free);
+}
+
 static void nm_hijacked_put_super(struct super_block *sb)
 {
     const struct super_operations *orig_sop;
@@ -1367,16 +1381,7 @@ static void nm_hijacked_put_super(struct super_block *sb)
     orig_sop = smp_load_acquire(&sb->s_op);
     if ((nm_sop = nm_get_nm_sop(orig_sop))) {
         orig_sop = nm_sop->orig_sop;
-        if (nm_sop->sb == sb) {
-            nm_sop->sb = NULL;
-            smp_store_release(&sb->s_op, orig_sop);
-            if (nm_sop->orig_export_op && READ_ONCE(sb->s_export_op) == &nm_sop->fake_export_op)
-                smp_store_release(&sb->s_export_op, nm_sop->orig_export_op);
-            if (nm_sop->fake_xattr && READ_ONCE(sb->s_xattr) == nm_sop->fake_xattr)
-                smp_store_release((const struct xattr_handler ***)&sb->s_xattr, nm_sop->orig_xattr);
-            list_del_rcu(&nm_sop->list);
-            call_rcu(&nm_sop->rcu, nm_sop_rcu_free);
-        }
+        if (nm_sop->sb == sb) nm_unhook_superblock_locked(nm_sop);
     }
     mutex_unlock(&nm_mutex);
 
@@ -1389,23 +1394,16 @@ static void nm_restore_superblocks(void)
     struct nm_sop *nm_sop, *tmp;
     struct inode *inode;
     list_for_each_entry_safe(nm_sop, tmp, &nm_sb_list, list) {
-        if (nm_sop->sb) {
-            nm_clear_dops_sb(nm_sop->sb);
-            shrink_dcache_sb(nm_sop->sb);
-            spin_lock(&nm_sop->sb->s_inode_list_lock);
-            list_for_each_entry(inode, &nm_sop->sb->s_inodes, i_sb_list)
-                nm_destroy_hijacked_inode(inode);
-            spin_unlock(&nm_sop->sb->s_inode_list_lock);
-            if (READ_ONCE(nm_sop->sb->s_op) == &nm_sop->fake_sop)
-                smp_store_release(&nm_sop->sb->s_op, nm_sop->orig_sop);
-            if (nm_sop->orig_export_op && READ_ONCE(nm_sop->sb->s_export_op) == &nm_sop->fake_export_op)
-                smp_store_release(&nm_sop->sb->s_export_op, nm_sop->orig_export_op);
-            if (nm_sop->fake_xattr && READ_ONCE(nm_sop->sb->s_xattr) == nm_sop->fake_xattr)
-                smp_store_release((const struct xattr_handler ***)&nm_sop->sb->s_xattr, nm_sop->orig_xattr);
-            nm_debug("Successfully cured superblock for dev: 0x%x\n", nm_sop->sb->s_dev);
-        }
-        list_del_rcu(&nm_sop->list);
-        call_rcu(&nm_sop->rcu, nm_sop_rcu_free);
+        struct super_block *sb = nm_sop->sb;
+
+        nm_clear_dops_sb(sb);
+        shrink_dcache_sb(sb);
+        spin_lock(&sb->s_inode_list_lock);
+        list_for_each_entry(inode, &sb->s_inodes, i_sb_list)
+            nm_destroy_hijacked_inode(inode);
+        spin_unlock(&sb->s_inode_list_lock);
+        nm_unhook_superblock_locked(nm_sop);
+        nm_debug("Successfully cured superblock for dev: 0x%x\n", sb->s_dev);
     }
 }
 
