@@ -34,7 +34,7 @@ static __always_inline bool nm_is_uid_blocked(uid_t target_uid)
 
 static __always_inline bool nm_child_matches(struct nm_leaf *leaf, const char *name, size_t len)
 {
-    if (unlikely(leaf->child_len != len)) return false;
+    if (unlikely(!len || leaf->child_len != len)) return false;
     const char *child_name = nm_get_child_name(leaf);
     return child_name[0] == name[0] && child_name[len - 1] == name[len - 1] && !memcmp(child_name, name, len);
 }
