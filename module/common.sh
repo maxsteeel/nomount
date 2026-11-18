@@ -45,19 +45,24 @@ load_ko() {
     return 0
 }
 
+_nm_boot_id() { cat /proc/sys/kernel/random/boot_id 2>/dev/null; }
+
 _lock_acquire() {
     local lockdir="$1" timeout="$2" n=0
+    local pid lock_boot cur_boot claimed
+    cur_boot=$(_nm_boot_id)
     while ! mkdir "$lockdir" 2>/dev/null; do
-        local pid
         pid=$(cat "$lockdir/pid" 2>/dev/null)
-        if [ -n "$pid" ]; then
-            if ! kill -0 "$pid" 2>/dev/null; then
-                klogwarn "cleaning stale lock $lockdir (pid $pid is dead)"
-                rm -rf "$lockdir"
+        lock_boot=$(cat "$lockdir/boot_id" 2>/dev/null)
+        claimed="$lockdir.claimed.$$"
+        if { [ -n "$cur_boot" ] && [ -n "$lock_boot" ] && [ "$lock_boot" != "$cur_boot" ]; } ||
+           { [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; }; then
+            # Rename is the only atomic claim here. Two waiters can both see a
+            # stale lock; only the one that renames it may remove it.
+            if mv "$lockdir" "$claimed" 2>/dev/null; then
+                klogwarn "cleaning stale lock $lockdir"
+                rm -rf "$claimed"
             fi
-        elif [ "$n" -ge 2 ]; then
-            klogwarn "cleaning orphan lock $lockdir (no owner)"
-            rm -rf "$lockdir"
         fi
         n=$((n + 1))
         if [ "$n" -ge "$timeout" ]; then
@@ -66,6 +71,7 @@ _lock_acquire() {
         sleep 1
     done
     echo $$ > "$lockdir/pid"
+    [ -n "$cur_boot" ] && printf '%s\n' "$cur_boot" > "$lockdir/boot_id"
     return 0
 }
 
@@ -82,7 +88,7 @@ bootloop_check() {
     fi
 
     local current prev
-    current=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+    current=$(_nm_boot_id)
     [ -z "$current" ] && current="fallback-$(date +%s)"
 
     if [ -f "$BOOT_SEMAPHORE" ] && [ -s "$BOOT_SEMAPHORE" ]; then
