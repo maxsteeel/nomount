@@ -421,14 +421,15 @@ out:
 /*** i_op / s_op / f_op Hijacking Hooks ***/
 static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
 {
-    const struct inode_operations *orig_iop = NULL;
+    const struct inode_operations *orig_iop;
     struct nm_rule_info rule_info = {0};
     struct nm_dir_ops *nm_iop = NULL;
     struct dentry *res, *target;
     bool found = false, has_leaf = false;
 
     rcu_read_lock();
-    if (likely((nm_iop = nm_get_nm_iop(rcu_dereference(dir->i_op))))) {
+    orig_iop = rcu_dereference(dir->i_op);
+    if (likely((nm_iop = nm_get_nm_iop(orig_iop)))) {
         orig_iop = nm_iop->orig_iop;
         struct nm_dir_node *dir_node = rcu_dereference(nm_iop->dir_node);
         struct nm_leaf *leaf = nm_find_leaf_in_dir(dir_node, dentry->d_name.name, dentry->d_name.len);
@@ -443,7 +444,7 @@ static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentr
     if (found)
         return nm_materialize_rule(dir, dentry, &rule_info);
 
-    if (likely(orig_iop->lookup)) {
+    if (likely(orig_iop && orig_iop->lookup)) {
         target = (res = orig_iop->lookup(dir, dentry, flags)) ? res : dentry;
         if (likely(!IS_ERR(target)) && has_leaf && !nm_is_pseudo_fs(dir->i_sb))
             nm_hijack_dentry_ops(dir, target, false);
@@ -487,13 +488,14 @@ emit_virtual:
 
 static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx)
 {
-    const struct file_operations *orig_fop = NULL;
+    const struct file_operations *orig_fop;
     struct nm_dir_node *d, *dir_node = NULL;
     struct nm_dir_ops *nm_fop;
     int res;
 
     rcu_read_lock();
-    if ((nm_fop = nm_get_nm_fop(rcu_dereference(file->f_op)))) {
+    orig_fop = rcu_dereference(file->f_op);
+    if ((nm_fop = nm_get_nm_fop(orig_fop))) {
         orig_fop = nm_fop->orig_fop;
         if ((d = rcu_dereference(nm_fop->dir_node)) && rcu_access_pointer(d->children) && (READ_ONCE(d->readdir_count) || nm_is_virtual_pos(ctx->pos)) && atomic_inc_not_zero(&d->refs))
             dir_node = d;
@@ -509,6 +511,7 @@ static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx)
 
 static int nm_hijacked_unlink(struct inode *dir, struct dentry *dentry)
 {
+    const struct inode_operations *orig_iop;
     struct nm_dir_ops *nm_iop;
     struct nm_dir_node *dir_node;
     struct nm_leaf *leaf;
@@ -520,7 +523,10 @@ static int nm_hijacked_unlink(struct inode *dir, struct dentry *dentry)
     if (unlikely(!inode))
         return -ENOENT;
 
-    if (unlikely(!(nm_iop = nm_get_nm_iop(smp_load_acquire(&dir->i_op))) || !nm_inode_is_virtual(inode) || nm_is_uid_blocked(fsuid)))
+    orig_iop = smp_load_acquire(&dir->i_op);
+    if ((nm_iop = nm_get_nm_iop(orig_iop)))
+        orig_iop = nm_iop->orig_iop;
+    if (unlikely(!nm_iop || !nm_inode_is_virtual(inode) || nm_is_uid_blocked(fsuid)))
         goto do_real_unlink;
 
     if (!mutex_trylock(&nm_mutex)) return -EBUSY;
@@ -541,14 +547,15 @@ static int nm_hijacked_unlink(struct inode *dir, struct dentry *dentry)
 
 do_real_unlink:
     if (nm_inode_is_virtual(inode)) return -ENOENT;
-    if (nm_iop && nm_iop->orig_iop && nm_iop->orig_iop->unlink)
-        return nm_iop->orig_iop->unlink(dir, dentry);
+    if (orig_iop && orig_iop->unlink)
+        return orig_iop->unlink(dir, dentry);
     return -EPERM;
 }
 
 static int nm_hijacked_rename(IDMAP_ARG struct inode *old_dir, struct dentry *old_dentry,
                                struct inode *new_dir, struct dentry *new_dentry, unsigned int flags)
 {
+    const struct inode_operations *orig_iop;
     struct inode *old_inode = d_inode(old_dentry);
     struct inode *new_inode = d_inode(new_dentry);
     struct nm_dir_ops *iop;
@@ -556,21 +563,26 @@ static int nm_hijacked_rename(IDMAP_ARG struct inode *old_dir, struct dentry *ol
     if ((old_inode && nm_inode_is_virtual(old_inode)) || (new_inode && nm_inode_is_virtual(new_inode)))
         return -EPERM;
 
-    iop = nm_get_nm_iop(smp_load_acquire(&old_dir->i_op));
-    if (iop && iop->orig_iop && iop->orig_iop->rename)
-        return iop->orig_iop->rename(IDMAP_CALL old_dir, old_dentry, new_dir, new_dentry, flags);
+    orig_iop = smp_load_acquire(&old_dir->i_op);
+    if ((iop = nm_get_nm_iop(orig_iop)))
+        orig_iop = iop->orig_iop;
+    if (orig_iop && orig_iop->rename)
+        return orig_iop->rename(IDMAP_CALL old_dir, old_dentry, new_dir, new_dentry, flags);
     return -EPERM;
 }
 
 static int nm_hijacked_rmdir(struct inode *dir, struct dentry *dentry)
 {
+    const struct inode_operations *orig_iop;
     struct inode *inode = d_inode(dentry);
     struct nm_dir_ops *iop;
     if (inode && nm_inode_is_virtual(inode))
         return -EPERM;
-    iop = nm_get_nm_iop(smp_load_acquire(&dir->i_op));
-    if (iop && iop->orig_iop && iop->orig_iop->rmdir)
-        return iop->orig_iop->rmdir(dir, dentry);
+    orig_iop = smp_load_acquire(&dir->i_op);
+    if ((iop = nm_get_nm_iop(orig_iop)))
+        orig_iop = iop->orig_iop;
+    if (orig_iop && orig_iop->rmdir)
+        return orig_iop->rmdir(dir, dentry);
     return -EPERM;
 }
 
