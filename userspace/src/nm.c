@@ -54,6 +54,12 @@ int main(int argc, char **argv) {
             else if (strcmp(argv[i], "--json") == 0 || strcmp(argv[i], "json") == 0) { args.is_json = 1; }
             else if (strcmp(argv[i], "--whiteout") == 0) { args.is_whiteout = 1; }
             else if (strcmp(argv[i], "--opaque") == 0) { args.is_opaque = 1; }
+            else if (argv[i][0] == '-') {
+                print_literal("nm: unknown option: ");
+                print_strn(argv[i], strlen(argv[i]));
+                print_literal("\n");
+                goto do_exit;
+            }
             else { needs_cwd = 1; argv[p_count++] = argv[i]; }
         }
     }
@@ -250,7 +256,9 @@ int main(int argc, char **argv) {
         }
 
         case ACTION_NONE:
+        case ACTION_HELP:
         default: {
+            exit_code = args.action == ACTION_HELP ? 0 : 1;
             print_literal(
                 "NoMount CLI (nm) - Usage Guide:\n\n"
                 "Rule Commands:\n"
@@ -283,6 +291,7 @@ int main(int argc, char **argv) {
                 "General Commands:\n"
                 "  nm clear all                            Clear all rules and UIDs\n"
                 "  nm version, v, -v                       Show driver version\n"
+                "  nm --help, -h                           Show this help\n"
             );
             break;
         }
