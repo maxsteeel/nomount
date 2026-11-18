@@ -20,18 +20,17 @@ int main(int argc, char **argv) {
     if (argc >= 2) {
         for (int i = args.data_start_idx; i < argc; i++) {
             if (argv[i][0] == '/') { argv[p_count++] = argv[i]; }
-            else if (strcmp(argv[i], "--uid") == 0 && i + 1 < argc) {
-                const char *s = argv[++i];
+            else if (strcmp(argv[i], "--uid") == 0) {
                 unsigned int uid = 0;
-                if (nm_parse_uid(s, &uid)) {
+                if (i + 1 >= argc || nm_parse_uid(argv[++i], &uid)) {
                     print_literal("nm: invalid --uid value\n");
                     goto do_exit;
                 }
                 args.target_uid = uid;
                 args.target_uid_end = uid;
             }
-            else if (strcmp(argv[i], "--uid-range") == 0 && i + 1 < argc) {
-                const char *s = argv[++i];
+            else if (strcmp(argv[i], "--uid-range") == 0) {
+                const char *s = i + 1 < argc ? argv[++i] : "";
                 if (strcmp(s, "all") == 0) {
                     args.target_uid = 0;
                     args.target_uid_end = 0xFFFFFFFFU;
@@ -40,8 +39,8 @@ int main(int argc, char **argv) {
                     goto do_exit;
                 }
             }
-            else if (strcmp(argv[i], "--uid-excluded") == 0 && i + 1 < argc) {
-                if (parse_uid_range(argv[++i], &args.deny_start, &args.deny_end)) {
+            else if (strcmp(argv[i], "--uid-excluded") == 0) {
+                if (i + 1 >= argc || parse_uid_range(argv[++i], &args.deny_start, &args.deny_end)) {
                     print_literal("nm: invalid --uid-excluded value\n");
                     goto do_exit;
                 }
@@ -71,10 +70,12 @@ int main(int argc, char **argv) {
                 }
             }
             int step = (args.action == ACTION_RULE_ADD && !args.is_whiteout) ? 2 : 1;
-            if (p_count < step) { exit_code = 0; goto do_exit; }
+            if (!p_count) { exit_code = 0; goto do_exit; }
+            if (p_count % step) { print_literal("nm: paths must be supplied in <vpath> <rpath> pairs\n"); goto do_exit; }
 
-            char *cwd_buf = workspace.cwd;
-            const char *cwd = (needs_cwd && getcwd(cwd_buf, PATH_MAX)) ? cwd_buf : "/";
+            const char *cwd = "/";
+            if (needs_cwd && !(cwd = getcwd(workspace.cwd, PATH_MAX)))
+                return nm_error("getcwd", -errno);
             int target_cmd = (args.action == ACTION_RULE_DEL) ? NM_CMD_DEL_RULE : NM_CMD_ADD_RULE;
 
             exit_code = 0;

@@ -16,6 +16,9 @@
 /* --- DEFS --- */
 #define NOMOUNT_MAGIC_SIG 0x4E4F4D4F554E54ULL
 #define PATH_MAX  4096
+#ifndef NAME_MAX
+#define NAME_MAX  255
+#endif
 enum { NM_FLAG_VIRTUAL_DIR = 2, NM_FLAG_WHITEOUT = 4, NM_FLAG_OPAQUE = 8 };
 
 enum {
@@ -242,8 +245,9 @@ static noinline int nm_parse_uid(const char *s, unsigned int *out) {
     unsigned int uid = 0;
     if (!*s) return -EINVAL;
     for (; *s; s++) {
-        if (*s < '0' || *s > '9') return -EINVAL;
-        uid = (uid << 3) + (uid << 1) + (*s - '0');
+        unsigned int d = (unsigned int)(unsigned char)*s - '0';
+        if (d > 9 || uid > (UINT_MAX - d) / 10) return -EINVAL;
+        uid = uid * 10 + d;
     }
     *out = uid;
     return 0;
@@ -393,20 +397,46 @@ static noinline void list_print_uint(struct nm_output *out, unsigned int n) {
 }
 
 /* path resolution */
-static noinline char* resolve_path(char *p, char *end, const char *cwd, const char *rel) {
-    if (cwd && *rel != '/') {
-        while (*cwd) {
-            if (p == end) return 0;
-            *p++ = *cwd++;
+static noinline int resolve_path(char *base, char *end, const char *cwd, const char *rel, int lexical) {
+    if (!rel || !*rel || (*rel != '/' && (!cwd || *cwd != '/'))) return -EINVAL;
+    if (base == end) return 0;
+
+    char *out = base;
+    *out++ = '/';
+    for (int pass = (*rel == '/'); pass < 2; pass++) {
+        for (const char *s = pass ? rel : cwd; *s; ) {
+            while (*s == '/') s++;
+            if (!*s) break;
+            const char *c = s;
+            while (*s && *s != '/') s++;
+            size_t len = (size_t)(s - c);
+            if (len > NAME_MAX) return -ENAMETOOLONG;
+            if (c[0] == '.') {
+                if (len == 1) continue;
+                if (lexical && len == 2 && c[1] == '.') {
+                    while (out > base + 1 && out[-1] != '/') out--;
+                    if (out > base + 1) out--;
+                    continue;
+                }
+            }
+            if (out > base + 1) {
+                if (out == end) return 0;
+                *out++ = '/';
+            }
+            if ((size_t)(end - out) < len) return 0;
+            memcpy(out, c, len);
+            out += len;
         }
-        if (p == end) return 0;
-        *p++ = '/';
     }
-    while (*rel) {
-        if (p == end) return 0;
-        *p++ = *rel++;
-    }
-    return p;
+    return (lexical && out - base <= 1) ? -EINVAL : (int)(out - base);
+}
+
+static noinline int nm_invalid_path(const char *path, int error) {
+    print_literal("nm: invalid path: ");
+    print_strn(path, strlen(path));
+    if (error == -ENAMETOOLONG) print_literal(" (name too long)\n");
+    else print_literal("\n");
+    return error;
 }
 
 static noinline int nm_send_payload(struct nm_payload *payload) {
@@ -477,23 +507,27 @@ static int nm_queue_rule(struct nm_payload *p, const struct nm_args *args, unsig
     for (;;) {
         char *start = p->buffer + p->data_size, *end = p->buffer + sizeof(p->buffer);
         if (end - start < header) goto full;
-        char *v = start + header, *vend = resolve_path(v, end, cwd, vpath);
-        if (!vend) goto full;
-        char *rend = rpath ? resolve_path(vend, end, cwd, rpath) : vend;
-        if (!rend) goto full;
+        char *v = start + header;
+        int vlen = resolve_path(v, end, cwd, vpath, 1), rlen = 0;
+        if (vlen < 0) return nm_invalid_path(vpath, vlen);
+        if (!vlen) goto full;
+        if (rpath && (rlen = resolve_path(v + vlen, end, cwd, rpath, 0)) <= 0) {
+            if (rlen < 0) return nm_invalid_path(rpath, rlen);
+            goto full;
+        }
         if (p->cmd == NM_CMD_ADD_RULE) {
             struct nm_rule_hdr *h = (void *)start;
             h->flags = flags;
             h->uid = args->target_uid; h->uid_end = args->target_uid_end;
             h->deny_start = args->deny_start; h->deny_end = args->deny_end;
-            h->v_len = vend - v; h->r_len = rend - vend;
+            h->v_len = (unsigned short)vlen; h->r_len = (unsigned short)rlen;
         } else {
             struct nm_del_hdr *h = (void *)start;
             h->uid = args->target_uid; h->uid_end = args->target_uid_end;
             h->deny_start = args->deny_start; h->deny_end = args->deny_end;
-            h->v_len = vend - v;
+            h->v_len = (unsigned short)vlen;
         }
-        p->data_size = rend - p->buffer;
+        p->data_size = (unsigned int)((v + vlen + rlen) - p->buffer);
         return error;
     full:
         if (!p->data_size) return -E2BIG;
