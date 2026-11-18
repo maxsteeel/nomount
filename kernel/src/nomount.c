@@ -752,17 +752,30 @@ static ssize_t nm_write_iter(struct kiocb *iocb, struct iov_iter *from)
     return ret;
 }
 
+static inline void nm_clear_inode_private(struct inode *inode)
+{
+    unsigned int old, flags = READ_ONCE(inode->i_flags);
+    while (unlikely(flags & S_PRIVATE)) {
+        old = cmpxchg(&inode->i_flags, flags, flags & ~S_PRIVATE);
+        if (likely(old == flags))
+            break;
+        flags = old;
+    }
+}
+
 static int nm_mmap(struct file *file, struct vm_area_struct *vma)
 {
     int ret = generic_file_mmap(file, vma);
-    return ret ? ret : (file_inode(file)->i_flags &= ~S_PRIVATE, 0);
+    if (!ret) nm_clear_inode_private(file_inode(file));
+    return ret;
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
 static int nm_mmap_prepare(struct vm_area_desc *desc)
 {
     int ret = generic_file_mmap_prepare(desc);
-    return ret ? ret : (file_inode(desc->file)->i_flags &= ~S_PRIVATE, 0);
+    if (!ret) nm_clear_inode_private(file_inode(desc->file));
+    return ret;
 }
 #endif
 
