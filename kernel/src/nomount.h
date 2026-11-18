@@ -147,10 +147,12 @@ struct nm_rule_info {
     struct nm_leaf *leaf;
 };
 
+#define NM_UID_BLOOM_WORDS 16
+
 struct nm_uid_array {
     struct rcu_head rcu;
     int count;
-    u64 bloom_mask[4];
+    u64 bloom_mask[NM_UID_BLOOM_WORDS];
     uid_t uids[];
 };
 
@@ -235,11 +237,11 @@ static inline u32 nm_unpack_pos(loff_t pos) {
 /* --- UIDs Array RCU Management --- */
 static __always_inline void nm_uid_bloom_set(struct nm_uid_array *arr, uid_t uid)
 {
-    arr->bloom_mask[(uid >> 6) & 3] |= 1ULL << (uid & 63);
+    arr->bloom_mask[(uid >> 6) & (NM_UID_BLOOM_WORDS - 1)] |= 1ULL << (uid & 63);
 }
 static __always_inline bool nm_uid_bloom_test(struct nm_uid_array *arr, uid_t uid)
 {
-    return !!(arr->bloom_mask[(uid >> 6) & 3] & (1ULL << (uid & 63)));
+    return !!(arr->bloom_mask[(uid >> 6) & (NM_UID_BLOOM_WORDS - 1)] & (1ULL << (uid & 63)));
 }
 
 static inline int nm_uid_add(uid_t target)
