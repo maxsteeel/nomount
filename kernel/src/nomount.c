@@ -727,6 +727,7 @@ static ssize_t nm_read_iter(struct kiocb *iocb, struct iov_iter *to)
     struct file *real_file = file->private_data;
     ssize_t ret;
     if (!real_file || !real_file->f_op->read_iter) return -EINVAL;
+    if (unlikely(!is_sync_kiocb(iocb) && (iocb->ki_flags & IOCB_DIRECT))) return -EOPNOTSUPP;
 
     iocb->ki_filp = real_file;
     ret = real_file->f_op->read_iter(iocb, to);
@@ -741,6 +742,7 @@ static ssize_t nm_write_iter(struct kiocb *iocb, struct iov_iter *from)
     struct file *real_file = file->private_data;
     ssize_t ret;
     if (!real_file || !real_file->f_op->write_iter) return -EINVAL;
+    if (unlikely(!is_sync_kiocb(iocb) && (iocb->ki_flags & IOCB_DIRECT))) return -EOPNOTSUPP;
 
     iocb->ki_filp = real_file;
     ret = real_file->f_op->write_iter(iocb, from);
