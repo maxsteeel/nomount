@@ -205,30 +205,24 @@ static void nm_catalog_free(struct nm_catalog *cat) {
     free(cat->maps);
 }
 
-static int nm_real_matches(const char *map_real, const char *suffix, const char *real) {
-    if (!suffix[0]) return !strcmp(map_real, real);
-    size_t rl = strlen(map_real);
-    if (rl && map_real[rl - 1] == '/') rl--;
-    if (strlen(real) != rl + strlen(suffix)) return 0;
-    return !strncmp(map_real, real, rl) && !strcmp(real + rl, suffix);
+static int nm_path_prefix(const char *path, size_t len, const char *prefix, size_t n) {
+    return n <= len && (n == len || path[n] == '/') && !memcmp(path, prefix, n);
 }
 
-static void nm_catalog_count(struct nm_catalog *cat, const char *virtual, const char *real) {
+static void nm_catalog_count(struct nm_catalog *cat, const char *virtual, size_t vlen, const char *real, size_t rlen) {
     for (int i = 0; i < cat->nmods; i++) {
         struct nm_modinfo *m = &cat->mods[i];
-        size_t rl = strlen(m->root);
-        if (!strncmp(real, m->root, rl) && (!real[rl] || real[rl] == '/')) {
+        if (nm_path_prefix(real, rlen, m->root, strlen(m->root))) {
             m->count++;
             continue;
         }
         for (int k = 0; k < m->nmaps; k++) {
             struct nm_mapping *mp = &cat->maps[m->first_map + k];
             size_t vl = strlen(mp->vpath);
-            if (strncmp(virtual, mp->vpath, vl)) continue;
-            if (virtual[vl] && virtual[vl] != '/') continue;
-            const char *suffix = virtual + vl;
-            if (!mp->dir && suffix[0]) continue;
-            if (!nm_real_matches(mp->real, suffix, real)) continue;
+            if ((!mp->dir && vlen != vl) || !nm_path_prefix(virtual, vlen, mp->vpath, vl)) continue;
+            size_t suffix = vlen - vl, rl = strlen(mp->real);
+            if (suffix && rl && mp->real[rl - 1] == '/') rl--;
+            if (rlen != rl + suffix || memcmp(real, mp->real, rl) || memcmp(real + rl, virtual + vl, suffix)) continue;
             m->count++;
             break;
         }
@@ -436,20 +430,15 @@ static int nm_is_partition(const char *p, size_t len) {
     return len > 3 && !memcmp(p, "my_", 3);
 }
 
-static noinline int nm_to_vpath(const char *rel, char *out, size_t out_size) {
-    const char *p = rel;
-    if (!strncmp(p, "system/", 7)) {
-        const char *rest = p + 7;
-        const char *slash = strchr(rest, '/');
-        size_t plen = slash ? (size_t)(slash - rest) : strlen(rest);
-        if (nm_is_partition(rest, plen)) p = rest;
+static const char *nm_vpath(const struct nm_walk *ctx) {
+    const char *path = ctx->path + ctx->root_len;
+    if (!strncmp(path, "/system/", 8)) {
+        const char *part = path + 8;
+        size_t len = 0;
+        while (part[len] && part[len] != '/') len++;
+        if (nm_is_partition(part, len)) return path + 7;
     }
-    size_t plen = strlen(p);
-    if (plen + 2 > out_size) return -ENAMETOOLONG;
-    out[0] = '/';
-    memcpy(out + 1, p, plen);
-    out[plen + 1] = '\0';
-    return 0;
+    return path;
 }
 
 static noinline int nm_path_join(char *dst, size_t dst_size, const char *a, const char *b) {
@@ -514,12 +503,10 @@ static int nm_queue_rule(struct nm_payload *p, const struct nm_args *args, unsig
 }
 
 static noinline int nm_collect_mapping(struct nm_walk *ctx, unsigned flags) {
-    char target[PATH_MAX], virtual[PATH_MAX];
+    char target[PATH_MAX];
     target[0] = '\0';
     if (!(flags & NM_FLAG_WHITEOUT) && !realpath(ctx->path, target)) return -errno;
-    int rc = nm_to_vpath(ctx->path + ctx->root_len + 1, virtual, sizeof(virtual));
-    if (rc) return rc;
-    return nm_catalog_add_mapping(ctx->catalog, ctx->module_index, virtual, target,
+    return nm_catalog_add_mapping(ctx->catalog, ctx->module_index, nm_vpath(ctx), target,
                                    (flags & NM_FLAG_VIRTUAL_DIR) ? 1 : 0);
 }
 
@@ -530,12 +517,8 @@ static void nm_emit(struct nm_walk *ctx, unsigned flags) {
         if (!(flags & NM_FLAG_WHITEOUT)) return;
         rc = nm_collect_mapping(ctx, flags);
     } else {
-        char vpath[PATH_MAX];
-        rc = nm_to_vpath(ctx->path + ctx->root_len + 1, vpath, sizeof(vpath));
-        if (!rc) {
-            const char *real = ctx->payload->cmd == NM_CMD_ADD_RULE && !(flags & NM_FLAG_WHITEOUT) ? ctx->path : NULL;
-            rc = nm_queue_rule(ctx->payload, &global_rule, flags, NULL, vpath, real);
-        }
+        const char *real = ctx->payload->cmd == NM_CMD_ADD_RULE && !(flags & NM_FLAG_WHITEOUT) ? ctx->path : NULL;
+        rc = nm_queue_rule(ctx->payload, &global_rule, flags, NULL, nm_vpath(ctx), real);
     }
     if (rc && !ctx->error) ctx->error = rc;
 }
@@ -825,10 +808,7 @@ static int cmd_module_list(struct nm_workspace *ws, struct nm_args *args) {
             char *v = data + pos; pos += vlen;
             char *r = data + pos; pos += rlen;
             if (vlen >= PATH_MAX || rlen >= PATH_MAX) continue;
-            char vbuf[PATH_MAX], rbuf[PATH_MAX];
-            memcpy(vbuf, v, vlen); vbuf[vlen] = '\0';
-            memcpy(rbuf, r, rlen); rbuf[rlen] = '\0';
-            nm_catalog_count(&cat, vbuf, rbuf);
+            nm_catalog_count(&cat, v, vlen, r, rlen);
         }
         if (ws->payload.arg1 == ~0U) break;
         rc = nm_send_payload(&ws->payload);
