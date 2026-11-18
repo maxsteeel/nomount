@@ -67,15 +67,9 @@ jobs:
           git clone https://github.com/maxsteeel/lkmloader.git lkmloader_src
           cd lkmloader_src
 
-          zig cc -target aarch64-linux -Oz -mcmodel=tiny -static -Wl,--gc-sections,-z,norelro -fno-unwind-tables \
-            -fno-ident -flto -fmerge-all-constants -fomit-frame-pointer -mllvm -enable-machine-outliner=always \
-              src/lkmloader.c -o lkmloader-arm64
-
-          zig cc -target arm-linux -Oz -static -Wl,--gc-sections,-z,norelro -fno-unwind-tables \
-            -fno-ident -flto -fmerge-all-constants -fomit-frame-pointer src/lkmloader.c -o lkmloader-arm
-
-          zig cc -target x86_64-linux -Oz -static -Wl,--gc-sections,-z,norelro -fno-unwind-tables \
-            -fno-ident -flto -fmerge-all-constants -fomit-frame-pointer src/lkmloader.c -o lkmloader-x86_64
+          make TARGET=aarch64
+          make TARGET=arm
+          make TARGET=x86_64
 
           ../sstrip -z lkmloader-*
           wc -c lkmloader-*
