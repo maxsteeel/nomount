@@ -1070,8 +1070,9 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
         parent_dir = rcu_dereference(iop->dir_node);
     }
 
-    struct nm_inode_info *bound = inode && inode->i_op == &nm_file_iops ? rcu_dereference(inode->i_private) : NULL;
-    struct nm_leaf *leaf = bound ? bound->leaf : NULL;
+    struct nm_inode_info *bound = inode && nm_inode_is_virtual(inode) ? rcu_dereference(inode->i_private) : NULL;
+    struct nm_leaf *leaf = !bound ? NULL : inode->i_op == &nm_file_iops ? bound->leaf :
+                           bound->dir_node ? smp_load_acquire(&bound->dir_node->owner) : NULL;
     if (!leaf || leaf->parent_dir != parent_dir || !nm_child_matches(leaf, name->name, name->len) || !rcu_access_pointer(leaf->rules))
         leaf = nm_find_leaf_in_dir(parent_dir, name->name, name->len);
     if (leaf && !(uid_blocked = nm_is_uid_blocked((fsuid = current_fsuid().val))) && (rule = nm_select_rule(leaf, fsuid))) {
@@ -1693,10 +1694,9 @@ static void nm_resolve_anchor_locked(struct nm_leaf *leaf)
         ops = nm_get_nm_iop(smp_load_acquire(&inode->i_op));
         if (!ops) ops = nm_get_nm_fop(smp_load_acquire(&inode->i_fop));
         dir = ops ? ops->dir_node : NULL;
-        if (dir && !dir->owner) {
+        if (dir && !READ_ONCE(dir->owner)) {
             leaf->this_dir = dir;
             atomic_inc(&dir->refs);
-            dir->owner = leaf;
         }
     }
 }
@@ -1705,7 +1705,7 @@ static void nm_free_leaf(struct nm_leaf *leaf, bool deferred)
 {
     if (leaf->anchor.dentry) path_put(&leaf->anchor);
     if (leaf->this_dir) {
-        if (leaf->this_dir->owner == leaf) leaf->this_dir->owner = NULL;
+        if (READ_ONCE(leaf->this_dir->owner) == leaf) WRITE_ONCE(leaf->this_dir->owner, NULL);
         nm_dir_put(leaf->this_dir);
     }
     nm_dir_put(leaf->parent_dir);
@@ -1789,7 +1789,7 @@ static void nm_publish_rules_locked(struct nm_leaf *leaf, struct nm_rule_array *
 static void nm_retire_leaf_locked(struct nm_leaf *leaf)
 {
     struct nm_rule_array *array = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex));
-    if (leaf->this_dir) leaf->this_dir->owner = NULL;
+    if (leaf->this_dir) WRITE_ONCE(leaf->this_dir->owner, NULL);
     RCU_INIT_POINTER(leaf->rules, NULL);
     leaf->next = nm_retired_leaves;
     nm_retired_leaves = leaf;
@@ -2015,12 +2015,12 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
     for (int i = pos + replace; i < count; i++, j++) nm_copy_rule(&array->rules[j], &old->rules[i]);
     array->uid_count = new_count - (!array->rules[0].target_uid && !array->rules[0].uid_end);
 
-    if (new_dir) {
+    if (new_dir)
         leaf->this_dir = new_dir;
-        new_dir->owner = leaf;
-    }
     if (fresh) {
         RCU_INIT_POINTER(leaf->rules, array);
+        if (leaf->this_dir && !READ_ONCE(leaf->this_dir->owner))
+            smp_store_release(&leaf->this_dir->owner, leaf);
         if ((err = nm_generate_virtual_topology(leaf, uid))) {
             nm_delete_child_locked(leaf, false);
             nm_retire_leaf_locked(leaf);
@@ -2028,6 +2028,8 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
         }
         hash_add(nm_leaves_ht, &leaf->ht_node, leaf->v_hash);
     } else {
+        if (new_dir)
+            smp_store_release(&new_dir->owner, leaf);
         nm_publish_rules_locked(leaf, array, old);
     }
 
