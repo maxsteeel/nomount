@@ -57,8 +57,6 @@ _lock_acquire() {
         claimed="$lockdir.claimed.$$"
         if { [ -n "$cur_boot" ] && [ -n "$lock_boot" ] && [ "$lock_boot" != "$cur_boot" ]; } ||
            { [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; }; then
-            # Rename is the only atomic claim here. Two waiters can both see a
-            # stale lock; only the one that renames it may remove it.
             if mv "$lockdir" "$claimed" 2>/dev/null; then
                 klogwarn "cleaning stale lock $lockdir"
                 rm -rf "$claimed"
