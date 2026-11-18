@@ -653,6 +653,13 @@ static void nm_hijacked_evict_inode(struct inode *inode)
 
 /*** file / inode / superblock operations ***/
 
+static inline void nm_sync_inode_size(struct inode *v_inode, struct inode *r_inode)
+{
+    loff_t size = i_size_read(r_inode);
+    if (unlikely(i_size_read(v_inode) != size))
+        i_size_write(v_inode, size);
+}
+
 static int nm_open(struct inode *inode, struct file *file)
 {
     struct nm_inode_info *info = inode->i_private;
@@ -666,6 +673,7 @@ static int nm_open(struct inode *inode, struct file *file)
 
     bool readonly = (file->f_flags & ~(O_LARGEFILE | O_CLOEXEC)) == O_RDONLY;
     if (readonly && (real_file = smp_load_acquire(&info->r_file)) && real_file->f_cred == file->f_cred) {
+        if (!S_ISDIR(inode->i_mode)) nm_sync_inode_size(inode, file_inode(real_file));
         file->private_data = real_file;
         return 0;
     }
@@ -673,6 +681,7 @@ static int nm_open(struct inode *inode, struct file *file)
     real_file = dentry_open(&info->r_path, (file->f_flags & ~(O_CREAT | O_EXCL | O_NOCTTY)), file->f_cred);
     if (IS_ERR(real_file)) return PTR_ERR(real_file);
 
+    if (!S_ISDIR(inode->i_mode)) nm_sync_inode_size(inode, file_inode(real_file));
     file->private_data = real_file;
     if (readonly && !READ_ONCE(info->r_file) && S_ISREG(inode->i_mode)) {
         unsigned long magic = info->r_path.dentry->d_sb->s_magic;
@@ -736,6 +745,7 @@ static ssize_t nm_write_iter(struct kiocb *iocb, struct iov_iter *from)
     iocb->ki_filp = real_file;
     ret = real_file->f_op->write_iter(iocb, from);
     iocb->ki_filp = file;
+    if (ret > 0) nm_sync_inode_size(file_inode(file), file_inode(real_file));
 
     return ret;
 }
