@@ -1345,6 +1345,13 @@ static void nm_clear_dops_sb(struct super_block *sb)
     spin_unlock(&sb->s_inode_list_lock);
 }
 
+static void nm_sop_rcu_free(struct rcu_head *head)
+{
+    struct nm_sop *nm_sop = container_of(head, struct nm_sop, rcu);
+    kfree(nm_sop->fake_xattr);
+    kfree(nm_sop);
+}
+
 static void nm_restore_superblocks(void)
 {
     struct nm_sop *nm_sop, *tmp;
@@ -1361,15 +1368,12 @@ static void nm_restore_superblocks(void)
                 smp_store_release(&nm_sop->sb->s_op, nm_sop->orig_sop);
             if (nm_sop->orig_export_op && READ_ONCE(nm_sop->sb->s_export_op) == &nm_sop->fake_export_op)
                 smp_store_release(&nm_sop->sb->s_export_op, nm_sop->orig_export_op);
-            if (nm_sop->fake_xattr) {
-                if (READ_ONCE(nm_sop->sb->s_xattr) == nm_sop->fake_xattr)
-                    smp_store_release((const struct xattr_handler ***)&nm_sop->sb->s_xattr, nm_sop->orig_xattr);
-                kfree(nm_sop->fake_xattr);
-            }
+            if (nm_sop->fake_xattr && READ_ONCE(nm_sop->sb->s_xattr) == nm_sop->fake_xattr)
+                smp_store_release((const struct xattr_handler ***)&nm_sop->sb->s_xattr, nm_sop->orig_xattr);
             nm_debug("Successfully cured superblock for dev: 0x%x\n", nm_sop->sb->s_dev);
         }
         list_del_rcu(&nm_sop->list);
-        kfree_rcu(nm_sop, rcu);
+        call_rcu(&nm_sop->rcu, nm_sop_rcu_free);
     }
 }
 
