@@ -2128,12 +2128,17 @@ static void nm_clear_state(int clear_flags)
 
 /*** Payload Communication API ***/
 
+#define NM_LIST_SKIP_BITS 20
+#define NM_LIST_IDX_MASK ((1U << NM_LIST_SKIP_BITS) - 1U)
+
 static int nm_process_payload(unsigned long user_addr)
 {
     struct nm_payload *payload;
     struct page *page;
     unsigned long pg_off = offset_in_page(user_addr);
     char *buf_ptr, *buf_end;
+
+    BUILD_BUG_ON(NM_LEAF_HT_BITS + NM_LIST_SKIP_BITS > 32);
 
     if (pg_off + sizeof(*payload) > PAGE_SIZE || get_user_pages_fast(user_addr, 1, FOLL_WRITE, &page) != 1) 
         return -EFAULT;
@@ -2232,55 +2237,57 @@ static int nm_process_payload(unsigned long user_addr)
             break;
 
         case NM_CMD_GET_LIST: {
-            if (payload->arg1 == ~0U) { payload->data_size = 0; break; }
-            int current_idx = 0;
-            int bkt;
+            u32 start_bkt = payload->arg1 >> NM_LIST_SKIP_BITS, skip = payload->arg1 & NM_LIST_IDX_MASK;
+            u32 bkt, bkt_idx = 0, next_arg = ~0U;
+            if (start_bkt >= HASH_SIZE(nm_leaves_ht)) { payload->data_size = 0; payload->arg1 = ~0U; break; }
             buf_ptr = payload->buffer;
             buf_end = payload->buffer + sizeof(payload->buffer);
 
             mutex_lock(&nm_mutex);
-            struct nm_leaf *leaf;
-            hash_for_each(nm_leaves_ht, bkt, leaf, ht_node) {
-                struct nm_rule_array *rules = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex));
-                if (!rules) continue;
-                for (int i = 0; i < rules->count; i++) {
-                    struct nm_rule *r = &rules->rules[i];
-                    char *p = NULL;
-                    int r_len_str = 0;
-                    if (current_idx++ < payload->arg1) continue;
+            for (bkt = start_bkt; bkt < HASH_SIZE(nm_leaves_ht); bkt++) {
+                struct nm_leaf *leaf;
+                bkt_idx = 0;
+                hlist_for_each_entry(leaf, &nm_leaves_ht[bkt], ht_node) {
+                    struct nm_rule_array *rules = rcu_dereference_protected(leaf->rules, lockdep_is_held(&nm_mutex));
+                    if (!rules) continue;
+                    for (int i = 0; i < rules->count; i++, bkt_idx++) {
+                        struct nm_rule *r = &rules->rules[i];
+                        char *p = NULL;
+                        int r_len_str = 0;
+                        if (bkt == start_bkt && bkt_idx < skip) continue;
 
-                    size_t head_len = sizeof(struct nm_rule_hdr) + leaf->v_len;
-                    if (head_len > (size_t)(buf_end - buf_ptr)) goto list_full;
-                    if (r->r_path.dentry) {
-                        p = d_path(&r->r_path, buf_ptr + head_len, buf_end - (buf_ptr + head_len));
-                        if (IS_ERR(p)) {
-                            if (PTR_ERR(p) == -ENAMETOOLONG) goto list_full;
-                            payload->status = PTR_ERR(p);
-                            goto list_done;
+                        size_t head_len = sizeof(struct nm_rule_hdr) + leaf->v_len;
+                        if (head_len > (size_t)(buf_end - buf_ptr)) goto list_full;
+                        if (r->r_path.dentry) {
+                            p = d_path(&r->r_path, buf_ptr + head_len, buf_end - (buf_ptr + head_len));
+                            if (IS_ERR(p)) {
+                                if (PTR_ERR(p) == -ENAMETOOLONG) goto list_full;
+                                payload->status = PTR_ERR(p);
+                                goto list_done;
+                            }
+                            r_len_str = strnlen(p, buf_end - p);
                         }
-                        r_len_str = strnlen(p, buf_end - p);
-                    }
 
-                    if (head_len + r_len_str > (size_t)(buf_end - buf_ptr)) goto list_full;
-                    if (p && p != buf_ptr + head_len) memmove(buf_ptr + head_len, p, r_len_str);
-                    *(struct nm_rule_hdr *)buf_ptr = (struct nm_rule_hdr){
-                        .flags = r->flags, .v_len = leaf->v_len, .r_len = r_len_str,
-                        .uid = r->target_uid, .uid_end = r->uid_end,
-                        .deny_start = r->deny_start, .deny_end = r->deny_end
-                    };
-                    buf_ptr += sizeof(struct nm_rule_hdr);
-                    memcpy(buf_ptr, leaf->paths, leaf->v_len); buf_ptr += leaf->v_len + r_len_str;
+                        if (head_len + r_len_str > (size_t)(buf_end - buf_ptr)) goto list_full;
+                        if (p && p != buf_ptr + head_len) memmove(buf_ptr + head_len, p, r_len_str);
+                        *(struct nm_rule_hdr *)buf_ptr = (struct nm_rule_hdr){
+                            .flags = r->flags, .v_len = leaf->v_len, .r_len = r_len_str,
+                            .uid = r->target_uid, .uid_end = r->uid_end,
+                            .deny_start = r->deny_start, .deny_end = r->deny_end
+                        };
+                        buf_ptr += sizeof(struct nm_rule_hdr);
+                        memcpy(buf_ptr, leaf->paths, leaf->v_len); buf_ptr += leaf->v_len + r_len_str;
+                    }
                 }
             }
-            current_idx = -1;
             goto list_done;
         list_full:
-            current_idx--;
-            if (current_idx == (int)payload->arg1) payload->status = -ENAMETOOLONG;
+            if (buf_ptr == payload->buffer) payload->status = -ENAMETOOLONG;
+            next_arg = (bkt << NM_LIST_SKIP_BITS) | (bkt_idx & NM_LIST_IDX_MASK);
         list_done:
             mutex_unlock(&nm_mutex);
             payload->data_size = buf_ptr - payload->buffer;
-            payload->arg1 = current_idx;
+            payload->arg1 = next_arg;
             break;
         }
 
