@@ -690,9 +690,7 @@ static int nm_directory_rule(int fd, int check_contents) {
     if (opaque < 0) return opaque;
     if (!opaque) {
         char value;
-        ssize_t n = fgetxattr(fd, "trusted.overlay.opaque", &value, 1);
-        if (n < 0 && errno != ENODATA && errno != ENOTSUP && errno != ERANGE) return -errno;
-        opaque = n == 1 && value == 'y';
+        opaque = fgetxattr(fd, "trusted.overlay.opaque", &value, 1) == 1 && value == 'y';
     }
     if (!opaque) return 0;
     if (!check_contents) return NM_FLAG_OPAQUE;
