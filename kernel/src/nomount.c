@@ -2060,7 +2060,7 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
                               unsigned int uid_end, unsigned int deny_start, unsigned int deny_end)
 {
     struct nm_leaf *leaf;
-    struct nm_rule_array *old, *array = NULL;
+    struct nm_rule_array *old, *array;
     int pos = 0, new_count;
     bool stub_virtual = false;
 
@@ -2073,6 +2073,10 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
 
     if (leaf->this_dir && rcu_access_pointer(leaf->this_dir->children) && ((old->rules[pos].flags & NM_FLAG_IS_DIR) || !pos || old->uid_count == old->count)) {
         if (old->rules[pos].flags & NM_FLAG_VIRTUAL_DIR) return 0;
+        if (!old->uid_count) {
+            nm_publish_rules_locked(leaf, &nm_virtual_parent_rules, old);
+            return 0;
+        }
         stub_virtual = true;
     }
 
@@ -2086,20 +2090,14 @@ static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid,
 
     if (!(array = nm_alloc_rule_array(new_count))) return -ENOMEM;
 
-    for (int i = 0, j = 0; i < old->count; i++) {
-        if (!stub_virtual && i == pos) continue;
-        if (stub_virtual && i == pos) {
-            array->rules[j] = (struct nm_rule){
-                .target_uid = uid, .uid_end = uid_end,
-                .deny_start = deny_start, .deny_end = deny_end,
-                .flags = NM_FLAG_IS_DIR | NM_FLAG_VIRTUAL_DIR,
-            };
-            j++;
-            continue;
-        }
-        nm_copy_rule(&array->rules[j], &old->rules[i]);
-        j++;
-    }
+    for (int i = 0; i < pos; i++) nm_copy_rule(&array->rules[i], &old->rules[i]);
+    if (stub_virtual)
+        array->rules[pos] = (struct nm_rule){
+            .target_uid = uid, .uid_end = uid_end,
+            .deny_start = deny_start, .deny_end = deny_end,
+            .flags = NM_FLAG_IS_DIR | NM_FLAG_VIRTUAL_DIR,
+        };
+    for (int i = pos + 1, j = pos + stub_virtual; i < old->count; i++, j++) nm_copy_rule(&array->rules[j], &old->rules[i]);
     array->uid_count = new_count - (!array->rules[0].target_uid && !array->rules[0].uid_end);
 
     nm_publish_rules_locked(leaf, array, old);

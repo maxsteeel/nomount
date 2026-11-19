@@ -682,7 +682,7 @@ static int nm_marker(int fd, const char *name) {
     return !S_ISDIR(st.st_mode);
 }
 
-static int nm_directory_rule(int fd) {
+static int nm_directory_rule(int fd, int check_contents) {
     int rc = nm_marker(fd, ".remove");
     if (rc < 0) return rc;
     if (rc) return NM_FLAG_WHITEOUT;
@@ -695,6 +695,7 @@ static int nm_directory_rule(int fd) {
         opaque = n == 1 && value == 'y';
     }
     if (!opaque) return 0;
+    if (!check_contents) return NM_FLAG_OPAQUE;
     int entries = nm_dir_has_content(fd, ".");
     if (entries < 0) return entries;
     return entries ? NM_FLAG_OPAQUE : NM_FLAG_WHITEOUT;
@@ -725,10 +726,11 @@ static int nm_walk_module(struct nm_walk *ctx, int parent_fd, const char *name,
     struct nm_ancestor here = { parent, st.st_dev, st.st_ino };
     for (const struct nm_ancestor *a = parent; a; a = a->parent)
         if (a->dev == here.dev && a->ino == here.ino) { rc = -ELOOP; goto done; }
-    int flags = nm_directory_rule(dirfd(d));
+    unsigned cmd = ctx->payload ? ctx->payload->cmd : NM_CMD_UNSPEC;
+    int flags = nm_directory_rule(dirfd(d), cmd != NM_CMD_DEL_RULE);
     if (flags < 0) { rc = flags; goto done; }
     if (flags) nm_emit(ctx, flags);
-    if (flags == NM_FLAG_WHITEOUT && ctx->payload && ctx->payload->cmd == NM_CMD_ADD_RULE) goto done;
+    if (flags == NM_FLAG_WHITEOUT && cmd != NM_CMD_DEL_RULE) goto done;
     size_t len = strlen(ctx->path);
     for (;;) {
         errno = 0;
