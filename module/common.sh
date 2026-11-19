@@ -45,55 +45,35 @@ load_ko() {
     return 0
 }
 
-_nm_boot_id() { cat /proc/sys/kernel/random/boot_id 2>/dev/null; }
-
 _lock_acquire() {
-    local lockdir="$1" timeout="$2" n=0
-    local pid lock_boot cur_boot claimed
-    cur_boot=$(_nm_boot_id)
-    while ! mkdir "$lockdir" 2>/dev/null; do
-        pid=$(cat "$lockdir/pid" 2>/dev/null)
-        lock_boot=$(cat "$lockdir/boot_id" 2>/dev/null)
-        claimed="$lockdir.claimed.$$"
-        if { [ -n "$cur_boot" ] && [ -n "$lock_boot" ] && [ "$lock_boot" != "$cur_boot" ]; } ||
-           { [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; }; then
-            if mv "$lockdir" "$claimed" 2>/dev/null; then
-                klogwarn "cleaning stale lock $lockdir"
-                rm -rf "$claimed"
-            fi
-        fi
-        n=$((n + 1))
-        if [ "$n" -ge "$timeout" ]; then
+    local n=0
+    command exec 9>>"$1" || return 1
+    until "$LOADER" --try-lock <&9; do
+        if [ "$?" -ne 1 ] || [ "$((n += 1))" -ge "$2" ]; then
+            _lock_release
             return 1
         fi
         sleep 1
     done
-    echo $$ > "$lockdir/pid"
-    [ -n "$cur_boot" ] && printf '%s\n' "$cur_boot" > "$lockdir/boot_id"
-    return 0
 }
 
-_lock_release() {
-    rm -rf "$1" 2>/dev/null
-    return 0
-}
+_lock_release() { exec 9>&-; }
 
 bootloop_check() {
-    local lockdir="$NOMOUNT_DATA/.boot.lock"
-    if ! _lock_acquire "$lockdir" 15; then
-        klogerr "boot lock timeout after 15s"
+    if ! _lock_acquire "$NOMOUNT_DATA/.boot.flock" 15; then
+        klogerr "failed to acquire boot lock"
         return 1
     fi
 
     local current prev
-    current=$(_nm_boot_id)
+    current=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
     [ -z "$current" ] && current="fallback-$(date +%s)"
 
     if [ -f "$BOOT_SEMAPHORE" ] && [ -s "$BOOT_SEMAPHORE" ]; then
         prev=$(cat "$BOOT_SEMAPHORE" 2>/dev/null || echo "MISSING")
         if [ "$prev" != "$current" ]; then
             klogerr "Bootloop detected (prev=$prev current=$current)"
-            _lock_release "$lockdir"
+            _lock_release
             disable_module "🚨 Bootloop Prevented"
             return 1
         fi
@@ -102,30 +82,29 @@ bootloop_check() {
         echo "$current" > "$BOOT_SEMAPHORE"
     fi
 
-    _lock_release "$lockdir"
+    _lock_release
     return 0
 }
 
 ensure_lkm_loaded() {
-    local lockdir="$NOMOUNT_DATA/.lkm.lock"
-    if ! _lock_acquire "$lockdir" 60; then
-        klogerr "LKM lock timed out after 60s"
+    if ! _lock_acquire "$NOMOUNT_DATA/.lkm.flock" 60; then
+        klogerr "failed to acquire LKM lock"
         return 1
     fi
 
     if "$LOADER" version >/dev/null 2>&1; then
-        _lock_release "$lockdir"
+        _lock_release
         return 0
     fi
 
     klog "Loading LKM..."
     if ! load_ko "$MODDIR/lkm/nomount.ko"; then
         klogerr "LKM load failed."
-        _lock_release "$lockdir"
+        _lock_release
         return 1
     fi
     klog "LKM loaded and initialized correctly."
-    _lock_release "$lockdir"
+    _lock_release
     return 0
 }
 

@@ -2,9 +2,15 @@
  * nm.c - NoMount CLI Userspace Tool
  */
 #include "nm.h"
+#include <sys/file.h>
 
 /* --- MAIN --- */
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--try-lock")) {
+        if (!flock(STDIN_FILENO, LOCK_EX | LOCK_NB)) return 0;
+        return errno == EWOULDBLOCK ? 1 : 2;
+    }
+
     int exit_code = 1;
     struct nm_workspace workspace;
     struct nm_payload *payload = &workspace.payload;
