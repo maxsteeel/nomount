@@ -402,7 +402,6 @@ static noinline int resolve_path(char *base, char *end, const char *cwd, const c
     if (base == end) return 0;
 
     char *out = base;
-    *out++ = '/';
     for (int pass = (*rel == '/'); pass < 2; pass++) {
         for (const char *s = pass ? rel : cwd; *s; ) {
             while (*s == '/') s++;
@@ -411,24 +410,27 @@ static noinline int resolve_path(char *base, char *end, const char *cwd, const c
             while (*s && *s != '/') s++;
             size_t len = (size_t)(s - c);
             if (len > NAME_MAX) return -ENAMETOOLONG;
-            if (c[0] == '.') {
+            if (lexical && c[0] == '.') {
                 if (len == 1) continue;
-                if (lexical && len == 2 && c[1] == '.') {
-                    while (out > base + 1 && out[-1] != '/') out--;
-                    if (out > base + 1) out--;
+                if (len == 2 && c[1] == '.') {
+                    while (out > base && *--out != '/') {}
                     continue;
                 }
             }
-            if (out > base + 1) {
-                if (out == end) return 0;
-                *out++ = '/';
-            }
-            if ((size_t)(end - out) < len) return 0;
+            if ((size_t)(end - out) <= len) return 0;
+            *out++ = '/';
             memcpy(out, c, len);
             out += len;
         }
     }
-    return (lexical && out - base <= 1) ? -EINVAL : (int)(out - base);
+    if (!lexical) {
+        size_t rel_len = strlen(rel);
+        if (rel_len && rel[rel_len - 1] == '/') {
+            if (out == end) return 0;
+            *out++ = '/';
+        }
+    }
+    return out == base ? -EINVAL : (int)(out - base);
 }
 
 static noinline int nm_invalid_path(const char *path, int error) {
