@@ -569,20 +569,24 @@ do_real_unlink:
     return -EPERM;
 }
 
+static inline const struct inode_operations *nm_get_real_iop(struct inode *dir)
+{
+    const struct inode_operations *iop = smp_load_acquire(&dir->i_op);
+    struct nm_dir_ops *ops = nm_get_nm_iop(iop);
+    return ops ? ops->orig_iop : iop;
+}
+
 static int nm_hijacked_rename(IDMAP_ARG struct inode *old_dir, struct dentry *old_dentry,
                                struct inode *new_dir, struct dentry *new_dentry, unsigned int flags)
 {
     const struct inode_operations *orig_iop;
     struct inode *old_inode = d_inode(old_dentry);
     struct inode *new_inode = d_inode(new_dentry);
-    struct nm_dir_ops *iop;
 
     if ((old_inode && nm_inode_is_virtual(old_inode)) || (new_inode && nm_inode_is_virtual(new_inode)))
         return -EPERM;
 
-    orig_iop = smp_load_acquire(&old_dir->i_op);
-    if ((iop = nm_get_nm_iop(orig_iop)))
-        orig_iop = iop->orig_iop;
+    orig_iop = nm_get_real_iop(old_dir);
     if (orig_iop && orig_iop->rename)
         return orig_iop->rename(IDMAP_CALL old_dir, old_dentry, new_dir, new_dentry, flags);
     return -EPERM;
@@ -592,12 +596,9 @@ static int nm_hijacked_rmdir(struct inode *dir, struct dentry *dentry)
 {
     const struct inode_operations *orig_iop;
     struct inode *inode = d_inode(dentry);
-    struct nm_dir_ops *iop;
     if (inode && nm_inode_is_virtual(inode))
         return -EPERM;
-    orig_iop = smp_load_acquire(&dir->i_op);
-    if ((iop = nm_get_nm_iop(orig_iop)))
-        orig_iop = iop->orig_iop;
+    orig_iop = nm_get_real_iop(dir);
     if (orig_iop && orig_iop->rmdir)
         return orig_iop->rmdir(dir, dentry);
     return -EPERM;
@@ -607,13 +608,10 @@ static int nm_hijacked_link(struct dentry *old_dentry, struct inode *dir, struct
 {
     const struct inode_operations *orig_iop;
     struct inode *inode = d_inode(old_dentry);
-    struct nm_dir_ops *iop;
 
     if (inode && nm_inode_is_virtual(inode))
         return -EPERM;
-    orig_iop = smp_load_acquire(&dir->i_op);
-    if ((iop = nm_get_nm_iop(orig_iop)))
-        orig_iop = iop->orig_iop;
+    orig_iop = nm_get_real_iop(dir);
     if (orig_iop && orig_iop->link)
         return orig_iop->link(old_dentry, dir, new_dentry);
     return -EPERM;
