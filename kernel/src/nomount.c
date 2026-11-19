@@ -1715,10 +1715,7 @@ static void nm_resolve_anchor_locked(struct nm_leaf *leaf)
 static void nm_free_leaf(struct nm_leaf *leaf, bool deferred)
 {
     if (leaf->anchor.dentry) path_put(&leaf->anchor);
-    if (leaf->this_dir) {
-        if (READ_ONCE(leaf->this_dir->owner) == leaf) WRITE_ONCE(leaf->this_dir->owner, NULL);
-        nm_dir_put(leaf->this_dir);
-    }
+    nm_dir_put(leaf->this_dir);
     nm_dir_put(leaf->parent_dir);
     if (deferred) kfree_rcu(leaf, rcu);
     else kfree(leaf);
@@ -1954,21 +1951,6 @@ static int nm_prune_empty_virtual_dirs_locked(struct nm_dir_node *dir)
 
 /*** Rule Operations ***/
 
-/* nm_actor_proxy() skips these, so the rule could never match on readdir. */
-static bool nm_vpath_has_dot_component(const char *path, u16 len)
-{
-    u16 i = 0;
-
-    while (i < len) {
-        u16 start = i;
-        while (i < len && path[i] != '/') i++;
-        if (i - start == 1 && path[start] == '.') return true;
-        if (i - start == 2 && path[start] == '.' && path[start + 1] == '.') return true;
-        i++;
-    }
-    return false;
-}
-
 static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len, u16 r_len, u32 flags,
                               unsigned int uid, unsigned int uid_end, unsigned int deny_start, unsigned int deny_end)
 {
@@ -1984,10 +1966,15 @@ static int nm_add_rule_locked(const char *v_path, const char *r_path, u16 v_len,
 
     while (v_len > 1 && v_path[v_len - 1] == '/') v_len--;
     if (v_len <= 1 || v_path[0] != '/' || uid > uid_end) return -EINVAL;
-    for (u16 i = 1; i < v_len; i++)
-        if (!v_path[i] || (v_path[i] == '/' && v_path[i - 1] == '/')) return -EINVAL;
-    if (nm_vpath_has_dot_component(v_path, v_len))
-        return -EINVAL;
+    for (u16 i = 1; i < v_len; i++) {
+        u16 start = i;
+        while (i < v_len && v_path[i] != '/') {
+            if (!v_path[i]) return -EINVAL;
+            i++;
+        }
+        u16 len = i - start;
+        if (!len || (len <= 2 && v_path[start] == '.' && (len == 1 || v_path[start + 1] == '.'))) return -EINVAL;
+    }
 
     if (deny_start || deny_end) {
         if (!deny_start || !deny_end) return -EINVAL;
