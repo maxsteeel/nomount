@@ -64,12 +64,18 @@ setup_nomount() {
     cd "$REPO_DIR"
 
     git reset --hard HEAD --quiet
+    git fetch --all --tags --quiet
     if [ -z "${1-}" ]; then
-        git checkout dev --quiet 2>/dev/null || git checkout master --quiet 2>/dev/null
-        git pull --quiet
-        echo "[-] Checked out and updated default branch."
+        latest_tag=$(git tag --list 'v*' --sort=-v:refname | head -n 1)
+        if [ -n "$latest_tag" ]; then
+            git checkout "$latest_tag" --quiet
+            echo "[-] Checked out latest tag: $latest_tag"
+        else
+            git checkout dev --quiet 2>/dev/null || git checkout master --quiet 2>/dev/null
+            git pull --quiet
+            echo "[-] No version tags found; checked out and updated default branch."
+        fi
     else
-        git fetch --all --tags --quiet
         git checkout "$1" --quiet
         echo "[-] Checked out specific target: $1"
     fi
