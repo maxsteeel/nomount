@@ -1632,6 +1632,23 @@ static struct nm_rule_array *nm_alloc_rule_array(int count)
     return arr;
 }
 
+static int nm_unwrap_virtual_backing(struct path *path)
+{
+    struct inode *inode = d_backing_inode(path->dentry);
+    struct nm_inode_info *info;
+    struct path backing;
+
+    if (!nm_inode_is_virtual(inode)) return 0;
+    info = READ_ONCE(inode->i_private);
+    if (!info || !info->r_path.dentry || !info->r_path.mnt) return -EINVAL;
+
+    backing = info->r_path;
+    path_get(&backing);
+    path_put(path);
+    *path = backing;
+    return 0;
+}
+
 static int nm_prepare_rule(const char *r_path, u32 flags, unsigned int uid, unsigned int uid_end,
                            unsigned int deny_start, unsigned int deny_end, struct nm_rule *out)
 {
@@ -1650,8 +1667,13 @@ static int nm_prepare_rule(const char *r_path, u32 flags, unsigned int uid, unsi
     if (backed) {
         int err = kern_path(r_path, LOOKUP_FOLLOW, &out->r_path);
         if (err) return err;
+        err = nm_unwrap_virtual_backing(&out->r_path);
+        if (err) {
+            path_put(&out->r_path);
+            return err;
+        }
         struct inode *inode = d_backing_inode(out->r_path.dentry);
-        if (nm_inode_is_virtual(inode) || (!S_ISDIR(inode->i_mode) && (flags & NM_FLAG_OPAQUE))) {
+        if (!inode || nm_inode_is_virtual(inode) || (!S_ISDIR(inode->i_mode) && (flags & NM_FLAG_OPAQUE))) {
             path_put(&out->r_path);
             return -EINVAL;
         }
