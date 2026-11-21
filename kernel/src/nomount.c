@@ -395,13 +395,12 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
     struct inode *inode;
     struct dentry *res = ERR_PTR(rule_info->backing_child ? -ENOMEM : -ENODATA);
 
+    if (rule_info->flags & NM_FLAG_WHITEOUT) goto negative_dentry;
+    if (flags & LOOKUP_RENAME_TARGET) { res = ERR_PTR(-EPERM); goto out; }
     if (rule_info->r_path.dentry) {
         int err = nm_rebind_path(rule_info);
         if (err) goto negative_dentry;
     }
-
-    if (rule_info->flags & NM_FLAG_WHITEOUT) goto negative_dentry;
-    if (flags & LOOKUP_RENAME_TARGET) { res = ERR_PTR(-EPERM); goto out; }
 
     probe = (struct nm_inode_info){
         .r_path = rule_info->r_path, .dir_node = rule_info->this_dir,
