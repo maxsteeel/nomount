@@ -918,10 +918,8 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
 {
     struct nm_inode_info *info = dir->i_private;
     struct nm_rule_info rule_info = {0};
-    struct inode *r_dir;
-    struct dentry *res;
     uid_t fsuid;
-    bool uid_blocked, found = false, has_leaf = false;
+    bool uid_blocked, found = false;
 
     if (unlikely(!info))
         goto negative_dentry;
@@ -929,7 +927,6 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     uid_blocked = nm_is_uid_blocked((fsuid = current_fsuid().val));
     rcu_read_lock();
     struct nm_leaf *leaf = nm_find_leaf_in_dir(READ_ONCE(info->dir_node), dentry->d_name.name, dentry->d_name.len);
-    has_leaf = leaf != NULL;
     if (leaf && !uid_blocked) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
     rcu_read_unlock();
     if (found) return nm_materialize_rule(dir, dentry, &rule_info, flags);
@@ -939,9 +936,7 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
 
     if (!info->r_path.dentry)
         goto negative_dentry;
-    r_dir = d_backing_inode(info->r_path.dentry);
-
-    if (r_dir->i_sb != dir->i_sb && !nm_dir_lookup_tolerates_cross_sb(r_dir->i_sb)) {
+    {
         struct dentry *backing;
 
         if (IS_ERR((backing = nm_lookup_one_len_unlocked(dentry->d_name.name, info->r_path.dentry, dentry->d_name.len))))
@@ -965,14 +960,6 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
         dput(backing);
         return nm_materialize_rule(dir, dentry, &rule_info, flags);
     }
-
-    if (r_dir->i_op->lookup) {
-        res = r_dir->i_op->lookup(r_dir, dentry, flags);
-        if (!IS_ERR(res ? res : dentry) && has_leaf && !nm_is_pseudo_fs(r_dir->i_sb))
-            nm_hijack_dentry_ops(dir, res ? res : dentry, false);
-        return res;
-    }
-    return ERR_PTR(-EOPNOTSUPP);
 
 negative_dentry:
     nm_hijack_dentry_ops(dir, dentry, true);
