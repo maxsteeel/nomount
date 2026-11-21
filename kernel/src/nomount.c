@@ -918,6 +918,7 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
 {
     struct nm_inode_info *info = dir->i_private;
     struct nm_rule_info rule_info = {0};
+    struct inode *r_dir;
     uid_t fsuid;
     bool uid_blocked, found = false;
 
@@ -936,6 +937,8 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
 
     if (!info->r_path.dentry)
         goto negative_dentry;
+    r_dir = d_backing_inode(info->r_path.dentry);
+    if (!r_dir->i_op || !r_dir->i_op->lookup) return ERR_PTR(-EOPNOTSUPP);
     {
         struct dentry *backing;
 
