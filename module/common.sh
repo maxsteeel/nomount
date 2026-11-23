@@ -72,7 +72,10 @@ bootloop_check() {
 
     local current prev
     current=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
-    [ -z "$current" ] && current="fallback-$(date +%s)"
+    if [ -z "$current" ]; then
+        current=$(grep '^btime ' /proc/stat 2>/dev/null | cut -d' ' -f2)
+        current="fallback-${current:-unknown}"
+    fi
 
     if [ -f "$BOOT_SEMAPHORE" ] && [ -s "$BOOT_SEMAPHORE" ]; then
         prev=$(cat "$BOOT_SEMAPHORE" 2>/dev/null || echo "MISSING")
