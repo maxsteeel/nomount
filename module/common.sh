@@ -119,7 +119,12 @@ ensure_lkm_loaded() {
 dump_all_rules_logcat() {
     log -t nomount -p i "rules dump started (triggered $*)"
 
-    "$LOADER" rule list 2>&1 | {
+    if ! "$LOADER" version >/dev/null 2>&1; then
+        log -t nomount -p e "rules dump aborted: driver unavailable"
+        return 1
+    fi
+
+    "$LOADER" rule list 2>/dev/null | {
         buf=""
         n=0
         while IFS= read -r line; do
