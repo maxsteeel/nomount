@@ -521,21 +521,6 @@ static bool nm_is_kernfs(struct super_block *sb)
     }
 }
 
-static bool nm_dir_lookup_tolerates_cross_sb(struct super_block *sb)
-{
-    switch (sb->s_magic) {
-    case F2FS_SUPER_MAGIC:
-    case EXT4_SUPER_MAGIC:
-#if defined(EROFS_SUPER_MAGIC_V1) && BITS_PER_LONG == 64
-    case EROFS_SUPER_MAGIC_V1:
-#endif
-    case SQUASHFS_MAGIC:
-        return true;
-    default:
-        return false;
-    }
-}
-
 static inline int nm_drop_dentry(struct dentry *dentry, unsigned int flags, bool weak)
 {
     if (flags & LOOKUP_RCU) return -ECHILD;
