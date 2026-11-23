@@ -242,7 +242,7 @@ fi
 
 NOMOUNT_DATA="/data/adb/nomount"
 mkdir -p "$NOMOUNT_DATA"
-rm -f "$NOMOUNT_DATA/.booting"
+rm -f "$NOMOUNT_DATA/.booting" "$NOMOUNT_DATA/disable"
 
 mkdir -p "/data/adb/$ROOT_IMP/bin"
 if ln -sf "/data/adb/modules/nomount/bin/nm" "/data/adb/$ROOT_IMP/bin/nm"; then
