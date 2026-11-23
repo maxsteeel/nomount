@@ -65,6 +65,11 @@ bootloop_check() {
         return 1
     fi
 
+    if [ -f "$NOMOUNT_DATA/disable" ]; then
+        _lock_release
+        return 1
+    fi
+
     local current prev
     current=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
     [ -z "$current" ] && current="fallback-$(date +%s)"
@@ -73,8 +78,8 @@ bootloop_check() {
         prev=$(cat "$BOOT_SEMAPHORE" 2>/dev/null || echo "MISSING")
         if [ "$prev" != "$current" ]; then
             klogerr "Bootloop detected (prev=$prev current=$current)"
-            _lock_release
             disable_module "🚨 Bootloop Prevented"
+            _lock_release
             return 1
         fi
     else
