@@ -132,12 +132,17 @@ static int nm_rebind_path(struct nm_rule_info *rule_info)
     struct dentry *dentry = rule_info->r_path.dentry;
     struct inode *old_inode = d_backing_inode(dentry), *new_inode;
     struct dentry *parent, *new;
+    umode_t mode;
     const char *name;
     unsigned seq;
     u16 len;
 
-    if (!old_inode) return -ENOENT;
     if (!nm_backing_gone(dentry)) return 0;
+
+    if (old_inode) mode = old_inode->i_mode & S_IFMT;
+    else if (rule_info->flags & NM_FLAG_WHITEOUT) return -ENOENT;
+    else if (rule_info->flags & NM_FLAG_IS_DIR) mode = S_IFDIR;
+    else mode = S_IFREG;
 
     for (;;) {
         seq = raw_seqcount_begin(&dentry->d_seq);
@@ -148,12 +153,18 @@ static int nm_rebind_path(struct nm_rule_info *rule_info)
         dput(parent);
     }
 
+    if (!d_backing_inode(parent)) {
+        dput(parent);
+        return -ENOENT;
+    }
+
     new = nm_lookup_one_len_unlocked(name, parent, len);
     dput(parent);
     if (IS_ERR(new)) return PTR_ERR(new);
 
     new_inode = d_backing_inode(new);
-    if (!d_is_positive(new) || new->d_sb != dentry->d_sb || !new_inode || nm_inode_is_virtual(new_inode) || d_mountpoint(new) || ((new_inode->i_mode ^ old_inode->i_mode) & S_IFMT)) {
+    if (!d_is_positive(new) || new->d_sb != dentry->d_sb || !new_inode || nm_inode_is_virtual(new_inode)
+        || d_mountpoint(new) || ((new_inode->i_mode ^ mode) & S_IFMT)) {
         dput(new);
         return -ENOENT;
     }
@@ -161,6 +172,16 @@ static int nm_rebind_path(struct nm_rule_info *rule_info)
     dput(rule_info->r_path.dentry);
     rule_info->r_path.dentry = new;
     return 0;
+}
+
+static void nm_refresh_binding(struct inode *inode, const struct path *path)
+{
+    struct nm_inode_info *info = READ_ONCE(inode->i_private);
+    struct dentry *old;
+    if (!info || !path->dentry || (old = READ_ONCE(info->r_path.dentry)) == path->dentry) return;
+    path_get(path);
+    if (cmpxchg(&info->r_path.dentry, old, path->dentry) == old) dput(old);
+    else path_put(path);
 }
 
 static void nm_dir_rcu_free(struct rcu_head *head)
@@ -416,6 +437,8 @@ static struct dentry *nm_materialize_rule(struct inode *dir, struct dentry *dent
         *info = probe;
         nm_init_prealloc_inode(inode, info, rule_info->v_ino);
         unlock_new_inode(inode);
+    } else {
+        nm_refresh_binding(inode, &rule_info->r_path);
     }
     res = d_splice_alias(inode, dentry);
     if (!IS_ERR(res))
