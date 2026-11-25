@@ -535,7 +535,7 @@ static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx)
     orig_fop = rcu_dereference(file->f_op);
     if ((nm_fop = nm_get_nm_fop(orig_fop))) {
         orig_fop = nm_fop->orig_fop;
-        if ((d = rcu_dereference(nm_fop->dir_node)) && rcu_access_pointer(d->children) && (READ_ONCE(d->readdir_count) || nm_is_virtual_pos(ctx->pos)) && atomic_inc_not_zero(&d->refs))
+        if ((d = rcu_dereference(nm_fop->dir_node)) && rcu_access_pointer(d->children) && (READ_ONCE(d->readdir_count) || nm_is_virtual_pos(ctx->pos)))
             dir_node = d;
     }
     rcu_read_unlock();
@@ -543,7 +543,6 @@ static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx)
     if (unlikely(!orig_fop || !dir_node))
         return orig_fop ? nm_call_iterate(file, ctx, orig_fop) : -ENOTDIR;
     res = nm_iterate_view(file, ctx, orig_fop, dir_node, true, false);
-    nm_dir_put(dir_node);
     return res;
 }
 
