@@ -19,7 +19,7 @@ static __always_inline bool nm_is_uid_blocked_rcu(uid_t target_uid)
         if (app_id >= 90000U && app_id <= 99999U) return true;
     }
 
-    if (likely(!(arr = rcu_dereference(nm_uids))))
+    if (likely(!nm_uid_check_live() || !(arr = rcu_dereference(nm_uids))))
         return false;
     if (nm_uid_bloom_test(arr, target_uid)) {
         for (int i = 0; i < arr->count; i++) {
@@ -2153,6 +2153,7 @@ static void nm_clear_state(int clear_flags)
     if (clear_flags & NM_CLEAR_UIDS) {
         struct nm_uid_array *old = rcu_dereference_protected(nm_uids, lockdep_is_held(&nm_mutex));
         RCU_INIT_POINTER(nm_uids, NULL);
+        nm_uid_check_disarm();
         if (old) kfree_rcu(old, rcu);
     }
     if (clear_flags & NM_CLEAR_RULES) {
