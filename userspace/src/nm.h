@@ -53,6 +53,7 @@ enum nm_cli_action {
     ACTION_MODULE_LOAD,
     ACTION_MODULE_UNLOAD,
     ACTION_MODULE_LIST,
+    ACTION_HELP,
 };
 
 struct nm_payload {
@@ -168,7 +169,11 @@ static int nm_catalog_add_module(struct nm_catalog *cat, const char *mod_id, con
     m->mod_id = nm_strdup(mod_id);
     m->name = nm_strdup(name);
     m->root = nm_strdup(root);
-    if (!m->mod_id || !m->name || !m->root) return -ENOMEM;
+    if (!m->mod_id || !m->name || !m->root) {
+        free(m->mod_id); free(m->name); free(m->root);
+        memset(m, 0, sizeof(*m));
+        return -ENOMEM;
+    }
     m->disable = disable;
     m->skip = skip;
     m->first_map = cat->nmaps;
@@ -187,7 +192,11 @@ static int nm_catalog_add_mapping(struct nm_catalog *cat, int module, const char
     struct nm_mapping *m = &cat->maps[cat->nmaps];
     m->vpath = nm_strdup(vpath);
     m->real = nm_strdup(real);
-    if (!m->vpath || !m->real) return -ENOMEM;
+    if (!m->vpath || !m->real) {
+        free(m->vpath); free(m->real);
+        m->vpath = m->real = NULL;
+        return -ENOMEM;
+    }
     m->dir = dir;
     cat->nmaps++;
     cat->mods[module].nmaps++;
@@ -279,6 +288,14 @@ static noinline void parse_arguments(long argc, char **argv, struct nm_args *par
     parsed_args->data_start_idx = 2;
 
     if (argc < 2) return;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            parsed_args->action = ACTION_HELP;
+            parsed_args->data_start_idx = argc;
+            return;
+        }
+    }
 
     const char *c1 = argv[1];
     if (strcmp(c1, "rule") == 0 && argc >= 3) {
