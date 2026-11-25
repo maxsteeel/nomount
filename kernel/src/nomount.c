@@ -10,7 +10,7 @@
 /*** Helpers ***/
 
 static bool nm_block_isolated_uids = false;
-static __always_inline bool nm_is_uid_blocked(uid_t target_uid)
+static __always_inline bool nm_is_uid_blocked_rcu(uid_t target_uid)
 {
     struct nm_uid_array *arr;
 
@@ -19,17 +19,24 @@ static __always_inline bool nm_is_uid_blocked(uid_t target_uid)
         if (app_id >= 90000U && app_id <= 99999U) return true;
     }
 
-    if (likely(!rcu_access_pointer(nm_uids)))
+    if (likely(!(arr = rcu_dereference(nm_uids))))
         return false;
-
-    rcu_guard();
-    if ((arr = rcu_dereference(nm_uids)) && nm_uid_bloom_test(arr, target_uid)) {
+    if (nm_uid_bloom_test(arr, target_uid)) {
         for (int i = 0; i < arr->count; i++) {
             if (arr->uids[i] == target_uid)
                 return true;
         }
     }
     return false;
+}
+
+static __always_inline bool nm_is_uid_blocked(uid_t target_uid)
+{
+    bool blocked;
+
+    rcu_guard();
+    blocked = nm_is_uid_blocked_rcu(target_uid);
+    return blocked;
 }
 
 static __always_inline bool nm_child_matches(struct nm_leaf *leaf, const char *name, size_t len)
@@ -474,7 +481,7 @@ static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentr
         has_leaf = leaf != NULL;
         if (has_leaf) {
             uid_t fsuid = current_fsuid().val;
-            if (likely(!nm_is_uid_blocked(fsuid))) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
+            if (likely(!nm_is_uid_blocked_rcu(fsuid))) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
         }
     }
     rcu_read_unlock();
@@ -1096,7 +1103,7 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
                            bound->dir_node ? smp_load_acquire(&bound->dir_node->owner) : NULL;
     if (!leaf || leaf->parent_dir != parent_dir || !nm_child_matches(leaf, name->name, name->len) || !rcu_access_pointer(leaf->rules))
         leaf = nm_find_leaf_in_dir(parent_dir, name->name, name->len);
-    if (leaf && !(uid_blocked = nm_is_uid_blocked((fsuid = current_fsuid().val))) && (rule = nm_select_rule(leaf, fsuid))) {
+    if (leaf && !(uid_blocked = nm_is_uid_blocked_rcu(fsuid = current_fsuid().val)) && (rule = nm_select_rule(leaf, fsuid))) {
         has_rule = true;
         if (rule->flags & NM_FLAG_WHITEOUT)
             whiteout = true;
