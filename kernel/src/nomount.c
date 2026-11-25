@@ -1258,7 +1258,7 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
                 nm_sop->fake_sop.drop_inode = nm_hijacked_drop_inode;
                 nm_sop->fake_sop.evict_inode = nm_hijacked_evict_inode;
             }
-            if (!sb_rdonly(sb) && !nm_is_pseudo_fs(sb))
+            if (!sb_rdonly(sb) && !nm_is_pseudo_fs(sb) && sb->s_magic != FUSE_SUPER_MAGIC)
                 nm_sop->fake_sop.sync_fs = nm_shutdown_sync_fs;
             smp_store_release(&sb->s_op, &nm_sop->fake_sop);
             if (with_xattr) nm_install_export_hook(nm_sop);
