@@ -187,7 +187,6 @@ static void nm_refresh_binding(struct inode *inode, const struct path *path)
 static void nm_dir_rcu_free(struct rcu_head *head)
 {
     struct nm_dir_node *dir = container_of(head, struct nm_dir_node, rcu);
-    if (dir->pinned_dentry) dput(dir->pinned_dentry);
     kfree(rcu_dereference_raw(dir->children));
     kfree(dir);
 }
@@ -1554,10 +1553,11 @@ static void nm_publish_child_view_locked(struct nm_dir_node *dir_node, struct nm
     rcu_assign_pointer(dir_node->children, children);
     if (!children) {
         WRITE_ONCE(dir_node->readdir_count, 0);
-        if (dir_node->pinned_dentry) {
-            struct dentry *pinned = dir_node->pinned_dentry;
-            dir_node->pinned_dentry = NULL;
-            dput(pinned);
+        if (dir_node->pinned_path.dentry) {
+            struct path pinned = dir_node->pinned_path;
+
+            dir_node->pinned_path = (struct path){ .mnt = NULL, .dentry = NULL };
+            path_put(&pinned);
         }
     }
     if (old) kfree_rcu(old, rcu);
@@ -1919,7 +1919,10 @@ static int nm_generate_virtual_topology(struct nm_leaf *target, unsigned int uid
                 err = nm_hijack_dir_ops(dir, inode);
             }
             if (!err && !(err = nm_inject_child_locked(dir, child, name, name_len))) {
-                if (!virtual && !dir->owner && !dir->pinned_dentry) dir->pinned_dentry = dget(path.dentry);
+                if (!virtual && !dir->owner && !dir->pinned_path.dentry) {
+                    dir->pinned_path = path;
+                    path_get(&dir->pinned_path);
+                }
                 struct dentry *child = nm_hash_and_lookup(path.dentry, &(struct qstr)QSTR_INIT(name, name_len));
                 if (child) { d_drop(child); dput(child); }
             }
