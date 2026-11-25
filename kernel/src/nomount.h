@@ -102,7 +102,7 @@ struct nm_dir_node {
     struct nm_child_array __rcu *children;
     int readdir_count;
     atomic_t refs;
-    struct dentry *pinned_dentry;
+    struct path pinned_path;
     struct nm_leaf *owner;
 };
 
