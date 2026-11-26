@@ -10,14 +10,20 @@
 /*** Helpers ***/
 
 static bool nm_block_isolated_uids = false;
+static __always_inline bool nm_is_isolated_uid_blocked(uid_t target_uid)
+{
+    if (unlikely(READ_ONCE(nm_block_isolated_uids))) {
+        uid_t app_id = target_uid % 100000U;
+        return app_id >= 90000U && app_id <= 99999U;
+    }
+    return false;
+}
+
 static __always_inline bool nm_is_uid_blocked_rcu(uid_t target_uid)
 {
     struct nm_uid_array *arr;
 
-    if (unlikely(READ_ONCE(nm_block_isolated_uids))) {
-        uid_t app_id = target_uid % 100000U;
-        if (app_id >= 90000U && app_id <= 99999U) return true;
-    }
+    if (nm_is_isolated_uid_blocked(target_uid)) return true;
 
     if (likely(!nm_uid_check_live() || !(arr = rcu_dereference(nm_uids))))
         return false;
@@ -33,6 +39,9 @@ static __always_inline bool nm_is_uid_blocked_rcu(uid_t target_uid)
 static __always_inline bool nm_is_uid_blocked(uid_t target_uid)
 {
     bool blocked;
+
+    if (likely(!nm_uid_check_live()))
+        return nm_is_isolated_uid_blocked(target_uid);
 
     rcu_guard();
     blocked = nm_is_uid_blocked_rcu(target_uid);
@@ -953,8 +962,8 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     if (unlikely(!info))
         goto negative_dentry;
 
-    uid_blocked = nm_is_uid_blocked((fsuid = current_fsuid().val));
     rcu_read_lock();
+    uid_blocked = nm_is_uid_blocked_rcu((fsuid = current_fsuid().val));
     struct nm_leaf *leaf = nm_find_leaf_in_dir(READ_ONCE(info->dir_node), dentry->d_name.name, dentry->d_name.len);
     if (leaf && !uid_blocked) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
     rcu_read_unlock();
