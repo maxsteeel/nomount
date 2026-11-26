@@ -126,7 +126,7 @@ static bool nm_backing_gone(struct dentry *d)
     return !inode || inode->i_nlink == 0;
 }
 
-static bool nm_backing_name_matches(struct dentry *dentry, struct dentry *parent, const struct qstr *name,
+static __always_inline bool nm_backing_name_matches(struct dentry *dentry, struct dentry *parent, const struct qstr *name,
                                     unsigned int *hash)
 {
     const char *wanted;
@@ -1105,7 +1105,7 @@ static bool nm_is_our_dops(struct nm_dir_ops *iop, const struct dentry_operation
     return dop == &nm_dops || (iop && dop == &iop->fake_dops);
 }
 
-static int nm_revalidate_backing_child(struct inode *parent_inode, struct inode *inode,
+static __always_inline int nm_revalidate_backing_child(struct inode *parent_inode, struct inode *inode,
                                        const struct qstr *name, struct dentry *dentry,
                                        struct nm_inode_info *info, unsigned int flags, bool weak)
 {
