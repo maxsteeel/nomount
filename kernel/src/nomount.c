@@ -126,6 +126,28 @@ static bool nm_backing_gone(struct dentry *d)
     return !inode || inode->i_nlink == 0;
 }
 
+static bool nm_backing_name_matches(struct dentry *dentry, struct dentry *parent, const struct qstr *name,
+                                    unsigned int *hash)
+{
+    const char *wanted;
+    unsigned int len, seq;
+    bool valid;
+
+    rcu_read_lock();
+    wanted = READ_ONCE(name->name);
+    len = READ_ONCE(name->len);
+    seq = raw_seqcount_begin(&dentry->d_seq);
+    valid = READ_ONCE(dentry->d_parent) == parent &&
+            !d_unlinked(dentry) &&
+            READ_ONCE(dentry->d_name.len) == len &&
+            !memcmp(READ_ONCE(dentry->d_name.name), wanted, len);
+    *hash = READ_ONCE(dentry->d_name.hash);
+    if (read_seqcount_retry(&dentry->d_seq, seq))
+        valid = false;
+    rcu_read_unlock();
+    return valid;
+}
+
 static bool nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct nm_rule_info *out)
 {
     struct nm_rule *rule = nm_select_rule(leaf, fsuid);
@@ -1083,6 +1105,69 @@ static bool nm_is_our_dops(struct nm_dir_ops *iop, const struct dentry_operation
     return dop == &nm_dops || (iop && dop == &iop->fake_dops);
 }
 
+static int nm_revalidate_backing_child(struct inode *parent_inode, struct inode *inode,
+                                       const struct qstr *name, struct dentry *dentry,
+                                       struct nm_inode_info *info, unsigned int flags, bool weak)
+{
+    struct nm_inode_info *pinfo = READ_ONCE(parent_inode->i_private);
+    struct dentry *backing_parent = pinfo ? pinfo->r_path.dentry : NULL;
+    struct dentry *pinned, *backing;
+    int mask = MAY_EXEC, ret;
+    unsigned int hash;
+    bool valid;
+
+    if (!backing_parent)
+        return nm_drop_dentry(dentry, flags, weak);
+    if (READ_ONCE(backing_parent->d_flags) & (DCACHE_OP_HASH | DCACHE_OP_COMPARE))
+        goto slow_lookup;
+
+    if (flags & LOOKUP_RCU)
+        mask |= MAY_NOT_BLOCK;
+    ret = nm_inode_permission_nop(d_inode(backing_parent), mask);
+    if (ret)
+        return (flags & LOOKUP_RCU) ? -ECHILD : ret;
+
+    pinned = READ_ONCE(info->r_path.dentry);
+    if (!pinned || !nm_backing_name_matches(pinned, backing_parent, name, &hash))
+        goto slow_lookup;
+
+    ret = 1;
+    if (unlikely(READ_ONCE(pinned->d_flags) & DCACHE_OP_REVALIDATE)) {
+        const struct dentry_operations *dops = READ_ONCE(pinned->d_op);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
+        struct qstr backing_name = *name;
+
+        backing_name.hash = hash;
+        ret = nm_call_orig_revalidate(dops, d_inode(backing_parent), &backing_name, pinned, flags & LOOKUP_RCU);
+#else
+        ret = nm_call_orig_revalidate(dops, d_inode(backing_parent), name, pinned, flags & LOOKUP_RCU);
+#endif
+    }
+    if (ret > 0) {
+        if (pinned != READ_ONCE(info->r_path.dentry))
+            goto slow_lookup;
+        valid = d_is_positive(pinned) && nm_inode_matches_attrs(inode, d_backing_inode(pinned));
+        return valid ? 1 : nm_drop_dentry(dentry, flags, weak);
+    }
+    if (flags & LOOKUP_RCU)
+        return -ECHILD;
+    if (ret < 0)
+        return ret;
+    d_invalidate(pinned);
+
+slow_lookup:
+    if (flags & LOOKUP_RCU)
+        return -ECHILD;
+    backing = nm_lookup_one_len_unlocked(name->name, backing_parent, name->len);
+    if (IS_ERR(backing))
+        return PTR_ERR(backing);
+    valid = backing == READ_ONCE(info->r_path.dentry) && d_is_positive(backing) &&
+            nm_inode_matches_attrs(inode, d_inode(backing));
+    dput(backing);
+    return valid ? 1 : nm_drop_dentry(dentry, flags, weak);
+}
+
 static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr *name,
                                   struct dentry *dentry, unsigned int flags, bool weak)
 {
@@ -1131,23 +1216,8 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
     if (match_rule) return 1;
     if (!has_rule && inode && nm_inode_is_virtual(inode)) {
         struct nm_inode_info *info = READ_ONCE(inode->i_private);
-        if (info && info->backing_child) {
-            struct nm_inode_info *pinfo;
-            struct dentry *backing, *backing_parent;
-            bool valid;
-
-            if (flags & LOOKUP_RCU) return -ECHILD;
-            pinfo = READ_ONCE(parent_inode->i_private);
-            backing_parent = pinfo ? pinfo->r_path.dentry : NULL;
-            if (!backing_parent)
-                return nm_drop_dentry(dentry, flags, weak);
-
-            backing = nm_lookup_one_len_unlocked(name->name, backing_parent, name->len);
-            if (IS_ERR(backing)) return PTR_ERR(backing);
-            valid = (backing == info->r_path.dentry && d_is_positive(backing) && nm_inode_matches_attrs(inode, d_inode(backing)));
-            dput(backing);
-            return valid ? 1 : nm_drop_dentry(dentry, flags, weak);
-        }
+        if (info && info->backing_child)
+            return nm_revalidate_backing_child(parent_inode, inode, name, dentry, info, flags, weak);
     }
 
     if (has_rule || (!uid_blocked && nm_is_our_dops(iop, READ_ONCE(dentry->d_op))) || (inode && nm_inode_is_virtual(inode)))

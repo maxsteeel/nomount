@@ -404,6 +404,14 @@ struct nm_del_hdr {
     #define FLAGS_VAL /* Nothing */
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+# define nm_inode_permission_nop(inode, mask) inode_permission(&nop_mnt_idmap, inode, mask)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
+# define nm_inode_permission_nop(inode, mask) inode_permission(&init_user_ns, inode, mask)
+#else
+# define nm_inode_permission_nop(inode, mask) inode_permission(inode, mask)
+#endif
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
 # define nm_lookup_one_len_unlocked(name, dentry, len) lookup_one_unlocked(&nop_mnt_idmap, &(struct qstr)QSTR_INIT((name), (len)), dentry)
 #else
