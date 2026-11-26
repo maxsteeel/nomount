@@ -691,7 +691,7 @@ static int nm_open(struct inode *inode, struct file *file)
     }
 
     bool readonly = (file->f_flags & ~(O_LARGEFILE | O_CLOEXEC)) == O_RDONLY;
-    if (readonly && (real_file = smp_load_acquire(&info->r_file)) && real_file->f_cred == file->f_cred) {
+    if (readonly && (real_file = smp_load_acquire(&info->r_file)) && real_file->f_cred == file->f_cred && !nm_backing_gone(info->r_path.dentry)) {
         if (!S_ISDIR(inode->i_mode)) nm_sync_inode_size(inode, file_inode(real_file));
         file->private_data = real_file;
         return 0;
