@@ -10,26 +10,42 @@
 /*** Helpers ***/
 
 static bool nm_block_isolated_uids = false;
-static __always_inline bool nm_is_uid_blocked(uid_t target_uid)
+static __always_inline bool nm_is_isolated_uid_blocked(uid_t target_uid)
+{
+    if (unlikely(READ_ONCE(nm_block_isolated_uids))) {
+        uid_t app_id = target_uid % 100000U;
+        return app_id >= 90000U && app_id <= 99999U;
+    }
+    return false;
+}
+
+static __always_inline bool nm_is_uid_blocked_rcu(uid_t target_uid)
 {
     struct nm_uid_array *arr;
 
-    if (unlikely(READ_ONCE(nm_block_isolated_uids))) {
-        uid_t app_id = target_uid % 100000U;
-        if (app_id >= 90000U && app_id <= 99999U) return true;
-    }
+    if (nm_is_isolated_uid_blocked(target_uid)) return true;
 
-    if (likely(!rcu_access_pointer(nm_uids)))
+    if (likely(!nm_uid_check_live() || !(arr = rcu_dereference(nm_uids))))
         return false;
-
-    rcu_guard();
-    if ((arr = rcu_dereference(nm_uids)) && nm_uid_bloom_test(arr, target_uid)) {
+    if (nm_uid_bloom_test(arr, target_uid)) {
         for (int i = 0; i < arr->count; i++) {
             if (arr->uids[i] == target_uid)
                 return true;
         }
     }
     return false;
+}
+
+static __always_inline bool nm_is_uid_blocked(uid_t target_uid)
+{
+    bool blocked;
+
+    if (likely(!nm_uid_check_live()))
+        return nm_is_isolated_uid_blocked(target_uid);
+
+    rcu_guard();
+    blocked = nm_is_uid_blocked_rcu(target_uid);
+    return blocked;
 }
 
 static __always_inline bool nm_child_matches(struct nm_leaf *leaf, const char *name, size_t len)
@@ -108,6 +124,28 @@ static bool nm_backing_gone(struct dentry *d)
 {
     struct inode *inode = READ_ONCE(d->d_inode);
     return !inode || inode->i_nlink == 0;
+}
+
+static __always_inline bool nm_backing_name_matches(struct dentry *dentry, struct dentry *parent, const struct qstr *name,
+                                    unsigned int *hash)
+{
+    const char *wanted;
+    unsigned int len, seq;
+    bool valid;
+
+    rcu_read_lock();
+    wanted = READ_ONCE(name->name);
+    len = READ_ONCE(name->len);
+    seq = raw_seqcount_begin(&dentry->d_seq);
+    valid = READ_ONCE(dentry->d_parent) == parent &&
+            !d_unlinked(dentry) &&
+            READ_ONCE(dentry->d_name.len) == len &&
+            !memcmp(READ_ONCE(dentry->d_name.name), wanted, len);
+    *hash = READ_ONCE(dentry->d_name.hash);
+    if (read_seqcount_retry(&dentry->d_seq, seq))
+        valid = false;
+    rcu_read_unlock();
+    return valid;
 }
 
 static bool nm_resolve_rule_from_leaf(struct nm_leaf *leaf, uid_t fsuid, struct nm_rule_info *out)
@@ -474,7 +512,7 @@ static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentr
         has_leaf = leaf != NULL;
         if (has_leaf) {
             uid_t fsuid = current_fsuid().val;
-            if (likely(!nm_is_uid_blocked(fsuid))) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
+            if (likely(!nm_is_uid_blocked_rcu(fsuid))) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
         }
     }
     rcu_read_unlock();
@@ -535,7 +573,7 @@ static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx)
     orig_fop = rcu_dereference(file->f_op);
     if ((nm_fop = nm_get_nm_fop(orig_fop))) {
         orig_fop = nm_fop->orig_fop;
-        if ((d = rcu_dereference(nm_fop->dir_node)) && rcu_access_pointer(d->children) && (READ_ONCE(d->readdir_count) || nm_is_virtual_pos(ctx->pos)) && atomic_inc_not_zero(&d->refs))
+        if ((d = rcu_dereference(nm_fop->dir_node)) && rcu_access_pointer(d->children) && (READ_ONCE(d->readdir_count) || nm_is_virtual_pos(ctx->pos)))
             dir_node = d;
     }
     rcu_read_unlock();
@@ -543,7 +581,6 @@ static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx)
     if (unlikely(!orig_fop || !dir_node))
         return orig_fop ? nm_call_iterate(file, ctx, orig_fop) : -ENOTDIR;
     res = nm_iterate_view(file, ctx, orig_fop, dir_node, true, false);
-    nm_dir_put(dir_node);
     return res;
 }
 
@@ -947,8 +984,8 @@ static struct dentry *nm_dir_lookup(struct inode *dir, struct dentry *dentry, un
     if (unlikely(!info))
         goto negative_dentry;
 
-    uid_blocked = nm_is_uid_blocked((fsuid = current_fsuid().val));
     rcu_read_lock();
+    uid_blocked = nm_is_uid_blocked_rcu((fsuid = current_fsuid().val));
     struct nm_leaf *leaf = nm_find_leaf_in_dir(READ_ONCE(info->dir_node), dentry->d_name.name, dentry->d_name.len);
     if (leaf && !uid_blocked) found = nm_resolve_rule_from_leaf(leaf, fsuid, &rule_info);
     rcu_read_unlock();
@@ -1068,6 +1105,69 @@ static bool nm_is_our_dops(struct nm_dir_ops *iop, const struct dentry_operation
     return dop == &nm_dops || (iop && dop == &iop->fake_dops);
 }
 
+static __always_inline int nm_revalidate_backing_child(struct inode *parent_inode, struct inode *inode,
+                                       const struct qstr *name, struct dentry *dentry,
+                                       struct nm_inode_info *info, unsigned int flags, bool weak)
+{
+    struct nm_inode_info *pinfo = READ_ONCE(parent_inode->i_private);
+    struct dentry *backing_parent = pinfo ? pinfo->r_path.dentry : NULL;
+    struct dentry *pinned, *backing;
+    int mask = MAY_EXEC, ret;
+    unsigned int hash;
+    bool valid;
+
+    if (!backing_parent)
+        return nm_drop_dentry(dentry, flags, weak);
+    if (READ_ONCE(backing_parent->d_flags) & (DCACHE_OP_HASH | DCACHE_OP_COMPARE))
+        goto slow_lookup;
+
+    if (flags & LOOKUP_RCU)
+        mask |= MAY_NOT_BLOCK;
+    ret = nm_inode_permission_nop(d_inode(backing_parent), mask);
+    if (ret)
+        return (flags & LOOKUP_RCU) ? -ECHILD : ret;
+
+    pinned = READ_ONCE(info->r_path.dentry);
+    if (!pinned || !nm_backing_name_matches(pinned, backing_parent, name, &hash))
+        goto slow_lookup;
+
+    ret = 1;
+    if (unlikely(READ_ONCE(pinned->d_flags) & DCACHE_OP_REVALIDATE)) {
+        const struct dentry_operations *dops = READ_ONCE(pinned->d_op);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
+        struct qstr backing_name = *name;
+
+        backing_name.hash = hash;
+        ret = nm_call_orig_revalidate(dops, d_inode(backing_parent), &backing_name, pinned, flags & LOOKUP_RCU);
+#else
+        ret = nm_call_orig_revalidate(dops, d_inode(backing_parent), name, pinned, flags & LOOKUP_RCU);
+#endif
+    }
+    if (ret > 0) {
+        if (pinned != READ_ONCE(info->r_path.dentry))
+            goto slow_lookup;
+        valid = d_is_positive(pinned) && nm_inode_matches_attrs(inode, d_backing_inode(pinned));
+        return valid ? 1 : nm_drop_dentry(dentry, flags, weak);
+    }
+    if (flags & LOOKUP_RCU)
+        return -ECHILD;
+    if (ret < 0)
+        return ret;
+    d_invalidate(pinned);
+
+slow_lookup:
+    if (flags & LOOKUP_RCU)
+        return -ECHILD;
+    backing = nm_lookup_one_len_unlocked(name->name, backing_parent, name->len);
+    if (IS_ERR(backing))
+        return PTR_ERR(backing);
+    valid = backing == READ_ONCE(info->r_path.dentry) && d_is_positive(backing) &&
+            nm_inode_matches_attrs(inode, d_inode(backing));
+    dput(backing);
+    return valid ? 1 : nm_drop_dentry(dentry, flags, weak);
+}
+
 static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr *name,
                                   struct dentry *dentry, unsigned int flags, bool weak)
 {
@@ -1097,7 +1197,7 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
                            bound->dir_node ? smp_load_acquire(&bound->dir_node->owner) : NULL;
     if (!leaf || leaf->parent_dir != parent_dir || !nm_child_matches(leaf, name->name, name->len) || !rcu_access_pointer(leaf->rules))
         leaf = nm_find_leaf_in_dir(parent_dir, name->name, name->len);
-    if (leaf && !(uid_blocked = nm_is_uid_blocked((fsuid = current_fsuid().val))) && (rule = nm_select_rule(leaf, fsuid))) {
+    if (leaf && !(uid_blocked = nm_is_uid_blocked_rcu(fsuid = current_fsuid().val)) && (rule = nm_select_rule(leaf, fsuid))) {
         has_rule = true;
         if (rule->flags & NM_FLAG_WHITEOUT)
             whiteout = true;
@@ -1116,23 +1216,8 @@ static int nm_d_revalidate_common(struct inode *parent_inode, const struct qstr 
     if (match_rule) return 1;
     if (!has_rule && inode && nm_inode_is_virtual(inode)) {
         struct nm_inode_info *info = READ_ONCE(inode->i_private);
-        if (info && info->backing_child) {
-            struct nm_inode_info *pinfo;
-            struct dentry *backing, *backing_parent;
-            bool valid;
-
-            if (flags & LOOKUP_RCU) return -ECHILD;
-            pinfo = READ_ONCE(parent_inode->i_private);
-            backing_parent = pinfo ? pinfo->r_path.dentry : NULL;
-            if (!backing_parent)
-                return nm_drop_dentry(dentry, flags, weak);
-
-            backing = nm_lookup_one_len_unlocked(name->name, backing_parent, name->len);
-            if (IS_ERR(backing)) return PTR_ERR(backing);
-            valid = (backing == info->r_path.dentry && d_is_positive(backing) && nm_inode_matches_attrs(inode, d_inode(backing)));
-            dput(backing);
-            return valid ? 1 : nm_drop_dentry(dentry, flags, weak);
-        }
+        if (info && info->backing_child)
+            return nm_revalidate_backing_child(parent_inode, inode, name, dentry, info, flags, weak);
     }
 
     if (has_rule || (!uid_blocked && nm_is_our_dops(iop, READ_ONCE(dentry->d_op))) || (inode && nm_inode_is_virtual(inode)))
@@ -2147,6 +2232,7 @@ static void nm_clear_state(int clear_flags)
     if (clear_flags & NM_CLEAR_UIDS) {
         struct nm_uid_array *old = rcu_dereference_protected(nm_uids, lockdep_is_held(&nm_mutex));
         RCU_INIT_POINTER(nm_uids, NULL);
+        nm_uid_check_disarm();
         if (old) kfree_rcu(old, rcu);
     }
     if (clear_flags & NM_CLEAR_RULES) {

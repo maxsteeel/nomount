@@ -14,6 +14,7 @@
 #include <linux/exportfs.h>
 #include <linux/key-type.h>
 #include <linux/highmem.h>
+#include <linux/jump_label.h>
 #include <linux/version.h>
 #include <linux/compat.h>
 
@@ -236,6 +237,23 @@ static inline u32 nm_unpack_pos(loff_t pos) {
 }
 
 /* --- UIDs Array RCU Management --- */
+static DEFINE_STATIC_KEY_FALSE(nm_uid_check_key);
+
+static __always_inline bool nm_uid_check_live(void)
+{
+    return static_branch_unlikely(&nm_uid_check_key);
+}
+
+static inline void nm_uid_check_arm(void)
+{
+    if (!nm_uid_check_live()) static_branch_enable(&nm_uid_check_key);
+}
+
+static inline void nm_uid_check_disarm(void)
+{
+    if (nm_uid_check_live() && !rcu_access_pointer(nm_uids)) static_branch_disable(&nm_uid_check_key);
+}
+
 static __always_inline void nm_uid_bloom_set(struct nm_uid_array *arr, uid_t uid)
 {
     arr->bloom_mask[(uid >> 6) & (NM_UID_BLOOM_WORDS - 1)] |= 1ULL << (uid & 63);
@@ -266,6 +284,7 @@ static inline int nm_uid_add(uid_t target)
     }
     new_arr->uids[count] = target;
     nm_uid_bloom_set(new_arr, target);
+    nm_uid_check_arm();
     rcu_assign_pointer(nm_uids, new_arr);
     if (old) kfree_rcu(old, rcu);
     return 0;
@@ -291,6 +310,7 @@ static inline int nm_uid_del(uid_t target)
     }
 
     rcu_assign_pointer(nm_uids, new_arr);
+    nm_uid_check_disarm();
     kfree_rcu(old, rcu);
     return 0;
 }
@@ -382,6 +402,14 @@ struct nm_del_hdr {
 #else
     #define FLAGS_ARG /* Nothing */
     #define FLAGS_VAL /* Nothing */
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+# define nm_inode_permission_nop(inode, mask) inode_permission(&nop_mnt_idmap, inode, mask)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
+# define nm_inode_permission_nop(inode, mask) inode_permission(&init_user_ns, inode, mask)
+#else
+# define nm_inode_permission_nop(inode, mask) inode_permission(inode, mask)
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
